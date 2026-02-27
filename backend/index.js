@@ -85,11 +85,16 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 
 // Strict CORS
-const allowedOrigins = [
+const envOrigins = String(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = Array.from(new Set([
   'http://localhost:19006',
   'http://localhost:8081',
-  'http://localhost:5001'
-];
+  'http://localhost:3000',
+  ...envOrigins
+]));
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true); // Allow mobile/curl
@@ -159,8 +164,7 @@ app.use('/api/circles', circlesRoutes);
 // SENTRY: The error handler must be before any other error middleware and after all controllers
 // app.use(Sentry.Handlers.errorHandler());
 
-// Port 5001 matches the frontend fetch logic
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 3000;
 
 // --- SOCKET.IO SETUP ---
 const http = require('http');
