@@ -97,6 +97,7 @@ export default function SettingsScreen({ navigation }) {
                     <View style={styles.sectionCard}>
                         {renderSectionTextHeader('Account')}
                         {renderRow('Phone Number', '+91 98765 43210')}
+                        {renderRow('Change Password', null, true, false, null, null, false, () => navigation.navigate('ForgotPassword'))}
                         {renderRow('Language', 'English (India)', false, false, null, null, !isAdmin)}
                         {isAdmin && renderRow('Admin Dashboard', null, true, false, null, null, true, () => navigation.navigate('AdminDashboard'))}
                     </View>
