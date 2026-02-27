@@ -1,7 +1,9 @@
 import React, { createContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { wipeSensitiveCache } from '../utils/cacheManager';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
+import SocketService from '../services/socket';
 
 export const AuthContext = createContext();
 
@@ -78,9 +80,13 @@ export const AuthProvider = ({ children }) => {
         setIsLoading(true);
         try {
             await SecureStore.deleteItemAsync('userInfo');
+            await SecureStore.deleteItemAsync('hasCompletedOnboarding');
+            await AsyncStorage.clear();
             await wipeSensitiveCache();
+            SocketService.disconnect();
             setUserInfo(null);
             setUserToken(null);
+            setHasCompletedOnboarding(false);
         } catch (e) {
             console.error('Logout error', e);
         }

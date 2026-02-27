@@ -116,6 +116,19 @@ export default function SettingsScreen({ navigation }) {
         }
     };
 
+    const performLocalSignOut = async () => {
+        try {
+            await SecureStore.deleteItemAsync('selectedRole');
+            await logout();
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+        } catch (error) {
+            logger.error('Sign out error:', error);
+        }
+    };
+
     const handleSignOut = () => {
         Alert.alert(
             'Sign Out',
@@ -123,14 +136,7 @@ export default function SettingsScreen({ navigation }) {
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Sign Out', style: 'destructive', onPress: async () => {
-                        try {
-                            await SecureStore.deleteItemAsync('selectedRole');
-                            await logout();
-                        } catch (error) {
-                            logger.error('Sign out error:', error);
-                        }
-                    }
+                    text: 'Sign Out', style: 'destructive', onPress: performLocalSignOut
                 }
             ]
         );
@@ -151,12 +157,14 @@ export default function SettingsScreen({ navigation }) {
         if (deleteInput !== 'DELETE') return;
         setIsDeleting(true);
         try {
-            await client.delete('/api/auth/account');
+            await client.delete('/api/users/delete');
             setDeleteModalVisible(false);
-            await handleSignOut(); // Sign out and clear everything on success
+            setDeleteInput('');
+            await performLocalSignOut();
         } catch (error) {
             logger.error('Delete account error:', error);
             Alert.alert('Error', 'Could not delete your account. Please try again or contact support.');
+        } finally {
             setIsDeleting(false);
         }
     };

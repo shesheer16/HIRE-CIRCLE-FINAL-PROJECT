@@ -3,14 +3,40 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const WorkerProfile = require('../models/WorkerProfile');
 // Import all controllers properly
-const { registerUser, authUser, forgotPassword, resetPassword, verifyEmail, resendVerificationEmail } = require('../controllers/userController');
+const { registerUser, authUser, forgotPassword, resetPassword, verifyEmail, resendVerificationEmail, exportUserData, deleteUserAccount } = require('../controllers/userController');
 
+/**
+ * @swagger
+ * /api/users/login:
+ *   post:
+ *     summary: Authenticate user
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: JWT token returned
+ *       401:
+ *         description: Invalid credentials
+ */
 router.post('/register', registerUser);
 router.post('/login', authUser);
 router.post('/forgotpassword', forgotPassword);
 router.put('/resetpassword/:resettoken', resetPassword);
 router.put('/verifyemail/:verificationtoken', verifyEmail);
 router.post('/resendverification', resendVerificationEmail);
+
+router.get('/export', protect, exportUserData);
+router.delete('/delete', protect, deleteUserAccount);
 
 // GET /api/users/profile - Fetch logged-in user's profile
 router.get('/profile', protect, async (req, res) => {
