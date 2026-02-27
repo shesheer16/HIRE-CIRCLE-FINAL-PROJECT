@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { logger } from '../utils/logger';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorageLib from '@react-native-async-storage/async-storage';
 
@@ -25,6 +25,14 @@ const extractSalaryNumber = (salaryStr) => {
     const cleaned = salaryStr.replace(/[₹,\s]/g, '');
     const match = cleaned.match(/\d+/);
     return match ? parseInt(match[0], 10) : 0;
+};
+
+const getReadableError = (error, fallbackMessage) => {
+    if (error?.response?.data?.message) return error.response.data.message;
+    if (error?.message === 'No internet connection') return 'No internet connection. Please check your network and try again.';
+    if (error?.message === 'Network Error') return 'Unable to reach the server. Please try again.';
+    if (error?.code === 'ECONNABORTED') return 'Request timed out. Please retry.';
+    return fallbackMessage;
 };
 
 export default function JobsScreen() {
@@ -55,33 +63,7 @@ export default function JobsScreen() {
         { label: '90%+', value: 90 },
     ];
 
-    useRefreshOnFocus(fetchJobs, 'jobs');
-
-    useEffect(() => {
-        SecureStore.getItemAsync('userInfo').then(res => {
-            if (res) {
-                const user = JSON.parse(res);
-                setUserRole(user.role ? user.role.toLowerCase() : 'candidate');
-            }
-        });
-        fetchJobs();
-        loadDismissed();
-    }, []);
-
-    const loadDismissed = async () => {
-        try {
-            const raw = await AsyncStorageLib.getItem(DISMISSED_KEY);
-            if (raw) setDismissedJobs(JSON.parse(raw));
-        } catch (e) { /* ignore */ }
-    };
-
-    const saveDismissed = async (list) => {
-        try {
-            await AsyncStorageLib.setItem(DISMISSED_KEY, JSON.stringify(list));
-        } catch (e) { /* ignore */ }
-    };
-
-    const fetchJobs = async () => {
+    const fetchJobs = useCallback(async () => {
         setIsLoading(true);
         setErrorMsg('');
         try {
@@ -97,8 +79,9 @@ export default function JobsScreen() {
 
             // 2. Fetch fresh jobs
             const { data } = await client.get('/api/matches/candidate');
+            const matches = Array.isArray(data) ? data : (Array.isArray(data?.matches) ? data.matches : []);
 
-            const formattedJobs = data.map(item => {
+            const formattedJobs = matches.map(item => {
                 const job = item.job || item;
                 return {
                     _id: job._id || Math.random().toString(),
@@ -124,13 +107,42 @@ export default function JobsScreen() {
 
         } catch (error) {
             logger.error('Failed to fetch matched jobs:', error);
-            if (jobs.length === 0) {
-                setErrorMsg('Failed to fetch jobs. Please try again later.');
-            }
+            setErrorMsg(getReadableError(error, 'Could not load jobs right now. Please try again.'));
         } finally {
             setIsLoading(false);
         }
+    }, []);
+
+    const loadDismissed = async () => {
+        try {
+            const raw = await AsyncStorageLib.getItem(DISMISSED_KEY);
+            if (raw) setDismissedJobs(JSON.parse(raw));
+        } catch (e) { /* ignore */ }
     };
+
+    const saveDismissed = async (list) => {
+        try {
+            await AsyncStorageLib.setItem(DISMISSED_KEY, JSON.stringify(list));
+        } catch (e) { /* ignore */ }
+    };
+
+    useRefreshOnFocus(fetchJobs, 'jobs');
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchJobs();
+        }, [fetchJobs])
+    );
+
+    useEffect(() => {
+        SecureStore.getItemAsync('userInfo').then(res => {
+            if (res) {
+                const user = JSON.parse(res);
+                setUserRole(user.role ? user.role.toLowerCase() : 'candidate');
+            }
+        });
+        loadDismissed();
+    }, []);
 
     const activeFilterCount = [appliedLocation, appliedMinSalary > 0, appliedMinMatch > 0].filter(Boolean).length;
 
@@ -358,39 +370,57 @@ export default function JobsScreen() {
                     <SkeletonLoader height={140} style={{ borderRadius: 12, marginBottom: 16 }} />
                 </View>
             )}
-            {errorMsg ? <Text style={{ color: 'red', margin: 16 }}>{errorMsg}</Text> : null}
-
-            <FlatList
-                data={filteredJobs}
-                keyExtractor={(item) => item._id}
-                renderItem={renderJobCard}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-                getItemLayout={(data, index) => ({
-                    length: 160,
-                    offset: 160 * index,
-                    index,
-                })}
-                maxToRenderPerBatch={10}
-                windowSize={10}
-                removeClippedSubviews={Platform.OS === 'android'}
-                initialNumToRender={10}
-                ListEmptyComponent={
-                    <EmptyState
-                        icon={<Text style={styles.emptyEmoji}>{activeFilter === 'History' ? '🗂' : '🔍'}</Text>}
-                        title={activeFilter === 'Saved' ? 'No Saved Jobs' : activeFilter === 'History' ? 'No History Yet' : 'No Jobs Found'}
-                        message={
-                            activeFilter === 'Saved'
-                                ? 'Tap the bookmark icon on any job to save it for later.'
-                                : activeFilter === 'History'
-                                    ? 'Jobs you skip will appear here.'
-                                    : 'Try adjusting your search or filter.'
+            {!isLoading && errorMsg && filteredJobs.length === 0 ? (
+                <EmptyState
+                    icon={<Text style={styles.emptyEmoji}>⚠️</Text>}
+                    title="Could Not Load Jobs"
+                    message={errorMsg}
+                    actionLabel="Retry"
+                    onAction={fetchJobs}
+                />
+            ) : (
+                <>
+                    {errorMsg && filteredJobs.length > 0 ? (
+                        <View style={styles.errorBanner}>
+                            <Text style={styles.errorBannerText}>{errorMsg}</Text>
+                            <TouchableOpacity onPress={fetchJobs} style={styles.errorRetryBtn}>
+                                <Text style={styles.errorRetryText}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : null}
+                    <FlatList
+                        data={filteredJobs}
+                        keyExtractor={(item) => item._id}
+                        renderItem={renderJobCard}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        getItemLayout={(data, index) => ({
+                            length: 160,
+                            offset: 160 * index,
+                            index,
+                        })}
+                        maxToRenderPerBatch={10}
+                        windowSize={10}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                        initialNumToRender={10}
+                        ListEmptyComponent={
+                            <EmptyState
+                                icon={<Text style={styles.emptyEmoji}>{activeFilter === 'History' ? '🗂' : '🔍'}</Text>}
+                                title={activeFilter === 'Saved' ? 'No Saved Jobs' : activeFilter === 'History' ? 'No History Yet' : 'No Jobs Found'}
+                                message={
+                                    activeFilter === 'Saved'
+                                        ? 'Tap the bookmark icon on any job to save it for later.'
+                                        : activeFilter === 'History'
+                                            ? 'Jobs you skip will appear here.'
+                                            : 'Try adjusting your search or filter.'
+                                }
+                                actionLabel={activeFilter !== 'All' ? 'Clear Filters' : null}
+                                onAction={activeFilter !== 'All' ? () => { setActiveFilter('All'); handleClearFilters(); } : null}
+                            />
                         }
-                        actionLabel={activeFilter !== 'All' ? 'Clear Filters' : null}
-                        onAction={activeFilter !== 'All' ? () => { setActiveFilter('All'); handleClearFilters(); } : null}
                     />
-                }
-            />
+                </>
+            )}
 
             {/* Advanced Filters Modal */}
             <Modal visible={filterModalVisible} animationType="slide" transparent onRequestClose={() => setFilterModalVisible(false)}>
@@ -639,6 +669,37 @@ const styles = StyleSheet.create({
     emptyEmoji: {
         fontSize: 48,
         marginBottom: 16,
+    },
+    errorBanner: {
+        marginHorizontal: 16,
+        marginTop: 12,
+        marginBottom: 4,
+        backgroundColor: '#fef2f2',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        padding: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    errorBannerText: {
+        flex: 1,
+        color: '#b91c1c',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    errorRetryBtn: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: '#fee2e2',
+    },
+    errorRetryText: {
+        color: '#b91c1c',
+        fontWeight: '800',
+        fontSize: 11,
     },
 
     // Filter modal

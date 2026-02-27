@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
+import { useFocusEffect } from '@react-navigation/native';
 
 // ─── COMPLETION CALCULATOR ────────────────────────────────────────────────────
 const calcCompletion = (prof) => {
@@ -156,7 +157,8 @@ export default function ProfilesScreen({ navigation }) {
         try {
             setErrorMsg('');
             const { data } = await client.get(`/api/matches/employer/${jobId}`);
-            const mappedCandidates = (Array.isArray(data) ? data : []).map((item, idx) => {
+            const matches = Array.isArray(data) ? data : (Array.isArray(data?.matches) ? data.matches : []);
+            const mappedCandidates = matches.map((item, idx) => {
                 const worker = item.worker || {};
                 const firstRole = worker.roleProfiles && worker.roleProfiles[0] ? worker.roleProfiles[0] : {};
                 return {
@@ -197,6 +199,19 @@ export default function ProfilesScreen({ navigation }) {
         };
         loadCandidates();
     }, [selectedPool, role, fetchPoolCandidates]);
+
+    useFocusEffect(
+        useCallback(() => {
+            if (role === 'employee') {
+                fetchProfileData();
+            } else {
+                fetchPools();
+                if (selectedPool?.id) {
+                    fetchPoolCandidates(selectedPool.id);
+                }
+            }
+        }, [role, fetchProfileData, fetchPools, fetchPoolCandidates, selectedPool?.id])
+    );
 
     const openEdit = (prof) => {
         setEditingProfile({ ...prof });
