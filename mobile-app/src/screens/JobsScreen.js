@@ -1,7 +1,7 @@
 import React, { useState, useEffect, memo, useCallback } from 'react';
 import {
     View, Text, FlatList, StyleSheet, TouchableOpacity,
-    ScrollView
+    ScrollView, Share
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -13,7 +13,7 @@ import { ActivityIndicator } from 'react-native';
 import { AnimatedCard } from '../components/AnimatedCard';
 import { useRefreshOnFocus } from '../hooks/useRefreshOnFocus';
 import SkeletonLoader from '../components/SkeletonLoader';
-import { IconBookmark, IconBookmarkFilled } from '../components/Icons';
+import { IconBookmark, IconBookmarkFilled, IconShare } from '../components/Icons';
 
 const FILTERS = ['All', 'Saved', 'High Match', 'Nearby', 'New'];
 
@@ -111,23 +111,44 @@ export default function JobsScreen() {
         });
     }, []);
 
+    const handleShareJob = async (job) => {
+        try {
+            await Share.share({
+                message: `${job.title} at ${job.companyName} — ${job.location}\nSalary: ${job.salaryRange}\n\nApply on HireApp`,
+                title: job.title,
+            });
+        } catch (error) {
+            console.error('Error sharing job:', error);
+        }
+    };
+
     const JobCard = memo(({ item, onPress }) => (
         <AnimatedCard
             style={styles.card}
             onPress={() => onPress(item)}
         >
-            <TouchableOpacity
-                style={styles.bookmarkButtonAbsolute}
-                onPress={() => toggleSaveJob(item._id)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-            >
-                {savedJobIds.has(item._id) ? (
-                    <IconBookmarkFilled size={20} color="#9333ea" />
-                ) : (
-                    <IconBookmark size={20} color="#94a3b8" />
-                )}
-            </TouchableOpacity>
+            <View style={styles.actionButtonsContainerAbsolute}>
+                <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => handleShareJob(item)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                >
+                    <IconShare size={20} color="#94a3b8" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => toggleSaveJob(item._id)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                >
+                    {savedJobIds.has(item._id) ? (
+                        <IconBookmarkFilled size={20} color="#9333ea" />
+                    ) : (
+                        <IconBookmark size={20} color="#94a3b8" />
+                    )}
+                </TouchableOpacity>
+            </View>
 
             {userRole !== 'employer' && item.matchScore > 80 && (
                 <View style={styles.matchBadgeAbsolute}>
@@ -317,18 +338,22 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#6b21a8', // purple-800
     },
-    bookmarkButtonAbsolute: {
+    actionButtonsContainerAbsolute: {
         position: 'absolute',
         top: 16,
         right: 16,
         zIndex: 10,
+        flexDirection: 'row',
+        gap: 8,
+    },
+    actionButton: {
         backgroundColor: '#ffffff',
         borderRadius: 12,
         padding: 4,
     },
     cardHeader: {
         marginBottom: 8,
-        paddingRight: 32, // make room for bookmark
+        paddingRight: 64, // make room for bookmark and share
     },
     jobTitle: {
         fontSize: 18,
