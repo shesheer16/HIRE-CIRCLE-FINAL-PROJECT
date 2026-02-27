@@ -29,6 +29,7 @@ import SocketService from './src/services/socket';
 import Constants from 'expo-constants';
 import { navigationRef, navigate } from './src/navigation/navigationRef';
 import { answerCall, endCall } from './src/services/WebRTCService';
+import { logger } from './src/utils/logger';
 
 const Stack = createStackNavigator();
 
@@ -53,7 +54,7 @@ const AppNav = () => {
 
     const isExpoGo = Constants.appOwnership === 'expo';
     if (isExpoGo) {
-      console.log('Push notifications disabled in Expo Go (SDK 53+).');
+      logger.log('Push notifications disabled in Expo Go (SDK 53+).');
       return;
     }
 
@@ -72,7 +73,7 @@ const AppNav = () => {
       await registerForPushNotifications();
 
       notificationSub = Notifications.addNotificationReceivedListener(notification => {
-        console.log('Notification received:', notification);
+        logger.log('Notification received:', notification);
       });
 
       responseSub = Notifications.addNotificationResponseReceivedListener(response => {
