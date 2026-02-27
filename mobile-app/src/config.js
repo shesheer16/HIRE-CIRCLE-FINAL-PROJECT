@@ -1,8 +1,19 @@
-// Centralized Configuration
-// Use your machine's local IP address here
-// Mac: System Settings -> Wi-Fi -> Details -> IP Address
-export const IP_ADDRESS = '192.168.1.102';
-export const PORT = '5001';
+const ENV = process.env.APP_ENV || 'development';
 
-export const BASE_URL = `http://${IP_ADDRESS}:${PORT}`;
-export const SOCKET_URL = `http://${IP_ADDRESS}:${PORT}`;
+const configs = {
+    development: {
+        API_URL: 'http://localhost:3000',
+    },
+    preview: {
+        API_URL: 'https://your-staging-server.com',
+    },
+    production: {
+        API_URL: 'https://api.hirecircle.in',
+    },
+};
+
+const selectedConfig = configs[ENV] || configs.development;
+
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || selectedConfig.API_URL;
+export const BASE_URL = API_URL;
+export const SOCKET_URL = API_URL;
