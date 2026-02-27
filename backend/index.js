@@ -10,6 +10,13 @@ const { nodeProfilingIntegration } = require('@sentry/profiling-node');
 // LOAD ENV VARS FIRST
 dotenv.config();
 
+const requiredEnvVars = ['MONGO_URI', 'JWT_SECRET', 'AWS_ACCESS_KEY_ID', 'AWS_BUCKET_NAME', 'GEMINI_API_KEY'];
+const missing = requiredEnvVars.filter(v => !process.env[v]);
+if (missing.length > 0) {
+  console.error('FATAL: Missing required environment variables:', missing.join(', '));
+  process.exit(1);
+}
+
 // SENTRY INITIALIZATION (Must be early)
 Sentry.init({
   dsn: process.env.SENTRY_DSN || "https://examplePublicKey@o0.ingest.sentry.io/0", // Fallback/dummy for dev
