@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
     View, Text, FlatList, StyleSheet, TouchableOpacity, Modal, ScrollView, Image,
-    Animated, PanResponder, Dimensions
+    Animated, PanResponder, Dimensions, Alert
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,6 +71,22 @@ export default function ApplicationsScreen({ navigation }) {
 
     const openContactInfo = (contact) => setSelectedContact(contact);
     const handleArchive = (id) => setApplications(prev => prev.filter(a => a._id !== id));
+
+    const handleWithdraw = () => {
+        Alert.alert(
+            'Withdraw Application',
+            'Are you sure? This cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Withdraw', style: 'destructive', onPress: () => {
+                        setApplications(prev => prev.filter(a => a._id !== selectedContact._id));
+                        setSelectedContact(null);
+                    }
+                }
+            ]
+        );
+    };
 
     const renderItem = ({ item }) => (
         <SwipeableRow onArchive={() => handleArchive(item._id)}>
@@ -217,6 +233,11 @@ export default function ApplicationsScreen({ navigation }) {
                                     ))}
                                 </View>
                             </View>
+
+                            {/* Withdraw Application */}
+                            <TouchableOpacity style={styles.withdrawBtn} onPress={handleWithdraw} activeOpacity={0.8}>
+                                <Text style={styles.withdrawText}>Withdraw Application</Text>
+                            </TouchableOpacity>
                         </ScrollView>
 
                         {/* Floating Video Call Button */}
@@ -311,6 +332,9 @@ const styles = StyleSheet.create({
     productInfo: { flex: 1, justifyContent: 'center' },
     productName: { fontSize: 15, fontWeight: '900', color: '#1e293b', marginBottom: 2 },
     productDesc: { fontSize: 12, color: '#64748b', fontWeight: '500', lineHeight: 16 },
+
+    withdrawBtn: { marginHorizontal: 20, marginTop: 24, paddingVertical: 16, backgroundColor: '#fee2e2', borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#fef2f2' },
+    withdrawText: { color: '#ef4444', fontSize: 15, fontWeight: 'bold' },
 
     // FAB Video Call Button
     fabVideoBtn: { position: 'absolute', bottom: 30, right: 24, width: 64, height: 64, borderRadius: 32, backgroundColor: '#8b5cf6', justifyContent: 'center', alignItems: 'center', shadowColor: '#7c3aed', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 10 }
