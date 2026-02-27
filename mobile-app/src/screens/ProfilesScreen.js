@@ -9,6 +9,7 @@ import {
 } from '../components/Icons';
 import SkeletonLoader from '../components/SkeletonLoader';
 import EmptyState from '../components/EmptyState';
+import client from '../api/client';
 
 // ─── MOCK DATA ───────────────────────────────────────────────────────────────
 const MOCK_ROLE = 'employee'; // toggle to 'employer' to see employer view
@@ -74,7 +75,7 @@ export default function ProfilesScreen({ navigation }) {
         setIsModalVisible(true);
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!editingProfile) return;
 
         if (!editingProfile.roleTitle?.trim()) {
@@ -86,9 +87,29 @@ export default function ProfilesScreen({ navigation }) {
             return;
         }
 
-        setProfiles(prev => prev.map(p => p._id === editingProfile._id ? editingProfile : p));
-        setEditingProfile(null);
-        setIsModalVisible(false);
+        try {
+            await client.put('/api/users/profile', {
+                name: editingProfile.name || '',
+                roleTitle: editingProfile.roleTitle,
+                location: editingProfile.location,
+                summary: editingProfile.summary,
+                skills: editingProfile.skills || []
+                // avatar handle if it existed
+            });
+            Alert.alert('Saved', 'Profile updated successfully');
+            setProfiles(prev => prev.map(p => p._id === editingProfile._id ? editingProfile : p));
+            setEditingProfile(null);
+            setIsModalVisible(false);
+        } catch (error) {
+            console.error('Save profile error:', error);
+            Alert.alert('Error', 'Could not save profile. Please try again.');
+        }
+    };
+
+    const calculateCompletion = (prof) => {
+        const fields = [prof.name, prof.roleTitle, prof.location, prof.summary, prof.skills && prof.skills.length > 0, prof.avatar];
+        const filled = fields.filter(Boolean).length;
+        return Math.round((filled / fields.length) * 100);
     };
 
     const goBackFromPool = () => setSelectedPool(null);
@@ -263,6 +284,16 @@ export default function ProfilesScreen({ navigation }) {
                                     <Text style={styles.empProfEditText}>EDIT</Text>
                                 </TouchableOpacity>
                             </View>
+
+                            {/* Completion Bar */}
+                            <View style={styles.completionContainer}>
+                                <View style={styles.completionHeaderRow}>
+                                    <Text style={styles.completionText}>Profile {calculateCompletion(prof)}% complete</Text>
+                                </View>
+                                <View style={styles.progressBarTrack}>
+                                    <View style={[styles.progressBarFill, { width: `${calculateCompletion(prof)}%` }]} />
+                                </View>
+                            </View>
                         </View>
                     ))}
                     <View style={{ height: 40 }} />
@@ -288,6 +319,16 @@ export default function ProfilesScreen({ navigation }) {
 
                         {editingProfile && (
                             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalScroll}>
+                                <View style={styles.modalAvatarContainer}>
+                                    <Image
+                                        source={{ uri: editingProfile.avatar || `https://ui-avatars.com/api/?name=${editingProfile.roleTitle || 'User'}&background=7c3aed&color=fff&size=200` }}
+                                        style={styles.modalAvatar}
+                                    />
+                                    <TouchableOpacity style={styles.changePhotoBtn} onPress={() => Alert.alert('Coming Soon', 'Photo upload coming soon')}>
+                                        <Text style={styles.changePhotoText}>Change Photo</Text>
+                                    </TouchableOpacity>
+                                </View>
+
                                 <View style={styles.inputGroup}>
                                     <Text style={styles.inputLabel}>PROFILE ROLE TITLE</Text>
                                     <TextInput
@@ -418,6 +459,12 @@ const styles = StyleSheet.create({
     empProfEditBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: 'transparent' },
     empProfEditText: { fontSize: 12, fontWeight: 'bold', color: '#9333ea' },
 
+    completionContainer: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+    completionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+    completionText: { fontSize: 11, fontWeight: '700', color: '#64748b' },
+    progressBarTrack: { height: 6, backgroundColor: '#f1f5f9', borderRadius: 3, overflow: 'hidden' },
+    progressBarFill: { height: '100%', backgroundColor: '#9333ea', borderRadius: 3 },
+
     // Edit Modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
     modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 24, maxHeight: '90%' },
@@ -425,6 +472,11 @@ const styles = StyleSheet.create({
     modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
     modalCloseBtn: { padding: 8 },
     modalScroll: { paddingBottom: 40 },
+
+    modalAvatarContainer: { alignItems: 'center', marginBottom: 24, marginTop: 8 },
+    modalAvatar: { width: 80, height: 80, borderRadius: 40, marginBottom: 16, borderWidth: 2, borderColor: '#f1f5f9' },
+    changePhotoBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f3e8ff' },
+    changePhotoText: { color: '#9333ea', fontSize: 12, fontWeight: 'bold' },
 
     inputGroup: { marginBottom: 16 },
     inputLabel: { fontSize: 10, fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
