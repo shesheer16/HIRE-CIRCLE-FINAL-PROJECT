@@ -1,540 +1,431 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    FlatList,
-    TouchableOpacity,
-    Alert,
-    ActivityIndicator,
-    Modal,
-    TextInput,
-    ScrollView,
-    KeyboardAvoidingView,
-    Platform
+    View, Text, StyleSheet, ScrollView, TouchableOpacity,
+    Modal, TextInput, KeyboardAvoidingView, Platform, Alert, Image
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
-import client from '../api/client';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+    IconMic, IconUsers, IconMapPin, IconBriefcase, IconCheck, IconVideo, IconGlobe, IconFile, IconX, IconMessageSquare, IconPlus
+} from '../components/Icons';
+import SkeletonLoader from '../components/SkeletonLoader';
 
+// ─── MOCK DATA ───────────────────────────────────────────────────────────────
+const MOCK_ROLE = 'employee'; // toggle to 'employer' to see employer view
+
+const MOCK_PROFILES = [
+    {
+        _id: '1',
+        roleTitle: 'Heavy Truck Driver',
+        experienceYears: 8,
+        summary: 'Experienced long-haul driver with a spotless record over 500,000 km. Specialized in hazardous materials and refrigerated transport across multi-state routes. Adept at vehicle maintenance and logbook management.',
+        skills: ['HAZMAT', 'Refrigerated', 'Logbook Logging', 'Basic Mechanics'],
+        location: 'Hyderabad, TS',
+        isDefault: true,
+    },
+    {
+        _id: '2',
+        roleTitle: 'Forklift Operator',
+        experienceYears: 3,
+        summary: 'Certified forklift operator with experience in high-volume warehouse environments. Efficient in loading/unloading, inventory management, and strict adherence to safety protocols.',
+        skills: ['OSHA Certified', 'Inventory Mapping', 'Pallet Jack', 'Safety Prot.'],
+        location: 'Secunderabad, TS',
+        isDefault: false,
+    },
+];
+
+const MOCK_POOLS = [
+    { id: '1', name: 'Logistics Drivers - Hyderabad', count: 142 },
+    { id: '2', name: 'Warehouse Staff - Night Shift', count: 56 },
+    { id: '3', name: 'Certified Electricians', count: 28 },
+];
+
+const MOCK_POOL_PROFILES = [
+    { id: 'p1', roleTitle: 'Heavy Truck', experienceYears: 5, location: 'Hyderabad, TS', summary: 'Diligent driver for 5 years.' },
+    { id: 'p2', roleTitle: 'Delivery Partner', experienceYears: 2, location: 'Secunderabad, TS', summary: 'Local delivery expert.' },
+    { id: 'p3', roleTitle: 'Forklift Operator', experienceYears: 4, location: 'Remote', summary: 'Warehouse specialist.' },
+];
+
+// ─── COMPONENT ───────────────────────────────────────────────────────────────
 export default function ProfilesScreen({ navigation }) {
-    const [profile, setProfile] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    // Edit Modal State
+    const insets = useSafeAreaInsets();
+    const [role] = useState(MOCK_ROLE);
+    const [profiles, setProfiles] = useState(MOCK_PROFILES);
     const [isModalVisible, setIsModalVisible] = useState(false);
-    const [editingIndex, setEditingIndex] = useState(-1);
-    const [editForm, setEditForm] = useState({
-        roleName: '',
-        experienceInRole: '',
-        expectedSalary: '',
-        skills: ''
-    });
 
-    const fetchProfile = useCallback(async () => {
-        try {
-            const { data } = await client.get('/api/users/profile');
-            if (data.profile) {
-                setProfile(data.profile);
-            }
-        } catch (error) {
-            console.error('Fetch error:', error);
-            if (error.response?.status === 401) {
-                // Logout if token invalid
-                await SecureStore.deleteItemAsync('userInfo');
-                // Reset to Login Stack by triggering logout logic effectively
-                navigation.getParent()?.reset({
-                    index: 0,
-                    routes: [{ name: 'Login' }],
-                });
-            } else {
-                Alert.alert('Error', 'Could not fetch profile');
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [navigation]);
+    // Employer State
+    const [selectedPool, setSelectedPool] = useState(null);
+    const [selectedCandidate, setSelectedCandidate] = useState(null);
 
-    useEffect(() => {
-        fetchProfile();
-    }, [fetchProfile]);
+    // Employee State
+    const [editingProfile, setEditingProfile] = useState(null);
 
-    const handleLogout = async () => {
-        await SecureStore.deleteItemAsync('userInfo');
-        navigation.getParent()?.reset({
-            index: 0,
-            routes: [{ name: 'RoleSelection' }],
-        });
-    };
+    const [isLoading, setIsLoading] = useState(true);
 
-    const openEditModal = (role, index) => {
-        setEditingIndex(index);
-        setEditForm({
-            roleName: role.roleName,
-            experienceInRole: String(role.experienceInRole || 0),
-            expectedSalary: String(role.expectedSalary || 0),
-            skills: role.skills ? role.skills.join(', ') : ''
-        });
+    React.useEffect(() => {
+        const timer = setTimeout(() => {
+            setIsLoading(false);
+        }, 800);
+        return () => clearTimeout(timer);
+    }, []);
+
+    const openEdit = (prof) => {
+        setEditingProfile({ ...prof });
         setIsModalVisible(true);
     };
 
-    const handleSave = async () => {
-        try {
-            // Construct the updating roles array
-            const updatedRoles = [...profile.roleProfiles];
-            updatedRoles[editingIndex] = {
-                ...updatedRoles[editingIndex],
-                roleName: editForm.roleName,
-                experienceInRole: parseInt(editForm.experienceInRole) || 0,
-                expectedSalary: parseInt(editForm.expectedSalary) || 0,
-                skills: editForm.skills.split(',').map(s => s.trim()).filter(s => s.length > 0)
-            };
+    const handleSave = () => {
+        if (!editingProfile) return;
 
-            // Optimistic UI Update (optional, but good for UX)
-            // setProfile({ ...profile, roleProfiles: updatedRoles });
-
-            const { data } = await client.put('/api/users/profile', { roleProfiles: updatedRoles });
-
-            if (data.profile) {
-                setProfile(data.profile);
-                setIsModalVisible(false);
-                Alert.alert('Success', 'Profile updated successfully!');
-            }
-        } catch (error) {
-            console.error('Update error:', error);
-            Alert.alert('Error', 'Failed to update profile.');
+        if (!editingProfile.roleTitle?.trim()) {
+            Alert.alert('Missing Field', 'Role Title is required.');
+            return;
         }
+        if (!editingProfile.summary?.trim()) {
+            Alert.alert('Missing Field', 'Professional Summary is required.');
+            return;
+        }
+
+        setProfiles(prev => prev.map(p => p._id === editingProfile._id ? editingProfile : p));
+        setEditingProfile(null);
+        setIsModalVisible(false);
     };
 
-    const handleDelete = (index) => {
-        Alert.alert(
-            'Delete Role',
-            'Are you sure you want to delete this profile?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            const updatedRoles = [...profile.roleProfiles];
-                            updatedRoles.splice(index, 1);
+    const goBackFromPool = () => setSelectedPool(null);
+    const goBackFromCandidate = () => setSelectedCandidate(null);
 
-                            // Optimistic update
-                            const optimisticProfile = { ...profile, roleProfiles: updatedRoles };
-                            setProfile(optimisticProfile);
+    // ── EMPLOYER VIEW ──────────────────────────────────────────────────────
+    const renderEmployerFlow = () => {
+        if (selectedCandidate) {
+            return (
+                <View style={styles.flex1}>
+                    <View style={[styles.headerPurple, { paddingTop: insets.top + 16 }]}>
+                        <TouchableOpacity style={styles.backBtnLight} onPress={goBackFromCandidate}>
+                            <Text style={styles.backTextLight}>‹</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.headerTitleLight}>Candidate Profile</Text>
+                    </View>
+                    <ScrollView style={styles.flex1} contentContainerStyle={{ paddingBottom: 40 }}>
+                        <View style={styles.candidateHero}>
+                            <Image
+                                source={{ uri: `https://ui-avatars.com/api/?name=${selectedCandidate.roleTitle}&background=7c3aed&color=fff&size=128` }}
+                                style={styles.candidateHeroImage}
+                            />
+                            <Text style={styles.candidateHeroTitle}>{selectedCandidate.roleTitle} Expert</Text>
+                            <View style={styles.candidateHeroLocationRow}>
+                                <IconMapPin size={14} color="#a855f7" />
+                                <Text style={styles.candidateHeroLocation}>{selectedCandidate.location}</Text>
+                            </View>
+                        </View>
 
-                            const { data } = await client.put('/api/users/profile', { roleProfiles: updatedRoles });
-                            if (data.profile) {
-                                setProfile(data.profile);
-                            }
-                        } catch (error) {
-                            console.error('Delete error:', error);
-                            Alert.alert('Error', 'Failed to delete profile.');
-                            // Revert on error would be ideal, but simple alert for now
-                            fetchProfile();
-                        }
-                    }
-                }
-            ]
+                        <View style={styles.candyWrapper}>
+                            <View style={styles.candyCard}>
+                                <View style={styles.candyCardTop}>
+                                    <Text style={styles.candyCardTitle}>Professional Summary</Text>
+                                    <TouchableOpacity style={styles.candyResumeBtn}>
+                                        <Text style={styles.candyResumeText}>VIEW RESUME</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <Text style={styles.candySummaryText}>{selectedCandidate.summary}</Text>
+                            </View>
+                        </View>
+                    </ScrollView>
+                </View>
+            );
+        }
+
+        if (selectedPool) {
+            return (
+                <View style={[styles.containerLight]}>
+                    <View style={[styles.headerPurple, { paddingTop: insets.top + 16 }]}>
+                        <TouchableOpacity style={styles.backBtnLight} onPress={goBackFromPool}>
+                            <Text style={styles.backTextLight}>‹</Text>
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.headerTitleLight}>{selectedPool.name}</Text>
+                            <Text style={styles.headerSubLight}>{selectedPool.count} CANDIDATES FOUND</Text>
+                        </View>
+                    </View>
+                    {isLoading ? (
+                        <View style={styles.pad16}>
+                            <SkeletonLoader height={82} style={{ borderRadius: 16, marginBottom: 16 }} />
+                            <SkeletonLoader height={82} style={{ borderRadius: 16, marginBottom: 16 }} />
+                            <SkeletonLoader height={82} style={{ borderRadius: 16, marginBottom: 16 }} />
+                        </View>
+                    ) : (
+                        <ScrollView style={styles.flex1} contentContainerStyle={styles.pad16}>
+                            {MOCK_POOL_PROFILES && MOCK_POOL_PROFILES.map((prof, i) => (
+                                <TouchableOpacity
+                                    key={prof.id}
+                                    style={styles.poolCandCard}
+                                    activeOpacity={0.8}
+                                    onPress={() => setSelectedCandidate(prof)}
+                                >
+                                    <Image source={{ uri: `https://ui-avatars.com/api/?name=Candidate+${i + 1}&background=7c3aed&color=fff` }} style={styles.poolCandImg} />
+                                    <View style={styles.flex1}>
+                                        <Text style={styles.poolCandTitle} numberOfLines={1}>{prof?.roleTitle || 'Candidate'} Expert</Text>
+                                        <Text style={styles.poolCandMeta}>{prof?.experienceYears || 0} Years Exp • {prof?.location || 'Remote'}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    )}
+                </View>
+            );
+        }
+
+        return (
+            <View style={[styles.containerLight]}>
+                <View style={[styles.headerPurple, { paddingTop: insets.top + 16, paddingBottom: 24, paddingHorizontal: 24 }]}>
+                    <Text style={styles.employerTitle}>Talent Pools</Text>
+                    <Text style={styles.employerSub}>Organize and track your candidate pipelines</Text>
+                </View>
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    {MOCK_POOLS.map(pool => (
+                        <View key={pool.id} style={styles.poolCardBox}>
+                            <View style={styles.poolBoxTop}>
+                                <Text style={styles.poolBoxTitle}>{pool.name}</Text>
+                                <View style={styles.poolBoxBadge}>
+                                    <Text style={styles.poolBoxBadgeText}>{pool.count} Candidates</Text>
+                                </View>
+                            </View>
+                            <TouchableOpacity
+                                style={styles.poolBoxBtn}
+                                activeOpacity={0.8}
+                                onPress={() => setSelectedPool(pool)}
+                            >
+                                <Text style={styles.poolBoxBtnText}>View Candidates</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ))}
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            </View>
         );
     };
 
-    const renderRoleCard = ({ item: role, index }) => (
-        <View style={styles.card}>
-            <View style={styles.cardHeader}>
-                <View style={{ flex: 1 }}>
-                    <Text style={styles.roleTitle}>{role.roleName}</Text>
-                    <Text style={styles.salary}>₹{role.expectedSalary ? role.expectedSalary.toLocaleString() : 0} / month</Text>
-                    {/* Experience moved down here */}
-                    <Text style={styles.experienceText}>
-                        {role.experienceInRole || 0} years experience
-                    </Text>
-                </View>
-
-                <View style={styles.headerActions}>
-                    {index === 0 && (
-                        <View style={styles.defaultBadge}>
-                            <Text style={styles.defaultText}>DEFAULT</Text>
-                        </View>
-                    )}
-                    <TouchableOpacity onPress={() => handleDelete(index)} style={styles.deleteButton}>
-                        <Ionicons name="trash-outline" size={20} color="#EF4444" />
+    // ── EMPLOYEE VIEW ──────────────────────────────────────────────────────
+    const renderEmployeeView = () => (
+        <View style={styles.flex1}>
+            <View style={[styles.employeeHeader, { paddingTop: insets.top + 16 }]}>
+                <View style={styles.employeeHeaderTopRow}>
+                    <Text style={styles.employeeTitle}>My Profiles</Text>
+                    <TouchableOpacity style={styles.createNewBtn} onPress={() => { /* trig interview */ }}>
+                        <IconMic size={14} color="#fff" />
+                        <Text style={styles.createNewBtnText}>Create New</Text>
                     </TouchableOpacity>
                 </View>
+                <Text style={styles.employeeSub}>Manage your diverse skillsets and job-specific profiles.</Text>
             </View>
 
-            {/* Description removed as requested to separate data */}
-
-            <View style={styles.skillsContainer}>
-                {role.skills?.map((skill, i) => (
-                    <View key={i} style={styles.skillBadge}>
-                        <Text style={styles.skillText}>{skill}</Text>
-                    </View>
-                ))}
-            </View>
-
-            <View style={styles.cardFooter}>
-                <View style={styles.locationContainer}>
-                    <Ionicons name="location-outline" size={16} color="#9CA3AF" />
-                    {/* Only Location here */}
-                    <Text style={styles.locationText}>
-                        {profile?.city || 'Location not set'}
-                    </Text>
+            {isLoading ? (
+                <View style={styles.scrollContent}>
+                    <SkeletonLoader height={160} style={{ borderRadius: 24, marginBottom: 16 }} />
+                    <SkeletonLoader height={160} style={{ borderRadius: 24, marginBottom: 16 }} />
+                    <SkeletonLoader height={160} style={{ borderRadius: 24, marginBottom: 16 }} />
                 </View>
-                <TouchableOpacity onPress={() => openEditModal(role, index)}>
-                    <Text style={styles.editText}>EDIT</Text>
-                </TouchableOpacity>
-            </View>
+            ) : (
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    {profiles.map((prof) => (
+                        <View key={prof._id} style={[styles.empProfileCard, prof.isDefault && styles.empProfileCardDefault]}>
+                            <View style={styles.empProfTopRow}>
+                                <Text style={styles.empProfTitle}>{prof.roleTitle}</Text>
+                                {prof.isDefault && (
+                                    <View style={styles.empProfDefaultBadge}>
+                                        <Text style={styles.empProfDefaultText}>DEFAULT</Text>
+                                    </View>
+                                )}
+                            </View>
+                            <Text style={styles.empProfSummary} numberOfLines={2}>{prof.summary}</Text>
+
+                            <View style={styles.empProfSkillsRow}>
+                                {prof?.skills && prof.skills.slice(0, 4).map((s, idx) => (
+                                    <View key={idx} style={styles.empProfSkillPill}>
+                                        <Text style={styles.empProfSkillText}>{s}</Text>
+                                    </View>
+                                ))}
+                            </View>
+
+                            <View style={styles.empProfFooter}>
+                                <View style={styles.empProfLocRow}>
+                                    <IconMapPin size={12} color="#94a3b8" />
+                                    <Text style={styles.empProfLocText}>{prof.experienceYears} Years Exp. • {prof.location}</Text>
+                                </View>
+                                <TouchableOpacity style={styles.empProfEditBtn} onPress={() => openEdit(prof)}>
+                                    <Text style={styles.empProfEditText}>EDIT</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    ))}
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            )}
         </View>
     );
 
-    if (loading) {
-        return (
-            <View style={[styles.container, styles.center]}>
-                <ActivityIndicator size="large" color="#4F46E5" />
-            </View>
-        );
-    }
-
     return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <View>
-                    <Text style={styles.headerTitle}>My Profiles</Text>
-                    <Text style={styles.headerSubtitle}>Manage your skillsets</Text>
-                </View>
-                <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-                    <Ionicons name="log-out-outline" size={24} color="#EF4444" />
-                </TouchableOpacity>
-            </View>
+        <View style={styles.container}>
+            {role === 'employee' ? renderEmployeeView() : renderEmployerFlow()}
 
-            <FlatList
-                data={profile?.roleProfiles || []}
-                renderItem={renderRoleCard}
-                keyExtractor={(item) => item._id || Math.random().toString()}
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyText}>No profiles found.</Text>
-                        <Text style={styles.emptySubtext}>Create one using the button below!</Text>
-                    </View>
-                }
-            />
-
-            {/* Floating Action Button for Create New (Video) */}
-            <TouchableOpacity
-                style={styles.fab}
-                onPress={() => navigation.navigate('VideoRecord')}
-            >
-                <Ionicons name="videocam" size={28} color="#FFF" />
-            </TouchableOpacity>
-
-            {/* Edit Modal */}
-            <Modal
-                visible={isModalVisible}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => setIsModalVisible(false)}
-            >
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={styles.modalOverlay}
-                >
-                    <View style={styles.modalContent}>
+            {/* Edit Profile Modal */}
+            <Modal visible={isModalVisible} animationType="slide" transparent onRequestClose={() => setIsModalVisible(false)}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+                    <View style={styles.modalSheet}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Edit Profile</Text>
-                            <TouchableOpacity onPress={() => setIsModalVisible(false)}>
-                                <Ionicons name="close" size={24} color="#6B7280" />
+                            <TouchableOpacity onPress={() => setIsModalVisible(false)} style={styles.modalCloseBtn}>
+                                <IconX size={20} color="#94a3b8" />
                             </TouchableOpacity>
                         </View>
 
-                        <ScrollView>
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Role Name</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    value={editForm.roleName}
-                                    onChangeText={(t) => setEditForm({ ...editForm, roleName: t })}
-                                />
-                            </View>
-
-                            <View style={styles.row}>
-                                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                                    <Text style={styles.label}>Experience (Yrs)</Text>
+                        {editingProfile && (
+                            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalScroll}>
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.inputLabel}>PROFILE ROLE TITLE</Text>
                                     <TextInput
-                                        style={styles.input}
-                                        value={editForm.experienceInRole}
-                                        keyboardType="numeric"
-                                        onChangeText={(t) => setEditForm({ ...editForm, experienceInRole: t })}
+                                        style={styles.inputField}
+                                        value={editingProfile.roleTitle}
+                                        onChangeText={t => setEditingProfile({ ...editingProfile, roleTitle: t })}
+                                        placeholderTextColor="#94a3b8"
                                     />
                                 </View>
-                                <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-                                    <Text style={styles.label}>Salary (₹/mo)</Text>
+
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.inputLabel}>PROFESSIONAL SUMMARY</Text>
                                     <TextInput
-                                        style={styles.input}
-                                        value={editForm.expectedSalary}
-                                        keyboardType="numeric"
-                                        onChangeText={(t) => setEditForm({ ...editForm, expectedSalary: t })}
+                                        style={[styles.inputField, styles.textArea]}
+                                        value={editingProfile.summary}
+                                        multiline
+                                        onChangeText={t => setEditingProfile({ ...editingProfile, summary: t })}
+                                        placeholderTextColor="#94a3b8"
                                     />
                                 </View>
-                            </View>
 
-                            <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Skills (Comma Separated)</Text>
-                                <TextInput
-                                    style={[styles.input, styles.textArea]}
-                                    value={editForm.skills}
-                                    multiline
-                                    onChangeText={(t) => setEditForm({ ...editForm, skills: t })}
-                                />
-                            </View>
+                                <View style={styles.rowInputs}>
+                                    <View style={[styles.inputGroup, styles.flex1, { marginRight: 12 }]}>
+                                        <Text style={styles.inputLabel}>YEARS EXPERIENCE</Text>
+                                        <TextInput
+                                            style={styles.inputField}
+                                            value={String(editingProfile.experienceYears)}
+                                            keyboardType="numeric"
+                                            onChangeText={t => setEditingProfile({ ...editingProfile, experienceYears: parseInt(t) || 0 })}
+                                            placeholderTextColor="#94a3b8"
+                                        />
+                                    </View>
+                                    <View style={[styles.inputGroup, styles.flex1]}>
+                                        <Text style={styles.inputLabel}>LOCATION</Text>
+                                        <TextInput
+                                            style={styles.inputField}
+                                            value={editingProfile.location}
+                                            onChangeText={t => setEditingProfile({ ...editingProfile, location: t })}
+                                            placeholderTextColor="#94a3b8"
+                                        />
+                                    </View>
+                                </View>
 
-                            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                                <Text style={styles.saveButtonText}>Save Changes</Text>
-                            </TouchableOpacity>
-                        </ScrollView>
+                                <View style={styles.modalActions}>
+                                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsModalVisible(false)}>
+                                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+                                        <Text style={styles.saveBtnText}>Save Changes</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </ScrollView>
+                        )}
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
-
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#F9FAFB',
-    },
-    center: {
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
-    },
-    headerTitle: {
-        fontSize: 28,
-        fontWeight: 'bold',
-        color: '#111827',
-    },
-    headerSubtitle: {
-        fontSize: 14,
-        color: '#6B7280'
-    },
-    logoutButton: {
-        padding: 8,
-    },
-    listContent: {
-        padding: 16,
-        paddingBottom: 100, // Space for FAB
-    },
-    card: {
-        backgroundColor: '#fff',
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 3,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 12,
-    },
-    roleTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#111827',
-    },
-    salary: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#7C3AED', // Purple
-        marginTop: 4
-    },
-    experienceText: {
-        fontSize: 14,
-        color: '#4B5563',
-        marginTop: 4,
-    },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8
-    },
-    deleteButton: {
-        padding: 4
-    },
-    defaultBadge: {
-        backgroundColor: '#F5F3FF',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-    },
-    defaultText: {
-        fontSize: 10,
-        fontWeight: 'bold',
-        color: '#7C3AED',
-        textTransform: 'uppercase',
-    },
-    description: {
-        fontSize: 14,
-        color: '#4B5563',
-        lineHeight: 20,
-        marginBottom: 16,
-    },
-    skillsContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginBottom: 16,
-    },
-    skillBadge: {
-        backgroundColor: '#F3F4F6',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 6,
-    },
-    skillText: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: '#374151',
-        textTransform: 'uppercase',
-    },
-    cardFooter: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: '#F3F4F6',
-    },
-    locationContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    locationText: {
-        fontSize: 12,
-        color: '#9CA3AF',
-        marginLeft: 4,
-        fontWeight: '500',
-    },
-    editText: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: '#7C3AED',
-        textTransform: 'uppercase',
-    },
-    fab: {
-        position: 'absolute',
-        bottom: 24,
-        right: 20,
-        backgroundColor: '#7C3AED',
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#7C3AED',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 6,
-    },
-    emptyState: {
-        alignItems: 'center',
-        marginTop: 60,
-    },
-    emptyText: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#374151',
-    },
-    emptySubtext: {
-        fontSize: 14,
-        color: '#6B7280',
-        marginTop: 8,
-    },
-    // Modal Styles
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'flex-end',
-    },
-    modalContent: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        padding: 24,
-        maxHeight: '80%',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-        elevation: 10,
-    },
-    modalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 24,
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#111827',
-    },
-    inputGroup: {
-        marginBottom: 16,
-    },
-    label: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#374151',
-        marginBottom: 8,
-    },
-    input: {
-        borderWidth: 1,
-        borderColor: '#D1D5DB',
-        borderRadius: 12,
-        padding: 12,
-        fontSize: 16,
-        backgroundColor: '#fff',
-    },
-    row: {
-        flexDirection: 'row',
-    },
-    textArea: {
-        height: 80,
-        textAlignVertical: 'top',
-    },
-    saveButton: {
-        backgroundColor: '#7C3AED',
-        borderRadius: 12,
-        padding: 16,
-        alignItems: 'center',
-        marginTop: 8,
-        marginBottom: 20,
-    },
-    saveButtonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: 'bold',
-    }
+    container: { flex: 1, backgroundColor: '#f8fafc' },
+    containerLight: { flex: 1, backgroundColor: '#f8fafc' },
+    flex1: { flex: 1 },
+    pad16: { padding: 16 },
+
+    // Employer Views
+    headerPurple: { backgroundColor: '#9333ea', paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center' },
+    backBtnLight: { padding: 4, marginRight: 12, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+    backTextLight: { color: '#fff', fontSize: 24, lineHeight: 28, fontWeight: '300' },
+    headerTitleLight: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
+    headerSubLight: { fontSize: 10, color: '#e9d5ff', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4, fontWeight: '700' },
+
+    employerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
+    employerSub: { fontSize: 14, color: '#e9d5ff' },
+
+    candidateHero: { alignItems: 'center', paddingTop: 32, paddingBottom: 24, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    candidateHeroImage: { width: 96, height: 96, borderRadius: 48, marginBottom: 12, borderWidth: 4, borderColor: '#faf5ff' },
+    candidateHeroTitle: { fontSize: 24, fontWeight: 'bold', color: '#0f172a', marginBottom: 8 },
+    candidateHeroLocationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    candidateHeroLocation: { fontSize: 14, color: '#64748b', fontWeight: '500' },
+
+    candyWrapper: { padding: 16 },
+    candyCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#f1f5f9', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 4, elevation: 1 },
+    candyCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    candyCardTitle: { fontWeight: 'bold', color: '#0f172a', fontSize: 16 },
+    candyResumeBtn: { backgroundColor: '#faf5ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#f3e8ff' },
+    candyResumeText: { fontSize: 10, fontWeight: 'bold', color: '#9333ea', letterSpacing: 0.5 },
+    candySummaryText: { fontSize: 14, color: '#475569', lineHeight: 22 },
+
+    poolCandCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#f1f5f9', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 4, elevation: 1, flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+    poolCandImg: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#f1f5f9', marginRight: 16 },
+    poolCandTitle: { fontWeight: 'bold', color: '#0f172a', fontSize: 16, marginBottom: 4 },
+    poolCandMeta: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+
+    scrollContent: { padding: 16 },
+    poolCardBox: { backgroundColor: '#fff', padding: 20, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 4, elevation: 2, borderWidth: 1, borderColor: '#f1f5f9', marginBottom: 16 },
+    poolBoxTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+    poolBoxTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', flex: 1 },
+    poolBoxBadge: { backgroundColor: '#f3e8ff', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#e9d5ff' },
+    poolBoxBadgeText: { fontSize: 11, fontWeight: 'bold', color: '#6b21a8' },
+    poolBoxBtn: { width: '100%', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e9d5ff', alignItems: 'center', backgroundColor: '#fff' },
+    poolBoxBtnText: { fontSize: 14, fontWeight: 'bold', color: '#9333ea' },
+
+    // Employee Views
+    employeeHeader: { backgroundColor: '#fff', paddingHorizontal: 24, paddingBottom: 24, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', zIndex: 10 },
+    employeeHeaderTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    employeeTitle: { fontSize: 24, fontWeight: 'bold', color: '#0f172a' },
+    createNewBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#9333ea', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 30, shadowColor: '#e9d5ff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 4 },
+    createNewBtnText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+    employeeSub: { fontSize: 14, color: '#64748b' },
+
+    empProfileCard: { backgroundColor: '#fff', padding: 20, borderRadius: 24, borderWidth: 2, borderColor: 'transparent', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 4, elevation: 1, marginBottom: 16 },
+    empProfileCardDefault: { borderColor: '#a855f7', shadowColor: '#a855f7', shadowOpacity: 0.1, shadowRadius: 12, elevation: 4 },
+    empProfTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+    empProfTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', flex: 1 },
+    empProfDefaultBadge: { backgroundColor: '#faf5ff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#f3e8ff', marginLeft: 8 },
+    empProfDefaultText: { fontSize: 10, fontWeight: '900', color: '#9333ea', letterSpacing: 1 },
+    empProfSummary: { fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 16 },
+
+    empProfSkillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+    empProfSkillPill: { backgroundColor: '#f8fafc', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#f1f5f9' },
+    empProfSkillText: { fontSize: 10, fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' },
+
+    empProfFooter: { borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    empProfLocRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    empProfLocText: { fontSize: 11, fontWeight: '500', color: '#94a3b8' },
+    empProfEditBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: 'transparent' },
+    empProfEditText: { fontSize: 12, fontWeight: 'bold', color: '#9333ea' },
+
+    // Edit Modal
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+    modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 24, maxHeight: '90%' },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+    modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
+    modalCloseBtn: { padding: 8 },
+    modalScroll: { paddingBottom: 40 },
+
+    inputGroup: { marginBottom: 16 },
+    inputLabel: { fontSize: 10, fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
+    inputField: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, fontWeight: '500', color: '#0f172a' },
+    textArea: { height: 100, textAlignVertical: 'top' },
+    rowInputs: { flexDirection: 'row', alignItems: 'center' },
+
+    modalActions: { flexDirection: 'row', gap: 12, marginTop: 8 },
+    cancelBtn: { flex: 1, paddingVertical: 16, backgroundColor: '#f1f5f9', borderRadius: 12, alignItems: 'center' },
+    cancelBtnText: { color: '#64748b', fontSize: 14, fontWeight: 'bold' },
+    saveBtn: { flex: 2, paddingVertical: 16, backgroundColor: '#9333ea', borderRadius: 12, alignItems: 'center', shadowColor: '#e9d5ff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 4 },
+    saveBtnText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 });
