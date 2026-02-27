@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
+const ffmpegInstaller = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegInstaller);
 const fs = require('fs');
 const path = require('path');
 const { extractWorkerDataFromAudio } = require('../services/geminiService');
@@ -10,6 +12,7 @@ const EmployerProfile = require('../models/EmployerProfile');
 const Job = require('../models/Job');
 const User = require('../models/userModel');
 const { protect } = require('../middleware/authMiddleware');
+const { uploadToS3 } = require('../services/s3Service');
 
 const upload = multer({ dest: path.join(__dirname, '../uploads/') });
 
@@ -22,6 +25,11 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
     const audioPath = path.join('uploads', `${req.file.filename}.mp3`);
 
     try {
+        // 0. Upload Video to S3 immediately
+        console.log(`☁️ Uploading ${req.file.filename} to S3...`);
+        const s3Url = await uploadToS3(videoPath, req.file.mimetype || 'video/mp4');
+        console.log(`✅ Uploaded to S3: ${s3Url}`);
+
         // 1. Extract Audio using FFmpeg (Stripping video for Gemini speed)
         await new Promise((resolve, reject) => {
             ffmpeg(videoPath)
@@ -32,124 +40,124 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
         });
 
         // 2. Process with Gemini 1.5 Flash
-        const aiData = await extractWorkerDataFromAudio(audioPath);
-
-        // Normalize data: If AI returned an array, use the first item
+        const isEmployer = req.user.role === 'recruiter' || req.user.role === 'employer' || req.user.primaryRole === 'employer';
+        const aiData = await extractWorkerDataFromAudio(audioPath, isEmployer ? 'employer' : 'worker');
         const rawData = Array.isArray(aiData) ? aiData[0] : aiData;
-        console.log("Raw AI Data:", rawData);
 
-        // Sanitize Data (Remove commas, handle N/A)
-        const totalExperience = isNaN(parseInt(rawData.totalExperience)) ? 0 : parseInt(rawData.totalExperience);
-        const expectedSalary = rawData.expectedSalary ? parseInt(String(rawData.expectedSalary).replace(/,/g, '')) : 0; // Handle "20,000"
-
-        // Helper to parse skills
-        let parsedSkills = [];
-        if (Array.isArray(rawData.skills)) {
-            parsedSkills = rawData.skills;
-        } else if (typeof rawData.skills === 'string') {
-            parsedSkills = rawData.skills.split(',').map(s => s.trim()).filter(Boolean);
-        }
-
-        const dataToSave = {
-            firstName: rawData.firstName || "Unknown",
-            city: rawData.city || "Unknown",
-            totalExperience: totalExperience,
-            roleName: rawData.roleName || "General",
-            expectedSalary: isNaN(expectedSalary) ? 0 : expectedSalary,
-            skills: parsedSkills
+        const parseNumber = (value, fallback = 0) => {
+            const normalized = Number.parseInt(String(value ?? '').replace(/[^0-9-]/g, ''), 10);
+            return Number.isFinite(normalized) ? normalized : fallback;
         };
-        console.log("Sanitized Data:", dataToSave);
 
-        // 3. Save based on User Role
+        const toSkills = (value) => {
+            if (Array.isArray(value)) return value.filter(Boolean).map((item) => String(item).trim()).filter(Boolean);
+            if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+            return [];
+        };
+
         let savedProfile;
+        let extractedData;
+        let createdJob = null;
 
-        if (req.user.role === 'recruiter' || req.user.role === 'employer') {
-            // Employer Logic
+        if (isEmployer) {
+            extractedData = {
+                jobTitle: rawData?.jobTitle || rawData?.roleTitle || rawData?.roleName || null,
+                companyName: rawData?.companyName || req.user.name || 'My Company',
+                requiredSkills: toSkills(rawData?.requiredSkills || rawData?.skills),
+                experienceRequired: rawData?.experienceRequired || null,
+                salaryRange: rawData?.salaryRange || rawData?.expectedSalary || 'Negotiable',
+                shift: rawData?.shift || rawData?.preferredShift || 'flexible',
+                location: rawData?.location || rawData?.city || 'Remote',
+                description: rawData?.description || 'New hiring requirement from Smart Interview.',
+            };
+
             savedProfile = await EmployerProfile.findOneAndUpdate(
                 { user: req.user._id },
                 {
                     $set: {
-                        companyName: (dataToSave.firstName && dataToSave.firstName !== 'Unknown') ? dataToSave.firstName : "My Company",
-                        location: (dataToSave.city && dataToSave.city !== 'Unknown') ? dataToSave.city : "Remote",
+                        companyName: extractedData.companyName || 'My Company',
+                        location: extractedData.location || 'Remote',
+                        industry: rawData?.industry || undefined,
                         videoIntroduction: {
-                            videoUrl: `http://localhost:5001/${videoPath}`,
-                            transcript: "Video processed by Gemini AI"
-                        }
-                    }
+                            videoUrl: s3Url,
+                            transcript: 'Video processed by Gemini AI',
+                        },
+                    },
                 },
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
 
-            // If the profile didn't exist, we might fail on 'required' fields like companyName if we don't provide them.
-            // But we don't have them from Gemini!
-            // Solution: User should use EmployerProfileCreateScreen FIRST, then Video?
-            // User said: "as an employer i just record the video ... profile is not cretaed".
-            // Maybe we create a skeleton profile?
-            if (!savedProfile) {
-                savedProfile = await EmployerProfile.create({
-                    user: req.user._id,
-                    companyName: dataToSave.firstName || "New Employer",
-                    location: dataToSave.city || "Unknown",
-                    videoIntroduction: {
-                        videoUrl: `http://localhost:5001/${videoPath}`,
-                        transcript: "Video processed by Gemini AI"
-                    }
-                });
-            }
-
-            // --- NEW: AUTOMATICALLY CREATE A JOB POSTING ---
-            const jobTitle = dataToSave.roleName && dataToSave.roleName !== 'General' ? dataToSave.roleName : "Open Position";
-            const companyName = savedProfile.companyName && savedProfile.companyName !== 'Unknown' ? savedProfile.companyName : "My Company";
-
-            console.log(`📝 Creating Job: "${jobTitle}" at "${companyName}"`);
-
-            const newJob = await Job.create({
+            createdJob = await Job.create({
                 employerId: req.user._id,
-                title: jobTitle,
-                companyName: companyName,
-                location: savedProfile.location || dataToSave.city || "Remote", // Robust fallback
-                salaryRange: dataToSave.expectedSalary ? `${dataToSave.expectedSalary}` : "Negotiable",
-                requirements: Array.isArray(dataToSave.skills) ? dataToSave.skills : [],
-                isOpen: true
+                title: extractedData.jobTitle || 'Open Position',
+                companyName: extractedData.companyName || savedProfile.companyName || 'My Company',
+                location: extractedData.location || savedProfile.location || 'Remote',
+                salaryRange: extractedData.salaryRange || 'Negotiable',
+                requirements: extractedData.requiredSkills,
+                shift: String(extractedData.shift || 'flexible').toLowerCase() === 'day'
+                    ? 'Day'
+                    : String(extractedData.shift || 'flexible').toLowerCase() === 'night'
+                        ? 'Night'
+                        : 'Flexible',
+                isPulse: String(req.body?.isPulse || '').toLowerCase() === 'true',
+                isOpen: true,
             });
-            console.log("✅ Job Created via Video:", newJob._id);
-
         } else {
-            // Worker Logic (Existing)
+            const fullName = String(rawData?.name || rawData?.firstName || req.user.name || '').trim();
+            const [firstName = 'Unknown', ...rest] = fullName.split(' ').filter(Boolean);
+            const lastName = rest.join(' ');
+
+            extractedData = {
+                name: fullName || `${firstName} ${lastName}`.trim(),
+                roleTitle: rawData?.roleTitle || rawData?.roleName || null,
+                skills: toSkills(rawData?.skills),
+                experienceYears: Number.isFinite(rawData?.experienceYears) ? rawData.experienceYears : parseNumber(rawData?.totalExperience, null),
+                expectedSalary: rawData?.expectedSalary || null,
+                preferredShift: rawData?.preferredShift || 'flexible',
+                location: rawData?.location || rawData?.city || null,
+                summary: rawData?.summary || 'Profile generated from Smart Interview.',
+            };
+
             savedProfile = await WorkerProfile.findOneAndUpdate(
                 { user: req.user._id },
                 {
                     $set: {
-                        firstName: dataToSave.firstName,
-                        city: dataToSave.city,
-                        totalExperience: dataToSave.totalExperience,
+                        firstName,
+                        lastName,
+                        city: extractedData.location || 'Unknown',
+                        totalExperience: Number.isFinite(extractedData.experienceYears) ? extractedData.experienceYears : 0,
                         videoIntroduction: {
-                            videoUrl: `http://localhost:5001/${videoPath}`, // Serve static file
-                            transcript: "Video processed by Gemini AI"
-                        }
+                            videoUrl: s3Url,
+                            transcript: 'Video processed by Gemini AI',
+                        },
+                        roleProfiles: [{
+                            roleName: extractedData.roleTitle || 'General',
+                            experienceInRole: Number.isFinite(extractedData.experienceYears) ? extractedData.experienceYears : 0,
+                            expectedSalary: parseNumber(extractedData.expectedSalary, 0),
+                            skills: extractedData.skills,
+                            lastUpdated: new Date(),
+                        }],
                     },
-                    $push: {
-                        roleProfiles: {
-                            roleName: dataToSave.roleName,
-                            experienceInRole: dataToSave.totalExperience,
-                            expectedSalary: dataToSave.expectedSalary,
-                            skills: dataToSave.skills
-                        }
-                    }
                 },
-                { upsert: true, new: true }
+                { upsert: true, new: true, setDefaultsOnInsert: true }
             );
         }
-        console.log("Database Response:", savedProfile);
 
         // 4. Update Onboarding Flag
         await User.findByIdAndUpdate(req.user._id, { hasCompletedProfile: true });
 
         // Cleanup files
-        fs.unlinkSync(audioPath);
-        // Note: We keep videoPath so the recruiter can watch the video later
+        if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+        if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+        // Video is now on S3, local not needed
 
-        res.status(200).json({ success: true, profile: savedProfile });
+        res.status(200).json({
+            success: true,
+            videoUrl: s3Url,
+            extractedData,
+            profile: savedProfile,
+            job: createdJob,
+        });
 
     } catch (error) {
         console.error("Pipeline Error:", error);

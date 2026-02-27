@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, ScrollView,
+    View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
     Animated, Dimensions, Alert, ActivityIndicator
 } from 'react-native';
 import { logger } from '../utils/logger';
@@ -66,7 +66,7 @@ const CATEGORY_COLORS = {
 };
 
 // ─── STAGES ─────────────────────────────────────────────────────────────────
-// 'intro' → 'question' → 'recording' → 'feedback' → 'complete'
+// 'intro' → 'question' → 'recording' → 'feedback' → 'review' → 'complete'
 
 export default function SmartInterviewScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
@@ -80,8 +80,9 @@ export default function SmartInterviewScreen({ navigation, route }) {
     const [showTip, setShowTip] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [finalVideoUri, setFinalVideoUri] = useState(null);
+    const [extractedData, setExtractedData] = useState(null);
 
-    const { userInfo } = useContext(AuthContext);
+    const { userInfo, completeOnboarding } = useContext(AuthContext);
 
     const timerRef = useRef(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -170,7 +171,34 @@ export default function SmartInterviewScreen({ navigation, route }) {
             });
 
             if (data.success) {
-                setStage('complete');
+                const role = getPrimaryRoleFromUser(userInfo);
+                const defaultReviewData = role === 'employer'
+                    ? {
+                        jobTitle: '',
+                        companyName: userInfo?.name || '',
+                        requiredSkills: [],
+                        experienceRequired: '',
+                        salaryRange: '',
+                        shift: 'flexible',
+                        location: '',
+                        description: '',
+                    }
+                    : {
+                        name: userInfo?.name || '',
+                        roleTitle: '',
+                        skills: [],
+                        experienceYears: 0,
+                        expectedSalary: '',
+                        preferredShift: 'flexible',
+                        location: '',
+                        summary: '',
+                    };
+
+                setExtractedData({
+                    ...defaultReviewData,
+                    ...(data?.extractedData || {}),
+                });
+                setStage('review');
             } else {
                 throw new Error(data.message || "Upload failed");
             }
@@ -183,6 +211,51 @@ export default function SmartInterviewScreen({ navigation, route }) {
             );
         } finally {
             setIsUploading(false);
+        }
+    };
+
+    const handleConfirmSave = async () => {
+        if (!extractedData) return;
+
+        const role = getPrimaryRoleFromUser(userInfo);
+        try {
+            if (role === 'employer') {
+                await client.put('/api/users/profile', {
+                    companyName: extractedData.companyName || userInfo?.name || 'My Company',
+                    location: extractedData.location || 'Remote',
+                    industry: extractedData.jobTitle || '',
+                    hasCompletedProfile: true,
+                });
+            } else {
+                const fullName = String(extractedData.name || userInfo?.name || '').trim();
+                const [firstName = 'Unknown', ...rest] = fullName.split(' ').filter(Boolean);
+                const lastName = rest.join(' ');
+                const expectedSalaryNum = Number.parseInt(String(extractedData.expectedSalary || '').replace(/[^0-9]/g, ''), 10);
+                const experienceYears = Number.isFinite(Number(extractedData.experienceYears))
+                    ? Number(extractedData.experienceYears)
+                    : 0;
+
+                await client.put('/api/users/profile', {
+                    firstName,
+                    lastName,
+                    city: extractedData.location || 'Unknown',
+                    totalExperience: experienceYears,
+                    roleProfiles: [{
+                        roleName: extractedData.roleTitle || 'General',
+                        experienceInRole: experienceYears,
+                        expectedSalary: Number.isFinite(expectedSalaryNum) ? expectedSalaryNum : 0,
+                        skills: Array.isArray(extractedData.skills) ? extractedData.skills : String(extractedData.skills || '').split(',').map((s) => s.trim()).filter(Boolean),
+                        lastUpdated: new Date(),
+                    }],
+                    hasCompletedProfile: true,
+                });
+            }
+
+            await completeOnboarding?.();
+            setStage('complete');
+        } catch (error) {
+            logger.error('Profile save after review failed:', error);
+            Alert.alert('Save Failed', 'Could not save profile. Please try again.');
         }
     };
 
@@ -262,6 +335,128 @@ export default function SmartInterviewScreen({ navigation, route }) {
         );
     }
 
+    if (stage === 'review') {
+        const isDemandMode = getPrimaryRoleFromUser(userInfo) === 'employer';
+        return (
+            <View style={[styles.container, { paddingTop: insets.top }]}>
+                <ScrollView contentContainerStyle={styles.scrollCenter} showsVerticalScrollIndicator={false}>
+                    <Text style={styles.completeTitle}>Here's What We Understood</Text>
+                    <Text style={styles.completeSubtitle}>Review and edit before we save your profile.</Text>
+
+                    <View style={styles.reviewCard}>
+                        {isDemandMode ? (
+                            <>
+                                <Text style={styles.reviewLabel}>Job Title</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.jobTitle || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), jobTitle: value }))}
+                                    placeholder="Job title"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Company Name</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.companyName || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), companyName: value }))}
+                                    placeholder="Company name"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Skills</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={Array.isArray(extractedData?.requiredSkills) ? extractedData.requiredSkills.join(', ') : String(extractedData?.requiredSkills || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), requiredSkills: value.split(',').map((item) => item.trim()).filter(Boolean) }))}
+                                    placeholder="Required skills"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Location</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.location || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), location: value }))}
+                                    placeholder="Location"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Description</Text>
+                                <TextInput
+                                    style={[styles.reviewInput, styles.reviewInputMultiline]}
+                                    multiline
+                                    value={String(extractedData?.description || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), description: value }))}
+                                    placeholder="Job description"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.reviewLabel}>Name</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.name || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), name: value }))}
+                                    placeholder="Your name"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Role</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.roleTitle || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), roleTitle: value }))}
+                                    placeholder="Role title"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Skills</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={Array.isArray(extractedData?.skills) ? extractedData.skills.join(', ') : String(extractedData?.skills || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), skills: value.split(',').map((item) => item.trim()).filter(Boolean) }))}
+                                    placeholder="Skills"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Experience (Years)</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    keyboardType="numeric"
+                                    value={String(extractedData?.experienceYears ?? '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), experienceYears: value }))}
+                                    placeholder="Years of experience"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Location</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.location || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), location: value }))}
+                                    placeholder="Location"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                                <Text style={styles.reviewLabel}>Summary</Text>
+                                <TextInput
+                                    style={[styles.reviewInput, styles.reviewInputMultiline]}
+                                    multiline
+                                    value={String(extractedData?.summary || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), summary: value }))}
+                                    placeholder="Summary"
+                                    placeholderTextColor="#94a3b8"
+                                />
+                            </>
+                        )}
+                    </View>
+
+                    <TouchableOpacity
+                        style={styles.startBtn}
+                        onPress={handleConfirmSave}
+                        activeOpacity={0.85}
+                    >
+                        <Text style={styles.startBtnText}>Looks Good →</Text>
+                    </TouchableOpacity>
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            </View>
+        );
+    }
+
     // ── COMPLETE STAGE ────────────────────────────────────────────────────
     if (stage === 'complete') {
         const isDemandMode = getPrimaryRoleFromUser(userInfo) === 'employer';
@@ -284,10 +479,10 @@ export default function SmartInterviewScreen({ navigation, route }) {
 
                     <TouchableOpacity
                         style={styles.startBtn}
-                        onPress={() => navigation.navigate('MainTab', { screen: isDemandMode ? 'My Jobs' : 'Connect' })}
+                        onPress={() => navigation.navigate('MainTab', { screen: isDemandMode ? 'My Jobs' : 'Profiles' })}
                         activeOpacity={0.85}
                     >
-                        <Text style={styles.startBtnText}>{isDemandMode ? 'View My Posts →' : 'See Matches →'}</Text>
+                        <Text style={styles.startBtnText}>{isDemandMode ? 'View My Posts →' : 'Go to Profile →'}</Text>
                     </TouchableOpacity>
 
                     <View style={{ height: 40 }} />
@@ -604,6 +799,36 @@ const styles = StyleSheet.create({
     summaryTime: { color: '#64748b', fontSize: 11, fontWeight: '600' },
     retryLink: { paddingVertical: 14, alignItems: 'center' },
     retryLinkText: { color: '#7c3aed', fontSize: 14, fontWeight: '700' },
+    reviewCard: {
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        padding: 16,
+        width: '100%',
+        marginBottom: 20,
+    },
+    reviewLabel: {
+        color: '#cbd5e1',
+        fontSize: 12,
+        fontWeight: '700',
+        marginBottom: 6,
+        marginTop: 8,
+    },
+    reviewInput: {
+        backgroundColor: 'rgba(15,23,42,0.6)',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        color: '#fff',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 14,
+    },
+    reviewInputMultiline: {
+        minHeight: 90,
+        textAlignVertical: 'top',
+    },
 
     uploadingOverlayAbsolute: {
         position: 'absolute',
