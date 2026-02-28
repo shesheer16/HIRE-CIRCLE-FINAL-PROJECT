@@ -14,12 +14,13 @@ const User = require('../models/userModel');
 const { protect } = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../services/s3Service');
 const { publishMetric } = require('../services/metricsService');
+const { isRecruiter } = require('../utils/roleGuards');
 
 const upload = multer({ dest: path.join(__dirname, '../uploads/') });
 
 router.get('/test', (req, res) => res.send('Upload route is reachable on 5001'));
 
-router.post('/video', protect, upload.single('video'), async (req, res) => {
+const handleVideoUpload = async (req, res) => {
     if (!req.file) return res.status(400).json({ message: "No video file provided" });
 
     const videoPath = req.file.path;
@@ -60,7 +61,7 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
         });
 
         // 2. Process with Gemini 1.5 Flash
-        const isEmployer = req.user.role === 'recruiter' || req.user.role === 'employer' || req.user.primaryRole === 'employer';
+        const isEmployer = isRecruiter(req.user);
         const aiData = await extractWorkerDataFromAudio(audioPath, isEmployer ? 'employer' : 'worker');
         const rawData = Array.isArray(aiData) ? aiData[0] : aiData;
 
@@ -180,10 +181,13 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Pipeline Error:", error);
+        console.warn("Pipeline Error:", error);
         if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
         res.status(500).json({ message: "Error processing video", error: error.message });
     }
-});
+};
+
+router.post('/video', protect, upload.single('video'), handleVideoUpload);
 
 module.exports = router;
+module.exports.handleVideoUpload = handleVideoUpload;

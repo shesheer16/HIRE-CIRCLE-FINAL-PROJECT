@@ -19,6 +19,7 @@ const {
     getDailyProcessingCount,
     trackInterviewEvent,
 } = require('../services/interviewProcessingService');
+const uploadRoutes = require('./uploadRoutes');
 
 const router = express.Router();
 const upload = multer({ dest: path.join(__dirname, '../uploads/') });
@@ -63,6 +64,10 @@ const isLikelyMp4 = (filePath) => {
 router.post('/video', protect, upload.single('video'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ success: false, error: 'No video file provided.' });
+    }
+
+    if (!process.env.AWS_SQS_INTERVIEW_QUEUE_URL) {
+        return uploadRoutes.handleVideoUpload(req, res);
     }
 
     const localVideoPath = req.file.path;
@@ -286,7 +291,7 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
             }
         }
 
-        console.error(JSON.stringify({
+        console.warn(JSON.stringify({
             event: 'v2_upload_error',
             correlationId: correlationId || 'pending',
             message: error.message,

@@ -1,9 +1,11 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Animated,
     Alert,
     AppState,
     Dimensions,
+    Easing,
     Modal,
     ScrollView,
     StyleSheet,
@@ -15,9 +17,12 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import client from '../api/client';
+import InterviewClarificationSheet from '../components/InterviewClarificationSheet';
+import clarificationFieldMap from '../config/clarificationFieldMap';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
 import { triggerHaptic } from '../utils/haptics';
 import { logger } from '../utils/logger';
@@ -36,6 +41,7 @@ const MAX_RECORD_DURATION_SECONDS = 90;
 const HYBRID_POLL_WINDOW_MS = 30 * 1000;
 const POLL_INTERVAL_MS = 5 * 1000;
 const PROCESSING_NOTICE_TIMEOUT_MS = 2 * 60 * 1000;
+const PROCESSING_STAGNATION_TIMEOUT_MS = 10 * 1000;
 const BOOST_UPSELL_TYPE = 'smart_interview_post_confirm';
 
 const STAGES = {
@@ -46,6 +52,17 @@ const STAGES = {
     REVIEW: 'review',
     COMPLETE: 'complete',
 };
+
+const REQUIRED_SLOT_FIELD_SET = new Set([
+    'fullName',
+    'city',
+    'primaryRole',
+    'primarySkills',
+    'totalExperienceYears',
+    'shiftPreference',
+    'expectedSalary',
+    'availabilityType',
+]);
 
 const buildDefaultExtractedData = (role, userInfo) => {
     if (role === 'employer') {
@@ -96,6 +113,63 @@ export default function SmartInterviewScreen({ navigation, route }) {
     const [processingMessageIndex, setProcessingMessageIndex] = useState(0);
     const [showBoostUpsell, setShowBoostUpsell] = useState(false);
     const [upsellJobId, setUpsellJobId] = useState(null);
+    const [uiPaused, setUiPaused] = useState(false);
+    const [cameraReady, setCameraReady] = useState(false);
+    const [recordingRequested, setRecordingRequested] = useState(false);
+    const [slotState, setSlotState] = useState({});
+    const [slotConfidence, setSlotConfidence] = useState({});
+    const [ambiguousFields, setAmbiguousFields] = useState([]);
+    const [missingSlot, setMissingSlot] = useState(null);
+    const [interviewComplete, setInterviewComplete] = useState(false);
+    const [clarificationField, setClarificationField] = useState(null);
+    const [clarificationVisible, setClarificationVisible] = useState(false);
+    const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
+    const [clarificationQueuedAt, setClarificationQueuedAt] = useState(null);
+    const [clarificationContextText, setClarificationContextText] = useState('');
+    const [clarificationHints, setClarificationHints] = useState({});
+    const [showThinkingIndicator, setShowThinkingIndicator] = useState(false);
+    const [processingFallbackMessage, setProcessingFallbackMessage] = useState(null);
+    const [adaptiveQuestion, setAdaptiveQuestion] = useState(null);
+    const [interviewStep, setInterviewStep] = useState(0);
+    const [maxSteps, setMaxSteps] = useState(8);
+    const [profileQualityScore, setProfileQualityScore] = useState(0);
+    const [slotCompletenessRatio, setSlotCompletenessRatio] = useState(0);
+    const [communicationClarityScore, setCommunicationClarityScore] = useState(0);
+    const [salaryOutlierFlag, setSalaryOutlierFlag] = useState(false);
+    const [salaryMedianForRoleCity, setSalaryMedianForRoleCity] = useState(null);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [savingProfile, setSavingProfile] = useState(false);
+
+    const safeGoBack = useCallback(() => {
+        if (isRecording) {
+            Alert.alert('Stop Recording?', 'Your current recording will be lost.', [
+                { text: 'Continue Recording', style: 'cancel' },
+                {
+                    text: 'Stop & Exit',
+                    style: 'destructive',
+                    onPress: () => {
+                        if (cameraRef.current) {
+                            cameraRef.current.stopRecording();
+                        }
+                        setIsRecording(false);
+                        clearTimer();
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                            return;
+                        }
+                        navigation.navigate('MainTab');
+                    },
+                },
+            ]);
+            return;
+        }
+
+        if (navigation.canGoBack()) {
+            navigation.goBack();
+            return;
+        }
+        navigation.navigate('MainTab');
+    }, [clearTimer, isRecording, navigation]);
 
     const cameraRef = useRef(null);
     const timerRef = useRef(null);
@@ -108,6 +182,21 @@ export default function SmartInterviewScreen({ navigation, route }) {
     const mountedRef = useRef(true);
     const stageRef = useRef(stage);
     const upsellShownRef = useRef(false);
+    const uiPausedRef = useRef(uiPaused);
+    const activeClarificationFieldRef = useRef(null);
+    const sceneScaleAnimRef = useRef(new Animated.Value(1));
+    const thinkingOpacityAnimRef = useRef(new Animated.Value(0));
+    const clarificationOpenTimerRef = useRef(null);
+    const clarificationResumeTimerRef = useRef(null);
+    const clarificationEventKeyRef = useRef('');
+    const lastStateSignatureRef = useRef('');
+    const lastStateChangeAtRef = useRef(0);
+    const lastHybridPayloadRef = useRef(null);
+    const stagnationFallbackShownRef = useRef(false);
+    const reviewBadgePulseRef = useRef(new Animated.Value(1));
+    const successOpacityRef = useRef(new Animated.Value(0));
+    const completionNavigationTimerRef = useRef(null);
+    const completionAlertShownRef = useRef(false);
 
     const statusSubtitle = useMemo(() => {
         if (stage === STAGES.RECORDING) return 'Recording...';
@@ -116,6 +205,119 @@ export default function SmartInterviewScreen({ navigation, route }) {
         if (stage === STAGES.COMPLETE) return "You're all set!";
         return 'Tell us about yourself';
     }, [stage]);
+
+    const activeInterviewPrompt = useMemo(() => {
+        if (adaptiveQuestion) return adaptiveQuestion;
+        if (!missingSlot) return null;
+        return clarificationFieldMap?.[missingSlot]?.question || null;
+    }, [adaptiveQuestion, missingSlot]);
+
+    const lowConfidenceFields = useMemo(() => {
+        return Object.entries(slotConfidence || {})
+            .filter(([field, confidence]) => REQUIRED_SLOT_FIELD_SET.has(field) && Number(confidence || 0) < 0.75)
+            .map(([field]) => field);
+    }, [slotConfidence]);
+
+    const highlightedStrengths = useMemo(() => {
+        const strengths = [];
+        if (slotState?.primaryRole) strengths.push(`Role identified: ${slotState.primaryRole}`);
+        if (Array.isArray(slotState?.primarySkills) && slotState.primarySkills.length) {
+            strengths.push(`${slotState.primarySkills.length} core skills captured`);
+        }
+        if (slotState?.city) strengths.push(`Location mapped: ${slotState.city}`);
+        if (Number(slotState?.totalExperienceYears) >= 1) {
+            strengths.push(`${slotState.totalExperienceYears} years experience captured`);
+        }
+        return strengths.slice(0, 3);
+    }, [slotState]);
+
+    const sceneScaleAnim = sceneScaleAnimRef.current;
+    const thinkingOpacityAnim = thinkingOpacityAnimRef.current;
+    const reviewBadgePulse = reviewBadgePulseRef.current;
+    const successOpacity = successOpacityRef.current;
+
+    const truncateSnippet = useCallback((text) => {
+        const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!normalized) return '';
+        const maxLen = 72;
+        if (normalized.length <= maxLen) return normalized;
+        return `${normalized.slice(0, maxLen - 1)}…`;
+    }, []);
+
+    const clearClarificationTimers = useCallback(() => {
+        if (clarificationOpenTimerRef.current) {
+            clearTimeout(clarificationOpenTimerRef.current);
+            clarificationOpenTimerRef.current = null;
+        }
+        if (clarificationResumeTimerRef.current) {
+            clearTimeout(clarificationResumeTimerRef.current);
+            clarificationResumeTimerRef.current = null;
+        }
+    }, []);
+
+    const buildClarificationContext = useCallback((payload, fieldName) => {
+        const hintedContext = payload?.clarificationHints?.[fieldName]?.contextText;
+        if (hintedContext) {
+            return String(hintedContext);
+        }
+
+        const sourceFromPayload = payload?.transcriptSnippet || payload?.latestTranscriptSnippet || payload?.transcriptChunk;
+        if (sourceFromPayload) {
+            return `You mentioned "${truncateSnippet(sourceFromPayload)}".`;
+        }
+
+        const fieldValue = payload?.slotState?.[fieldName];
+        if (Array.isArray(fieldValue) && fieldValue.length) {
+            return `You mentioned "${truncateSnippet(fieldValue.join(', '))}".`;
+        }
+        if (fieldValue !== null && fieldValue !== undefined && String(fieldValue).trim()) {
+            return `You mentioned "${truncateSnippet(String(fieldValue))}".`;
+        }
+
+        return 'You mentioned this briefly.';
+    }, [truncateSnippet]);
+
+    const presentClarificationForField = useCallback((fieldName, payload) => {
+        const nextField = String(fieldName || '').trim();
+        if (!nextField) return;
+
+        const isAlreadyVisible = clarificationVisible && clarificationField === nextField;
+        const isAlreadyThinking = showThinkingIndicator && activeClarificationFieldRef.current === nextField;
+        if (isAlreadyVisible || isAlreadyThinking) return;
+
+        clearClarificationTimers();
+        const contextText = buildClarificationContext(payload, nextField);
+        const eventKey = `${String(payload?.processingId || processingId || '')}:${String(payload?.interviewStep || '')}:${nextField}`;
+
+        setUiPaused(true);
+        setClarificationVisible(false);
+        setClarificationField(nextField);
+        setClarificationContextText(contextText);
+        setShowThinkingIndicator(true);
+        activeClarificationFieldRef.current = nextField;
+
+        if (clarificationEventKeyRef.current !== eventKey) {
+            clarificationEventKeyRef.current = eventKey;
+            trackEvent('clarificationTriggered', {
+                clarificationFieldName: nextField,
+                processingId: String(payload?.processingId || processingId || ''),
+            });
+        }
+
+        clarificationOpenTimerRef.current = setTimeout(() => {
+            if (!mountedRef.current) return;
+            setShowThinkingIndicator(false);
+            setClarificationQueuedAt(Date.now());
+            setClarificationVisible(true);
+        }, 380);
+    }, [
+        buildClarificationContext,
+        clarificationField,
+        clarificationVisible,
+        clearClarificationTimers,
+        processingId,
+        showThinkingIndicator,
+    ]);
 
     const clearTimer = useCallback(() => {
         if (timerRef.current) {
@@ -150,6 +352,52 @@ export default function SmartInterviewScreen({ navigation, route }) {
             ...(payload || {}),
         };
     }, [role, userInfo]);
+
+    const mapSlotStateToExtractedData = useCallback((slots = {}) => {
+        if (isEmployer) {
+            return {
+                jobTitle: slots.primaryRole || '',
+                companyName: userInfo?.name || '',
+                requiredSkills: Array.isArray(slots.primarySkills) ? slots.primarySkills : [],
+                experienceRequired: slots.totalExperienceYears != null ? String(slots.totalExperienceYears) : '',
+                salaryRange: slots.expectedSalary != null ? String(slots.expectedSalary) : '',
+                shift: slots.shiftPreference || 'flexible',
+                location: slots.city || '',
+                description: '',
+            };
+        }
+
+        return {
+            name: slots.fullName || userInfo?.name || '',
+            roleTitle: slots.primaryRole || '',
+            skills: Array.isArray(slots.primarySkills) ? slots.primarySkills : [],
+            experienceYears: Number.isFinite(Number(slots.totalExperienceYears))
+                ? Number(slots.totalExperienceYears)
+                : 0,
+            expectedSalary: slots.expectedSalary != null ? String(slots.expectedSalary) : '',
+            preferredShift: slots.shiftPreference || 'flexible',
+            location: slots.city || '',
+            summary: '',
+        };
+    }, [isEmployer, userInfo?.name]);
+
+    const finalizeToReview = useCallback((data = {}) => {
+        stopStatusTracking();
+        setWaitingForPush(false);
+        setShowThinkingIndicator(false);
+        setClarificationVisible(false);
+        setClarificationField(null);
+        setClarificationContextText('');
+        setUiPaused(false);
+
+        const slotDerived = mapSlotStateToExtractedData(data?.slotState || {});
+        const merged = hydrateExtractedData(data?.extractedData || slotDerived);
+        setExtractedData(merged);
+        setCreatedJobId(data?.createdJobId || null);
+        setStage(STAGES.REVIEW);
+        successOpacity.setValue(0);
+        triggerHaptic.success();
+    }, [hydrateExtractedData, mapSlotStateToExtractedData, stopStatusTracking, successOpacity]);
 
     const getBoostDismissKey = useCallback((jobId) => {
         const userId = String(userInfo?._id || 'unknown');
@@ -210,6 +458,63 @@ export default function SmartInterviewScreen({ navigation, route }) {
         }
     }, [upsellJobId]);
 
+    const applyHybridPayload = useCallback((data) => {
+        const nextSlotState = data?.slotState && typeof data.slotState === 'object' ? data.slotState : {};
+        const nextSlotConfidence = data?.slotConfidence && typeof data.slotConfidence === 'object' ? data.slotConfidence : {};
+        const nextAmbiguousFields = Array.isArray(data?.ambiguousFields) ? data.ambiguousFields : [];
+        const signature = [
+            String(data?.status || ''),
+            String(Boolean(data?.interviewComplete)),
+            String(data?.missingSlot || ''),
+            nextAmbiguousFields.join(','),
+            String(data?.interviewStep ?? ''),
+        ].join('|');
+
+        setSlotState(nextSlotState);
+        setSlotConfidence(nextSlotConfidence);
+        setAmbiguousFields(nextAmbiguousFields);
+        setMissingSlot(data?.missingSlot || null);
+        setInterviewComplete(Boolean(data?.interviewComplete));
+        setAdaptiveQuestion(data?.adaptiveQuestion || null);
+        setClarificationHints(data?.clarificationHints && typeof data.clarificationHints === 'object' ? data.clarificationHints : {});
+        setInterviewStep(Number(data?.interviewStep || 0));
+        setMaxSteps(Math.max(1, Number(data?.maxSteps || 8)));
+        setProfileQualityScore(Number(data?.profileQualityScore || 0));
+        setSlotCompletenessRatio(Number(data?.slotCompletenessRatio || 0));
+        setCommunicationClarityScore(Number(data?.communicationClarityScore || 0));
+        setSalaryOutlierFlag(Boolean(data?.salaryOutlierFlag));
+        setSalaryMedianForRoleCity(data?.salaryMedianForRoleCity ?? null);
+        lastHybridPayloadRef.current = data || null;
+
+        if (lastStateSignatureRef.current !== signature) {
+            lastStateSignatureRef.current = signature;
+            lastStateChangeAtRef.current = Date.now();
+            stagnationFallbackShownRef.current = false;
+            setProcessingFallbackMessage(null);
+        }
+
+        if (nextAmbiguousFields.length > 0) {
+            const firstField = String(
+                nextAmbiguousFields.find((field) => Boolean(clarificationFieldMap[field]))
+                || nextAmbiguousFields[0]
+                || ''
+            );
+            if (!clarificationFieldMap[firstField]) {
+                setUiPaused(false);
+                return;
+            }
+            presentClarificationForField(firstField, data);
+        } else {
+            clearClarificationTimers();
+            setShowThinkingIndicator(false);
+            setClarificationVisible(false);
+            setClarificationField(null);
+            setClarificationQueuedAt(null);
+            setClarificationContextText('');
+            setUiPaused(false);
+        }
+    }, [clearClarificationTimers, presentClarificationForField]);
+
     const checkProcessingStatus = useCallback(async (id) => {
         if (!id || statusRequestInFlightRef.current) return;
         statusRequestInFlightRef.current = true;
@@ -219,14 +524,15 @@ export default function SmartInterviewScreen({ navigation, route }) {
             if (!mountedRef.current) return;
 
             const status = String(data?.status || '').toLowerCase();
+            applyHybridPayload(data);
+
+            if (Boolean(data?.interviewComplete)) {
+                finalizeToReview(data);
+                return;
+            }
 
             if (status === 'completed') {
-                stopStatusTracking();
-                setExtractedData(hydrateExtractedData(data?.extractedData));
-                setCreatedJobId(data?.createdJobId || null);
-                setStage(STAGES.REVIEW);
-                setWaitingForPush(false);
-                triggerHaptic.success();
+                finalizeToReview(data);
                 return;
             }
 
@@ -245,18 +551,43 @@ export default function SmartInterviewScreen({ navigation, route }) {
         } finally {
             statusRequestInFlightRef.current = false;
         }
-    }, [hydrateExtractedData, stopStatusTracking]);
+    }, [applyHybridPayload, finalizeToReview, stopStatusTracking]);
 
     const beginHybridStatusTracking = useCallback((id) => {
         stopStatusTracking();
         setWaitingForPush(false);
+        setProcessingFallbackMessage(null);
         processingNoticeShownRef.current = false;
         pollingStartedAtRef.current = Date.now();
+        lastStateChangeAtRef.current = Date.now();
+        lastStateSignatureRef.current = '';
+        lastHybridPayloadRef.current = null;
+        stagnationFallbackShownRef.current = false;
 
         checkProcessingStatus(id);
 
         pollingRef.current = setInterval(() => {
             const elapsed = Date.now() - pollingStartedAtRef.current;
+            const stagnantMs = Date.now() - Number(lastStateChangeAtRef.current || 0);
+
+            if (
+                stagnantMs >= PROCESSING_STAGNATION_TIMEOUT_MS
+                && !stagnationFallbackShownRef.current
+                && stageRef.current === STAGES.PROCESSING
+            ) {
+                stagnationFallbackShownRef.current = true;
+                setProcessingFallbackMessage('Still syncing your latest response. Finalizing with current details...');
+
+                const fallbackPayload = lastHybridPayloadRef.current;
+                if (fallbackPayload?.slotState && Object.keys(fallbackPayload.slotState).length > 0) {
+                    finalizeToReview({
+                        ...fallbackPayload,
+                        interviewComplete: true,
+                    });
+                    return;
+                }
+            }
+
             if (elapsed >= HYBRID_POLL_WINDOW_MS) {
                 if (pollingRef.current) {
                     clearInterval(pollingRef.current);
@@ -284,10 +615,11 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 'Your interview is still processing. We’ll notify you when it’s ready.'
             );
         }, PROCESSING_NOTICE_TIMEOUT_MS);
-    }, [checkProcessingStatus, stopStatusTracking]);
+    }, [checkProcessingStatus, finalizeToReview, stopStatusTracking]);
 
     const uploadForAsyncProcessing = useCallback(async (uri) => {
         setStage(STAGES.UPLOADING);
+        setUploadProgress(0);
 
         const formData = new FormData();
         formData.append('video', {
@@ -297,19 +629,47 @@ export default function SmartInterviewScreen({ navigation, route }) {
         });
 
         try {
-            const { data } = await client.post('/api/v2/upload/video', formData, {
+            const uploadConfig = {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 transformRequest: (body) => body,
                 timeout: 20000,
-            });
+                onUploadProgress: (event) => {
+                    if (!event?.total) return;
+                    const progress = Math.round((event.loaded * 100) / event.total);
+                    setUploadProgress(Math.max(0, Math.min(100, progress)));
+                },
+            };
 
-            if (!data?.success || !data?.processingId) {
+            let data;
+            try {
+                const v2Response = await client.post('/api/v2/upload/video', formData, uploadConfig);
+                data = v2Response?.data;
+            } catch (v2Error) {
+                const fallbackResponse = await client.post('/api/upload/video', formData, uploadConfig);
+                data = fallbackResponse?.data;
+            }
+
+            if (!data?.success) {
                 throw new Error(data?.error || 'Could not queue interview processing.');
             }
 
-            setProcessingId(data.processingId);
-            setStage(STAGES.PROCESSING);
-            beginHybridStatusTracking(data.processingId);
+            if (data?.processingId) {
+                setProcessingId(data.processingId);
+                setStage(STAGES.PROCESSING);
+                beginHybridStatusTracking(data.processingId);
+                return;
+            }
+
+            if (data?.extractedData) {
+                setExtractedData(data.extractedData);
+                if (data?.job?._id) {
+                    setCreatedJobId(String(data.job._id));
+                }
+                setStage(STAGES.REVIEW);
+                return;
+            }
+
+            throw new Error('Unexpected upload response.');
         } catch (error) {
             triggerHaptic.error();
             Alert.alert(
@@ -317,19 +677,24 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 error?.response?.data?.error || error?.message || 'Could not upload interview video. Please try again.'
             );
             setStage(STAGES.INTRO);
+        } finally {
+            setUploadProgress(0);
         }
     }, [beginHybridStatusTracking]);
 
-    const startRecording = useCallback(async () => {
-        if (!cameraRef.current) return;
+    const startRecordingInternal = useCallback(async () => {
+        if (!cameraRef.current || isRecording) return;
 
         setStage(STAGES.RECORDING);
         setIsRecording(true);
+        setUiPaused(false);
         setTimer(0);
         triggerHaptic.medium();
 
         timerRef.current = setInterval(() => {
-            setTimer((prev) => prev + 1);
+            if (!uiPausedRef.current) {
+                setTimer((prev) => prev + 1);
+            }
         }, 1000);
 
         try {
@@ -356,7 +721,14 @@ export default function SmartInterviewScreen({ navigation, route }) {
             Alert.alert('Recording Failed', 'Could not record video. Please try again.');
             setStage(STAGES.INTRO);
         }
-    }, [clearTimer, uploadForAsyncProcessing]);
+    }, [clearTimer, isRecording, uploadForAsyncProcessing]);
+
+    const handleBeginInterview = useCallback(() => {
+        setCameraReady(false);
+        setRecordingRequested(true);
+        setStage(STAGES.RECORDING);
+        triggerHaptic.medium();
+    }, []);
 
     const stopRecording = useCallback(() => {
         if (cameraRef.current && isRecording) {
@@ -375,13 +747,100 @@ export default function SmartInterviewScreen({ navigation, route }) {
         setStage(STAGES.INTRO);
     }, [clearTimer, isRecording]);
 
+    const toggleUiPause = useCallback(() => {
+        setUiPaused((prev) => !prev);
+        triggerHaptic.light();
+    }, []);
+
     const parseSkills = useCallback((value) => {
         if (Array.isArray(value)) return value;
         return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
     }, []);
 
+    const clarificationConfig = useMemo(() => {
+        if (!clarificationField) return null;
+        const baseConfig = clarificationFieldMap[clarificationField] || null;
+        if (!baseConfig) return null;
+        const hint = clarificationHints?.[clarificationField] || null;
+        if (!hint?.question) return baseConfig;
+        return {
+            ...baseConfig,
+            question: String(hint.question),
+        };
+    }, [clarificationField, clarificationHints]);
+
+    const handleClarificationResolve = useCallback(async (value) => {
+        if (!processingId || !clarificationField || clarificationSubmitting) return;
+        setClarificationSubmitting(true);
+
+        try {
+            const { data } = await client.post(`/api/v2/interview-processing/${processingId}/clarification`, {
+                overrideField: clarificationField,
+                value,
+            });
+            clearClarificationTimers();
+            setClarificationVisible(false);
+            setShowThinkingIndicator(false);
+            setUiPaused(true);
+
+            clarificationResumeTimerRef.current = setTimeout(() => {
+                if (!mountedRef.current) return;
+                applyHybridPayload(data);
+            }, 200);
+
+            triggerHaptic.success();
+            trackEvent('clarificationResolved', {
+                clarificationFieldName: clarificationField,
+                processingId: String(processingId),
+            });
+        } catch (error) {
+            Alert.alert('Update Failed', 'Could not apply clarification. Please try again.');
+        } finally {
+            setClarificationSubmitting(false);
+        }
+    }, [applyHybridPayload, clarificationField, clarificationSubmitting, clearClarificationTimers, processingId]);
+
+    const handleClarificationSkip = useCallback(async () => {
+        if (!processingId || !clarificationField || clarificationSubmitting) return;
+        setClarificationSubmitting(true);
+
+        try {
+            const { data } = await client.post(`/api/v2/interview-processing/${processingId}/clarification`, {
+                overrideField: clarificationField,
+                skip: true,
+            });
+            clearClarificationTimers();
+            setClarificationVisible(false);
+            setShowThinkingIndicator(false);
+            setUiPaused(true);
+
+            clarificationResumeTimerRef.current = setTimeout(() => {
+                if (!mountedRef.current) return;
+                applyHybridPayload(data);
+            }, 200);
+
+            trackEvent('clarificationSkipped', {
+                clarificationFieldName: clarificationField,
+                processingId: String(processingId),
+                queuedLatencyMs: clarificationQueuedAt ? Date.now() - clarificationQueuedAt : null,
+            });
+        } catch (error) {
+            Alert.alert('Skip Failed', 'Could not skip clarification right now.');
+        } finally {
+            setClarificationSubmitting(false);
+        }
+    }, [
+        applyHybridPayload,
+        clarificationField,
+        clarificationQueuedAt,
+        clarificationSubmitting,
+        clearClarificationTimers,
+        processingId,
+    ]);
+
     const handleConfirmSave = useCallback(async () => {
-        if (!extractedData) return;
+        if (!extractedData || savingProfile) return;
+        setSavingProfile(true);
 
         try {
             if (isEmployer) {
@@ -438,12 +897,129 @@ export default function SmartInterviewScreen({ navigation, route }) {
         } catch (error) {
             logger.error('Smart interview confirm failed:', error?.message || error);
             Alert.alert('Save Failed', 'Could not save your profile data. Please try again.');
+        } finally {
+            setSavingProfile(false);
         }
-    }, [completeOnboarding, createdJobId, extractedData, isEmployer, maybeShowBoostUpsell, parseSkills, processingId, userInfo]);
+    }, [completeOnboarding, createdJobId, extractedData, isEmployer, maybeShowBoostUpsell, parseSkills, processingId, savingProfile, userInfo]);
+
+    const navigateToProfileLanding = useCallback(() => {
+        const targetTab = isEmployer ? 'Talent' : 'Profiles';
+        Alert.alert(
+            '✅ Profile Created',
+            isEmployer
+                ? 'Your job post is live. Review it below.'
+                : 'Your profile is live. Employers can now find you.',
+            [{
+                text: 'View Profile',
+                onPress: () => navigation.reset({
+                    index: 0,
+                    routes: [{
+                        name: 'MainTab',
+                        state: {
+                            index: 0,
+                            routes: [{ name: targetTab }],
+                        },
+                    }],
+                }),
+            }]
+        );
+    }, [isEmployer, navigation]);
 
     useEffect(() => {
         stageRef.current = stage;
     }, [stage]);
+
+    useEffect(() => {
+        uiPausedRef.current = uiPaused;
+    }, [uiPaused]);
+
+    useEffect(() => {
+        activeClarificationFieldRef.current = clarificationVisible ? clarificationField : null;
+    }, [clarificationField, clarificationVisible]);
+
+    useEffect(() => {
+        Animated.timing(thinkingOpacityAnim, {
+            toValue: showThinkingIndicator ? 1 : 0,
+            duration: 180,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+        }).start();
+    }, [showThinkingIndicator, thinkingOpacityAnim]);
+
+    useEffect(() => {
+        const shouldScaleDown = clarificationVisible || showThinkingIndicator;
+        Animated.timing(sceneScaleAnim, {
+            toValue: shouldScaleDown ? 0.98 : 1,
+            duration: 240,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+        }).start();
+    }, [clarificationVisible, sceneScaleAnim, showThinkingIndicator]);
+
+    useEffect(() => {
+        if (stage !== STAGES.REVIEW && stage !== STAGES.COMPLETE) {
+            reviewBadgePulse.stopAnimation();
+            reviewBadgePulse.setValue(1);
+            return;
+        }
+
+        const loop = Animated.loop(
+            Animated.sequence([
+                Animated.timing(reviewBadgePulse, {
+                    toValue: 1.06,
+                    duration: 420,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(reviewBadgePulse, {
+                    toValue: 1,
+                    duration: 420,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        loop.start();
+        return () => loop.stop();
+    }, [reviewBadgePulse, stage]);
+
+    useEffect(() => {
+        Animated.timing(successOpacity, {
+            toValue: stage === STAGES.COMPLETE ? 1 : 0,
+            duration: 220,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+        }).start();
+    }, [stage, successOpacity]);
+
+    useEffect(() => {
+        if (stage !== STAGES.COMPLETE) {
+            completionAlertShownRef.current = false;
+            if (completionNavigationTimerRef.current) {
+                clearTimeout(completionNavigationTimerRef.current);
+                completionNavigationTimerRef.current = null;
+            }
+            return;
+        }
+
+        if (completionAlertShownRef.current) return;
+        completionNavigationTimerRef.current = setTimeout(() => {
+            if (!mountedRef.current || completionAlertShownRef.current) return;
+            completionAlertShownRef.current = true;
+            navigateToProfileLanding();
+        }, 1500);
+    }, [navigateToProfileLanding, stage]);
+
+    useEffect(() => {
+        if (!recordingRequested) return;
+        if (stage !== STAGES.RECORDING) return;
+        if (!cameraReady) return;
+        if (!cameraRef.current) return;
+        if (isRecording) return;
+
+        setRecordingRequested(false);
+        startRecordingInternal();
+    }, [cameraReady, isRecording, recordingRequested, stage, startRecordingInternal]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -451,11 +1027,16 @@ export default function SmartInterviewScreen({ navigation, route }) {
             mountedRef.current = false;
             clearTimer();
             stopStatusTracking();
+            clearClarificationTimers();
+            if (completionNavigationTimerRef.current) {
+                clearTimeout(completionNavigationTimerRef.current);
+                completionNavigationTimerRef.current = null;
+            }
             if (cameraRef.current && isRecording) {
                 cameraRef.current.stopRecording();
             }
         };
-    }, [clearTimer, isRecording, stopStatusTracking]);
+    }, [clearClarificationTimers, clearTimer, isRecording, stopStatusTracking]);
 
     useEffect(() => {
         requestCameraPermission();
@@ -499,59 +1080,161 @@ export default function SmartInterviewScreen({ navigation, route }) {
         beginHybridStatusTracking(incomingProcessingId);
     }, [beginHybridStatusTracking, processingId, route?.params?.processingId, waitingForPush]);
 
+    const clarificationSheetNode = (
+        <InterviewClarificationSheet
+            visible={clarificationVisible && Boolean(clarificationConfig)}
+            fieldName={clarificationField}
+            fieldConfig={clarificationConfig}
+            contextText={clarificationContextText}
+            submitting={clarificationSubmitting}
+            onResolve={handleClarificationResolve}
+            onSkip={handleClarificationSkip}
+        />
+    );
+
     if (!cameraPermission || !microphonePermission) {
         return (
-            <View style={styles.loaderContainer}>
-                <ActivityIndicator color="#ffffff" size="large" />
-            </View>
+            <>
+                <View style={styles.loaderContainer}>
+                    <ActivityIndicator color="#ffffff" size="large" />
+                </View>
+                {clarificationSheetNode}
+            </>
         );
     }
 
     if (!cameraPermission.granted || !microphonePermission.granted) {
         return (
-            <View style={styles.permissionContainer}>
-                <Text style={styles.permissionTitle}>Camera Access Needed</Text>
-                <Text style={styles.permissionText}>Smart Interview requires camera and microphone access.</Text>
-                <TouchableOpacity style={styles.primaryButton} onPress={() => {
-                    requestCameraPermission();
-                    requestMicrophonePermission();
-                }}>
-                    <Text style={styles.primaryButtonText}>Grant Permissions</Text>
-                </TouchableOpacity>
-            </View>
+            <>
+                <View style={styles.permissionContainer}>
+                    <Text style={styles.permissionTitle}>Camera Access Needed</Text>
+                    <Text style={styles.permissionText}>Smart Interview requires camera and microphone access.</Text>
+                    <TouchableOpacity style={styles.primaryButton} onPress={() => {
+                        requestCameraPermission();
+                        requestMicrophonePermission();
+                    }}>
+                        <Text style={styles.primaryButtonText}>Grant Permissions</Text>
+                    </TouchableOpacity>
+                </View>
+                {clarificationSheetNode}
+            </>
         );
     }
 
     if (stage === STAGES.INTRO) {
         return (
-            <LinearGradient colors={['#000000', '#111827']} style={[styles.container, { paddingTop: insets.top + 12 }]}> 
-                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-                    <Text style={styles.backButtonText}>‹</Text>
-                </TouchableOpacity>
-
-                <View style={styles.centeredContent}>
-                    <Text style={styles.headerTitle}>Smart Interview</Text>
-                    <Text style={styles.headerSubtitle}>{statusSubtitle}</Text>
-
-                    <View style={styles.introCard}>
-                        <Text style={styles.introCardTitle}>Single 90-second video</Text>
-                        <Text style={styles.introCardText}>Record once. AI extracts your profile, then you review before confirming.</Text>
-                    </View>
-
-                    <TouchableOpacity style={styles.primaryButton} onPress={startRecording}>
-                        <Text style={styles.primaryButtonText}>Start Recording</Text>
+            <>
+                <LinearGradient colors={['#080a10', '#3a2516', '#120e1a']} style={[styles.container, { paddingTop: insets.top + 8 }]}>
+                    <TouchableOpacity style={styles.backButton} onPress={safeGoBack}>
+                        <Text style={styles.backButtonText}>‹</Text>
                     </TouchableOpacity>
-                </View>
-            </LinearGradient>
+
+                    <View style={styles.introExperienceWrap}>
+                        <LinearGradient colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.03)']} style={styles.previewPhoneFrame}>
+                            <View style={styles.previewFaceGlow} />
+                            <View style={styles.previewFocusFrame} />
+                            <View style={styles.previewWaveformRow}>
+                                {[12, 20, 15, 24, 14, 19, 13].map((h, idx) => (
+                                    <View key={`intro-wave-${idx}`} style={[styles.previewWaveBar, { height: h }]} />
+                                ))}
+                            </View>
+                            <View style={styles.previewControlsRow}>
+                                <View style={[styles.previewCtrl, styles.previewCtrlWhite]}>
+                                    <Ionicons name="videocam-outline" size={18} color="#0f172a" />
+                                </View>
+                                <View style={styles.previewCtrl}>
+                                    <Ionicons name="share-outline" size={18} color="#ffffff" />
+                                </View>
+                                <View style={styles.previewCtrl}>
+                                    <Ionicons name="pause" size={18} color="#ffffff" />
+                                </View>
+                                <View style={[styles.previewCtrl, styles.previewCtrlDanger]}>
+                                    <Ionicons name="close" size={20} color="#ffffff" />
+                                </View>
+                            </View>
+                        </LinearGradient>
+
+                        <Text style={styles.heroBrandTitle}>HIRE Interview AI</Text>
+                        <Text style={styles.heroTagline}>Natural conversation. Structured profile instantly.</Text>
+
+                        <TouchableOpacity style={styles.primaryButton} onPress={handleBeginInterview}>
+                            <Text style={styles.primaryButtonText}>Begin Guided Interview</Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.trustPill}>
+                            <Ionicons name="shield-checkmark-outline" size={13} color="#dbeafe" />
+                            <Text style={styles.trustPillText}>Your interview data stays secure</Text>
+                        </View>
+                    </View>
+                </LinearGradient>
+                {clarificationSheetNode}
+            </>
         );
     }
 
     if (stage === STAGES.REVIEW) {
         return (
-            <View style={[styles.reviewContainer, { paddingTop: insets.top + 12 }]}> 
-                <ScrollView contentContainerStyle={styles.reviewScroll} showsVerticalScrollIndicator={false}>
-                    <Text style={styles.headerTitle}>Review Your Profile</Text>
+            <>
+                <View style={[styles.reviewContainer, { paddingTop: insets.top + 12 }]}> 
+                    <ScrollView contentContainerStyle={styles.reviewScroll} showsVerticalScrollIndicator={false}>
+                    <View style={styles.reviewTitleRow}>
+                        <Text style={styles.reviewHeaderTitle}>Review Your Profile</Text>
+                        <Animated.View style={[styles.aiBadge, { transform: [{ scale: reviewBadgePulse }] }]}>
+                            <Text style={styles.aiBadgeText}>AI Structured</Text>
+                        </Animated.View>
+                    </View>
                     <Text style={styles.headerSubtitle}>AI extracted this from your interview. Edit before saving.</Text>
+
+                    <View style={styles.profileQualityRow}>
+                        <View style={styles.profileQualityRing}>
+                            <Text style={styles.profileQualityRingValue}>
+                                {Math.round(Math.max(0, Math.min(1, profileQualityScore)) * 100)}%
+                            </Text>
+                            <Text style={styles.profileQualityRingMeta}>Quality</Text>
+                        </View>
+                        <View style={styles.profileQualitySummary}>
+                            <Text style={styles.profileQualityTitle}>Verified Profile</Text>
+                            <Text style={styles.profileQualitySubtext}>
+                                Completion {Math.round(Math.max(0, Math.min(1, slotCompletenessRatio)) * 100)}% • Clarity {Math.round(Math.max(0, Math.min(1, communicationClarityScore)) * 100)}%
+                            </Text>
+                            <TouchableOpacity style={styles.improveProfileCta}>
+                                <Text style={styles.improveProfileCtaText}>Improve Profile</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <View style={styles.strengthCard}>
+                        <Text style={styles.strengthCardTitle}>Highlighted strengths</Text>
+                        {(highlightedStrengths.length ? highlightedStrengths : ['Core profile fields captured']).map((item, index) => (
+                            <Text key={`strength-${index}`} style={styles.strengthCardItem}>• {item}</Text>
+                        ))}
+                    </View>
+
+                    <View style={[styles.salaryIndicatorCard, salaryOutlierFlag && styles.salaryIndicatorCardWarn]}>
+                        <Text style={styles.salaryIndicatorTitle}>Salary realism</Text>
+                        <Text style={styles.salaryIndicatorText}>
+                            {salaryOutlierFlag
+                                ? 'Higher than typical local range. Please confirm for better-quality matches.'
+                                : 'Aligned with local role trends.'}
+                        </Text>
+                        {salaryOutlierFlag && Number.isFinite(Number(salaryMedianForRoleCity)) ? (
+                            <Text style={styles.salaryIndicatorMeta}>
+                                Median baseline: ₹{Math.round(Number(salaryMedianForRoleCity)).toLocaleString('en-IN')}
+                            </Text>
+                        ) : null}
+                    </View>
+
+                    {lowConfidenceFields.length > 0 ? (
+                        <View style={styles.lowConfidenceCard}>
+                            <Text style={styles.lowConfidenceTitle}>Needs confirmation</Text>
+                            <Text style={styles.lowConfidenceText}>
+                                {lowConfidenceFields
+                                    .map((field) => field.replace(/([A-Z])/g, ' $1'))
+                                    .map((field) => field.charAt(0).toUpperCase() + field.slice(1))
+                                    .join(', ')}
+                            </Text>
+                        </View>
+                    ) : null}
 
                     <View style={styles.videoPreviewCard}>
                         <Text style={styles.videoPreviewLabel}>Recorded Video</Text>
@@ -645,41 +1328,45 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         )}
                     </View>
 
-                    <TouchableOpacity style={styles.primaryButton} onPress={handleConfirmSave}>
-                        <Text style={styles.primaryButtonText}>Confirm & Continue</Text>
+                    <TouchableOpacity
+                        style={[styles.primaryButton, savingProfile && styles.primaryButtonDisabled]}
+                        onPress={handleConfirmSave}
+                        disabled={savingProfile}
+                    >
+                        {savingProfile
+                            ? <ActivityIndicator color="#ffffff" size="small" />
+                            : <Text style={styles.primaryButtonText}>Confirm & Continue</Text>}
                     </TouchableOpacity>
 
                     <View style={styles.trustBadgeCard}>
                         <Text style={styles.trustBadgeTitle}>Visibility Boost</Text>
                         <Text style={styles.trustBadgeText}>Completing this interview improves your visibility by 3x.</Text>
                     </View>
-                </ScrollView>
-            </View>
+                    </ScrollView>
+                </View>
+                {clarificationSheetNode}
+            </>
         );
     }
 
     if (stage === STAGES.COMPLETE) {
         return (
-            <LinearGradient colors={['#000000', '#111827']} style={[styles.container, { paddingTop: insets.top + 24 }]}> 
-                <View style={styles.centeredContent}>
+            <>
+                <LinearGradient colors={['#050b18', '#0b1a35']} style={[styles.container, { paddingTop: insets.top + 24 }]}> 
+                    <Animated.View style={[styles.centeredContent, { opacity: successOpacity }]}>
                     <Text style={styles.successEmoji}>✓</Text>
                     <Text style={styles.headerTitle}>Your Smart Profile Is Live</Text>
-                    <Text style={styles.headerSubtitle}>You can now apply instantly and get better matches.</Text>
+                    <Text style={styles.headerSubtitle}>
+                        {isEmployer
+                            ? 'Your job post is live. Opening your talent view…'
+                            : 'Your profile is live. Opening your profile view…'}
+                    </Text>
 
                     <TouchableOpacity
                         style={styles.primaryButton}
-                        onPress={() => navigation.navigate('MainTab', {
-                            screen: isEmployer ? 'My Jobs' : 'Jobs',
-                            params: isEmployer
-                                ? undefined
-                                : {
-                                    highlightMatches: true,
-                                    recommendedCount: 3,
-                                    source: 'interview_complete',
-                                },
-                        })}
+                        onPress={navigateToProfileLanding}
                     >
-                        <Text style={styles.primaryButtonText}>{isEmployer ? 'View Job' : 'Explore Jobs'}</Text>
+                        <Text style={styles.primaryButtonText}>View Profile</Text>
                     </TouchableOpacity>
 
                     {!isEmployer && (
@@ -689,7 +1376,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         </View>
                     )}
 
-                </View>
+                </Animated.View>
                 <Modal
                     visible={isEmployer && showBoostUpsell}
                     transparent
@@ -711,14 +1398,23 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         </View>
                     </View>
                 </Modal>
-            </LinearGradient>
+                </LinearGradient>
+                {clarificationSheetNode}
+            </>
         );
     }
 
     return (
-        <View style={styles.cameraContainer}>
-            <CameraView style={styles.cameraView} facing={facing} mode="video" ref={cameraRef}>
-                <LinearGradient colors={['rgba(0,0,0,0.55)', 'transparent', 'rgba(0,0,0,0.85)']} style={styles.overlay}> 
+        <>
+            <Animated.View style={[styles.cameraContainer, { transform: [{ scale: sceneScaleAnim }] }]}>
+                <CameraView
+                    style={styles.cameraView}
+                    facing={facing}
+                    mode="video"
+                    ref={cameraRef}
+                    onCameraReady={() => setCameraReady(true)}
+                >
+                    <LinearGradient colors={['rgba(3,10,24,0.62)', 'rgba(3,10,24,0.12)', 'rgba(3,10,24,0.9)']} style={styles.overlay}> 
                     <View style={[styles.topHeader, { paddingTop: insets.top + 8 }]}> 
                         <Text style={styles.headerTitleSmall}>Smart Interview ✦</Text>
                         <Text style={styles.headerSubtitleSmall}>{statusSubtitle}</Text>
@@ -730,10 +1426,22 @@ export default function SmartInterviewScreen({ navigation, route }) {
                                 <ActivityIndicator color="#5B8CFF" size="large" />
                                 <Text style={styles.processingTitle}>{PROCESSING_MESSAGES[processingMessageIndex]}</Text>
                                 <Text style={styles.processingSubtext}>
-                                    {waitingForPush
+                                    {processingFallbackMessage
+                                        ? processingFallbackMessage
+                                        : waitingForPush
                                         ? 'Processing continues in background. We will notify you when ready.'
                                         : 'Please keep the app open for faster completion.'}
                                 </Text>
+                                {stage === STAGES.UPLOADING ? (
+                                    <Text style={styles.uploadProgressText}>{Math.max(0, Math.min(100, uploadProgress))}% uploaded</Text>
+                                ) : null}
+                            </View>
+                        ) : stage === STAGES.RECORDING ? (
+                            <View style={styles.recordingFocusWrap}>
+                                <View style={styles.recordingGuideFrameOuter} />
+                                <View style={styles.recordingGuideFrameInner} />
+                                <View style={styles.recordingFocusPulse} />
+                                <View style={styles.recordingGuideCenterDot} />
                             </View>
                         ) : (
                             <View style={styles.centerGlowRing} />
@@ -743,53 +1451,85 @@ export default function SmartInterviewScreen({ navigation, route }) {
                     <View style={[styles.bottomControls, { paddingBottom: insets.bottom + 18 }]}> 
                         {stage === STAGES.RECORDING && (
                             <>
-                                <View style={styles.timerPill}>
-                                    <Text style={styles.timerText}>{formatTimer(timer)}</Text>
+                                {activeInterviewPrompt && (
+                                    <View style={styles.adaptivePromptCard}>
+                                        <Text style={styles.adaptivePromptLabel}>Current question</Text>
+                                        <Text style={styles.adaptivePromptText}>{activeInterviewPrompt}</Text>
+                                    </View>
+                                )}
+
+                                {showThinkingIndicator && (
+                                    <Animated.View style={[styles.thinkingIndicatorWrap, { opacity: thinkingOpacityAnim }]}>
+                                        <Text style={styles.thinkingIndicatorText}>Analyzing your response…</Text>
+                                    </Animated.View>
+                                )}
+
+                                <View style={styles.recordingStatusRow}>
+                                    <View style={styles.liveBadge}>
+                                        <View style={styles.liveBadgeDot} />
+                                        <Text style={styles.liveBadgeText}>LIVE</Text>
+                                    </View>
+                                    <View style={styles.timerPillLive}>
+                                        <Text style={styles.timerText}>{formatTimer(timer)}</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.stepProgressRow}>
+                                    <Text style={styles.stepProgressText}>
+                                        Step {Math.min(Math.max(interviewStep + 1, 1), maxSteps)} / {maxSteps}
+                                    </Text>
+                                    <Text style={styles.stepProgressMeta}>
+                                        {Math.round(Math.max(0, Math.min(1, slotCompletenessRatio)) * 100)}% complete
+                                    </Text>
                                 </View>
 
-                                <View style={styles.waveformRow}>
-                                    {Array.from({ length: 16 }).map((_, index) => (
+                                <View style={styles.waveformRowLive}>
+                                    {[9, 15, 22, 14, 20, 12, 18, 11].map((base, idx) => (
                                         <View
-                                            key={`wave-${index}`}
+                                            key={`live-wave-${idx}`}
                                             style={[
                                                 styles.waveBar,
-                                                {
-                                                    height: 6 + ((timer + index * 3) % 18),
-                                                    opacity: 0.35 + ((timer + index) % 6) * 0.1,
-                                                },
+                                                styles.waveBarLive,
+                                                { height: base + ((timer + idx) % 3) * 2 },
                                             ]}
                                         />
                                     ))}
                                 </View>
 
-                                <View style={styles.recordingActionsRow}>
+                                <View style={styles.recordingActionsRowLive}>
                                     <TouchableOpacity
-                                        style={styles.smallCircleButton}
+                                        style={[styles.liveCircleButton, styles.liveCircleButtonWhite]}
                                         onPress={() => setFacing((prev) => (prev === 'front' ? 'back' : 'front'))}
+                                        activeOpacity={0.86}
                                     >
-                                        <Text style={styles.smallCircleButtonText}>↺</Text>
+                                        <Ionicons name="camera-reverse-outline" size={20} color="#0f172a" />
                                     </TouchableOpacity>
 
-                                    <TouchableOpacity style={styles.stopButton} onPress={stopRecording}>
-                                        <View style={styles.stopButtonInner} />
+                                    <TouchableOpacity style={[styles.liveCircleButton, styles.liveCirclePrimary]} onPress={stopRecording} activeOpacity={0.86}>
+                                        <Ionicons name="checkmark" size={22} color="#ffffff" />
                                     </TouchableOpacity>
 
-                                    <TouchableOpacity style={styles.smallCircleButton} onPress={cancelRecording}>
-                                        <Text style={styles.smallCircleButtonText}>×</Text>
+                                    <TouchableOpacity style={styles.liveCircleButton} onPress={toggleUiPause} activeOpacity={0.86}>
+                                        <Ionicons name={uiPaused ? 'play' : 'pause'} size={20} color="#ffffff" />
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={[styles.liveCircleButton, styles.liveCircleDanger]} onPress={cancelRecording} activeOpacity={0.86}>
+                                        <Ionicons name="close" size={22} color="#ffffff" />
                                     </TouchableOpacity>
                                 </View>
                             </>
                         )}
 
                         {(stage === STAGES.UPLOADING || stage === STAGES.PROCESSING) && (
-                            <TouchableOpacity style={styles.exitButton} onPress={() => navigation.goBack()}>
+                            <TouchableOpacity style={styles.exitButton} onPress={safeGoBack}>
                                 <Text style={styles.exitButtonText}>Leave Screen</Text>
                             </TouchableOpacity>
                         )}
                     </View>
-                </LinearGradient>
-            </CameraView>
-        </View>
+                    </LinearGradient>
+                </CameraView>
+            </Animated.View>
+            {clarificationSheetNode}
+        </>
     );
 }
 
@@ -808,7 +1548,7 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 24,
+        paddingHorizontal: 28,
     },
     backButton: {
         width: 42,
@@ -834,20 +1574,112 @@ const styles = StyleSheet.create({
     headerSubtitle: {
         color: '#cbd5e1',
         marginTop: 10,
-        fontSize: 16,
+        fontSize: 15,
         fontWeight: '500',
         textAlign: 'center',
         maxWidth: 320,
     },
+    introExperienceWrap: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        paddingBottom: 18,
+    },
+    previewPhoneFrame: {
+        width: '100%',
+        maxWidth: 360,
+        minHeight: 420,
+        borderRadius: 28,
+        borderWidth: 1.4,
+        borderColor: 'rgba(255,255,255,0.78)',
+        overflow: 'hidden',
+        marginTop: 8,
+        marginBottom: 20,
+        backgroundColor: 'rgba(21,31,55,0.62)',
+    },
+    previewFaceGlow: {
+        position: 'absolute',
+        top: -40,
+        left: -20,
+        right: -20,
+        height: 280,
+        backgroundColor: 'rgba(255,170,95,0.22)',
+        borderBottomLeftRadius: 180,
+        borderBottomRightRadius: 180,
+    },
+    previewFocusFrame: {
+        position: 'absolute',
+        top: 68,
+        left: 26,
+        right: 26,
+        bottom: 88,
+        borderRadius: 26,
+        borderWidth: 1.6,
+        borderColor: 'rgba(255,255,255,0.72)',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+    },
+    previewWaveformRow: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 78,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'flex-end',
+    },
+    previewWaveBar: {
+        width: 4,
+        borderRadius: 4,
+        marginHorizontal: 2,
+        backgroundColor: 'rgba(203,213,225,0.92)',
+    },
+    previewControlsRow: {
+        marginTop: 'auto',
+        marginBottom: 14,
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    previewCtrl: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        backgroundColor: 'rgba(9,15,26,0.86)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: 4,
+    },
+    previewCtrlWhite: {
+        backgroundColor: '#ffffff',
+    },
+    previewCtrlDanger: {
+        backgroundColor: '#de4f4f',
+    },
+    heroBrandTitle: {
+        color: '#ffffff',
+        fontSize: 38,
+        fontWeight: '700',
+        letterSpacing: -0.8,
+        marginBottom: 4,
+        textAlign: 'center',
+    },
+    heroTagline: {
+        color: '#e2e8f0',
+        fontSize: 15,
+        fontWeight: '500',
+        textAlign: 'center',
+        marginBottom: 18,
+    },
     introCard: {
         width: '100%',
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        borderRadius: 24,
-        padding: 18,
+        backgroundColor: 'rgba(148,163,184,0.12)',
+        borderRadius: 20,
+        padding: 20,
         marginTop: 28,
-        marginBottom: 20,
+        marginBottom: 24,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
+        borderColor: 'rgba(148,163,184,0.24)',
     },
     introCardTitle: {
         color: '#ffffff',
@@ -860,18 +1692,39 @@ const styles = StyleSheet.create({
         fontSize: 14,
         lineHeight: 20,
     },
+    trustPill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.32)',
+        backgroundColor: 'rgba(148,163,184,0.12)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        marginTop: 12,
+        marginBottom: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    trustPillText: {
+        color: '#dbeafe',
+        fontSize: 12,
+        fontWeight: '500',
+        marginLeft: 6,
+    },
     primaryButton: {
         width: '100%',
-        backgroundColor: '#5B8CFF',
-        borderRadius: 28,
-        paddingVertical: 16,
+        backgroundColor: '#7c3aed',
+        borderRadius: 12,
+        paddingVertical: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#5B8CFF',
+        shadowColor: '#7c3aed',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.22,
         shadowRadius: 12,
         elevation: 6,
+    },
+    primaryButtonDisabled: {
+        opacity: 0.7,
     },
     primaryButtonText: {
         color: '#fff',
@@ -880,7 +1733,7 @@ const styles = StyleSheet.create({
     },
     permissionContainer: {
         flex: 1,
-        backgroundColor: '#0f172a',
+        backgroundColor: '#0b1220',
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 24,
@@ -912,12 +1765,12 @@ const styles = StyleSheet.create({
     },
     headerTitleSmall: {
         color: '#fff',
-        fontSize: 22,
-        fontWeight: '700',
+        fontSize: 18,
+        fontWeight: '600',
     },
     headerSubtitleSmall: {
         color: '#e2e8f0',
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '500',
         marginTop: 4,
     },
@@ -927,20 +1780,66 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: 22,
     },
+    recordingFocusWrap: {
+        width: '100%',
+        height: width * 0.72,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    recordingGuideFrameOuter: {
+        width: width * 0.64,
+        height: width * 0.86,
+        borderRadius: 34,
+        borderWidth: 1.4,
+        borderColor: 'rgba(219,234,254,0.74)',
+        backgroundColor: 'rgba(255,255,255,0.015)',
+    },
+    recordingGuideFrameInner: {
+        position: 'absolute',
+        width: width * 0.57,
+        height: width * 0.79,
+        borderRadius: 30,
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.35)',
+    },
     centerGlowRing: {
-        width: width * 0.44,
-        height: width * 0.44,
-        borderRadius: (width * 0.44) / 2,
-        borderWidth: 2,
-        borderColor: 'rgba(91,140,255,0.7)',
-        backgroundColor: 'rgba(91,140,255,0.08)',
+        width: width * 0.46,
+        height: width * 0.46,
+        borderRadius: (width * 0.46) / 2,
+        borderWidth: 1.8,
+        borderColor: 'rgba(66,133,244,0.7)',
+        backgroundColor: 'rgba(66,133,244,0.14)',
+        shadowColor: '#1d4ed8',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.24,
+        shadowRadius: 18,
+    },
+    recordingFocusPulse: {
+        position: 'absolute',
+        width: width * 0.7,
+        height: width * 0.7,
+        borderRadius: (width * 0.7) / 2,
+        borderWidth: 1.2,
+        borderColor: 'rgba(147,197,253,0.22)',
+        backgroundColor: 'transparent',
+    },
+    recordingGuideCenterDot: {
+        position: 'absolute',
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: 'rgba(147,197,253,0.8)',
+        shadowColor: '#60a5fa',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.45,
+        shadowRadius: 8,
     },
     processingCard: {
         width: '100%',
         backgroundColor: 'rgba(8,15,30,0.92)',
-        borderRadius: 28,
+        borderRadius: 20,
         borderWidth: 1,
-        borderColor: 'rgba(91,140,255,0.35)',
+        borderColor: 'rgba(66,133,244,0.34)',
         padding: 20,
         alignItems: 'center',
         shadowColor: '#000',
@@ -961,8 +1860,102 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
     },
+    uploadProgressText: {
+        marginTop: 10,
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '700',
+    },
     bottomControls: {
         paddingHorizontal: 18,
+    },
+    adaptivePromptCard: {
+        width: '100%',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(125, 211, 252, 0.28)',
+        backgroundColor: 'rgba(2, 6, 23, 0.62)',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 10,
+    },
+    adaptivePromptLabel: {
+        color: '#bae6fd',
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.3,
+        textTransform: 'uppercase',
+        marginBottom: 4,
+    },
+    adaptivePromptText: {
+        color: '#f8fafc',
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+    thinkingIndicatorWrap: {
+        alignSelf: 'center',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(147,197,253,0.26)',
+        backgroundColor: 'rgba(2,6,23,0.52)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        marginBottom: 10,
+    },
+    thinkingIndicatorText: {
+        color: '#cbd5e1',
+        fontSize: 12,
+        fontWeight: '600',
+        letterSpacing: 0.2,
+    },
+    stepProgressRow: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+        paddingHorizontal: 4,
+    },
+    stepProgressText: {
+        color: '#e2e8f0',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    stepProgressMeta: {
+        color: '#93c5fd',
+        fontSize: 11,
+        fontWeight: '600',
+    },
+    recordingStatusRow: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    liveBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 999,
+        backgroundColor: 'rgba(3,10,24,0.62)',
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.26)',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    liveBadgeDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: '#ef4444',
+        marginRight: 6,
+    },
+    liveBadgeText: {
+        color: '#e5e7eb',
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.4,
     },
     timerPill: {
         alignSelf: 'center',
@@ -972,10 +1965,18 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         marginBottom: 14,
     },
+    timerPillLive: {
+        backgroundColor: 'rgba(3,10,24,0.62)',
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.26)',
+        borderRadius: 999,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+    },
     timerText: {
         color: '#fff',
         fontWeight: '700',
-        fontSize: 14,
+        fontSize: 12,
     },
     waveformRow: {
         alignSelf: 'center',
@@ -983,11 +1984,28 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
         marginBottom: 18,
     },
+    waveformRowLive: {
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        marginBottom: 12,
+        backgroundColor: 'rgba(3,10,24,0.42)',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.22)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
     waveBar: {
         width: 6,
         borderRadius: 4,
         marginHorizontal: 2,
-        backgroundColor: '#5B8CFF',
+        backgroundColor: '#84a9ff',
+    },
+    waveBarLive: {
+        width: 5,
+        marginHorizontal: 1.8,
+        backgroundColor: '#c7d2fe',
     },
     recordingActionsRow: {
         flexDirection: 'row',
@@ -995,6 +2013,60 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         width: '100%',
         marginBottom: 2,
+    },
+    livePromptBubble: {
+        alignSelf: 'center',
+        width: '92%',
+        borderRadius: 14,
+        backgroundColor: 'rgba(5,11,20,0.85)',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 14,
+    },
+    livePromptText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '500',
+        textAlign: 'center',
+    },
+    recordingActionsRowLive: {
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+        backgroundColor: 'rgba(3,10,24,0.62)',
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.26)',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    liveCircleButton: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(15,23,42,0.82)',
+        marginHorizontal: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.22)',
+    },
+    liveCircleButtonWhite: {
+        backgroundColor: '#ffffff',
+        borderColor: 'rgba(255,255,255,0.55)',
+    },
+    liveCirclePrimary: {
+        backgroundColor: '#1d4ed8',
+        borderColor: '#2563eb',
+        shadowColor: '#1d4ed8',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.24,
+        shadowRadius: 8,
+    },
+    liveCircleDanger: {
+        backgroundColor: '#de4f4f',
+        borderColor: 'rgba(255,255,255,0.28)',
     },
     smallCircleButton: {
         width: 48,
@@ -1013,10 +2085,10 @@ const styles = StyleSheet.create({
         width: 92,
         height: 92,
         borderRadius: 46,
-        backgroundColor: '#FF4D4F',
+        backgroundColor: '#b45359',
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#FF4D4F',
+        shadowColor: '#b45359',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.2,
         shadowRadius: 12,
@@ -1041,11 +2113,169 @@ const styles = StyleSheet.create({
     },
     reviewContainer: {
         flex: 1,
-        backgroundColor: '#0b1220',
+        backgroundColor: '#0a1324',
     },
     reviewScroll: {
-        paddingHorizontal: 16,
+        paddingHorizontal: 20,
         paddingBottom: 30,
+    },
+    reviewTitleRow: {
+        marginTop: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    reviewHeaderTitle: {
+        color: '#ffffff',
+        fontSize: 32,
+        fontWeight: '700',
+        letterSpacing: -0.3,
+        flex: 1,
+    },
+    aiBadge: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(148,163,184,0.34)',
+        backgroundColor: 'rgba(148,163,184,0.14)',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    aiBadgeText: {
+        color: '#dbeafe',
+        fontSize: 11,
+        fontWeight: '600',
+    },
+    profileQualityRow: {
+        marginTop: 14,
+        marginBottom: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#1f2937',
+        backgroundColor: '#111827',
+        padding: 14,
+    },
+    profileQualityRing: {
+        width: 88,
+        height: 88,
+        borderRadius: 44,
+        borderWidth: 2,
+        borderColor: '#3b82f6',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0f172a',
+    },
+    profileQualityRingValue: {
+        color: '#ffffff',
+        fontSize: 20,
+        fontWeight: '700',
+        letterSpacing: -0.3,
+    },
+    profileQualityRingMeta: {
+        color: '#93c5fd',
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    profileQualitySummary: {
+        flex: 1,
+        marginLeft: 14,
+    },
+    profileQualityTitle: {
+        color: '#f8fafc',
+        fontSize: 17,
+        fontWeight: '700',
+    },
+    profileQualitySubtext: {
+        marginTop: 5,
+        color: '#cbd5e1',
+        fontSize: 12,
+        lineHeight: 18,
+    },
+    improveProfileCta: {
+        marginTop: 10,
+        alignSelf: 'flex-start',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(59,130,246,0.5)',
+        backgroundColor: 'rgba(37,99,235,0.14)',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+    },
+    improveProfileCtaText: {
+        color: '#bfdbfe',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    strengthCard: {
+        marginBottom: 12,
+        backgroundColor: '#111827',
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#1f2937',
+        padding: 14,
+    },
+    strengthCardTitle: {
+        color: '#f8fafc',
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 7,
+    },
+    strengthCardItem: {
+        color: '#cbd5e1',
+        fontSize: 13,
+        lineHeight: 19,
+        marginBottom: 3,
+    },
+    salaryIndicatorCard: {
+        marginBottom: 12,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(16,185,129,0.3)',
+        backgroundColor: 'rgba(16,185,129,0.08)',
+        padding: 14,
+    },
+    salaryIndicatorCardWarn: {
+        borderColor: 'rgba(245,158,11,0.4)',
+        backgroundColor: 'rgba(245,158,11,0.12)',
+    },
+    salaryIndicatorTitle: {
+        color: '#f8fafc',
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 4,
+    },
+    salaryIndicatorText: {
+        color: '#e2e8f0',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    salaryIndicatorMeta: {
+        marginTop: 6,
+        color: '#fde68a',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    lowConfidenceCard: {
+        marginBottom: 12,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(244,114,182,0.34)',
+        backgroundColor: 'rgba(190,24,93,0.12)',
+        padding: 14,
+    },
+    lowConfidenceTitle: {
+        color: '#fbcfe8',
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 4,
+    },
+    lowConfidenceText: {
+        color: '#fce7f3',
+        fontSize: 12,
+        lineHeight: 18,
     },
     videoPreviewCard: {
         marginTop: 18,
@@ -1089,7 +2319,7 @@ const styles = StyleSheet.create({
     },
     confidenceBarFill: {
         height: '100%',
-        backgroundColor: '#22C55E',
+        backgroundColor: '#0f9d67',
     },
     confidenceValue: {
         marginTop: 6,
@@ -1101,8 +2331,8 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         borderWidth: 1,
         borderColor: '#1f2937',
-        padding: 14,
-        marginBottom: 14,
+        padding: 16,
+        marginBottom: 16,
     },
     reviewLabel: {
         color: '#cbd5e1',
@@ -1123,10 +2353,10 @@ const styles = StyleSheet.create({
     },
     trustBadgeCard: {
         marginTop: 12,
-        backgroundColor: 'rgba(34,197,94,0.14)',
+        backgroundColor: 'rgba(15,157,103,0.16)',
         borderRadius: 18,
         borderWidth: 1,
-        borderColor: 'rgba(34,197,94,0.32)',
+        borderColor: 'rgba(15,157,103,0.34)',
         padding: 14,
     },
     trustBadgeTitle: {
@@ -1142,10 +2372,10 @@ const styles = StyleSheet.create({
     workerNudgeCard: {
         marginTop: 14,
         width: '100%',
-        borderRadius: 16,
-        backgroundColor: 'rgba(91,140,255,0.14)',
+        borderRadius: 14,
+        backgroundColor: 'rgba(29,78,216,0.16)',
         borderWidth: 1,
-        borderColor: 'rgba(91,140,255,0.5)',
+        borderColor: 'rgba(148,163,184,0.34)',
         padding: 14,
     },
     workerNudgeTitle: {
@@ -1206,7 +2436,7 @@ const styles = StyleSheet.create({
     upsellPrimaryButton: {
         flex: 1,
         borderRadius: 12,
-        backgroundColor: '#5B8CFF',
+        backgroundColor: '#1d4ed8',
         paddingVertical: 10,
         alignItems: 'center',
     },
@@ -1216,7 +2446,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     successEmoji: {
-        color: '#22C55E',
+        color: '#0f9d67',
         fontSize: 64,
         fontWeight: '700',
         marginBottom: 12,
