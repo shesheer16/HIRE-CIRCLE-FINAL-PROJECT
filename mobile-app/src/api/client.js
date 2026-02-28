@@ -3,35 +3,53 @@ import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
 import { triggerHaptic } from '../utils/haptics';
 
-import { BASE_URL, DEMO_MODE } from '../config';
+import { API_BASE_URL } from '../config';
 import { navigate } from '../navigation/navigationRef';
 import { logger } from '../utils/logger';
 import { getMockApiResponse } from '../demo/mockApi';
+import { isDemoTransportEnabled, setRuntimeDemoMode } from '../utils/runtimeDemo';
 
-const isSecureBaseUrl = /^https:\/\//i.test(BASE_URL);
-const isTrustedLocalBaseUrl = /^http:\/\/((localhost|127\.0\.0\.1|10\.0\.2\.2)|(192\.168\.\d+\.\d+)|(10\.\d+\.\d+\.\d+)|(172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+))(:\d+)?(\/|$)/i.test(BASE_URL);
-const FALLBACK_BASE_URL = 'https://api.hirecircle.in';
-const resolvedBaseUrl = (isSecureBaseUrl || isTrustedLocalBaseUrl) ? BASE_URL : FALLBACK_BASE_URL;
+const resolveLiveAdapter = () => {
+    const defaultAdapter = axios.defaults.adapter;
+    if (typeof defaultAdapter === 'function') {
+        return defaultAdapter;
+    }
 
-if (resolvedBaseUrl !== BASE_URL) {
-    logger.error('SecurityError: Invalid API base URL detected. Falling back to secure production URL.');
-}
+    if (typeof axios.getAdapter === 'function') {
+        try {
+            return axios.getAdapter(Array.isArray(defaultAdapter) ? defaultAdapter : ['xhr', 'http', 'fetch']);
+        } catch (error) {
+            logger.error('Unable to resolve axios live adapter:', error?.message || error);
+        }
+    }
+    return null;
+};
+
+const liveAdapter = resolveLiveAdapter();
 
 const client = axios.create({
-    baseURL: resolvedBaseUrl,
+    baseURL: API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
     },
-    timeout: 10000, // 10 seconds timeout
-    ...(DEMO_MODE ? {
-        adapter: async (config) => getMockApiResponse(config),
-    } : {}),
+    timeout: 15000,
+    adapter: async (config) => {
+        if (isDemoTransportEnabled()) {
+            return getMockApiResponse(config);
+        }
+
+        if (liveAdapter) {
+            return liveAdapter(config);
+        }
+
+        throw new Error('No network adapter available');
+    },
 });
 
 // Add a request interceptor to attach the Token
 client.interceptors.request.use(
     async (config) => {
-        if (DEMO_MODE) {
+        if (isDemoTransportEnabled()) {
             return config;
         }
         try {
@@ -39,6 +57,16 @@ client.interceptors.request.use(
             if (userInfoString) {
                 const userInfo = JSON.parse(userInfoString);
                 if (userInfo && userInfo.token) {
+                    const isDevDemoToken = (
+                        typeof __DEV__ !== 'undefined'
+                        && __DEV__
+                        && typeof userInfo.token === 'string'
+                        && userInfo.token.startsWith('demo.')
+                    );
+                    if (isDevDemoToken) {
+                        setRuntimeDemoMode(true);
+                        return config;
+                    }
                     config.headers.Authorization = `Bearer ${userInfo.token}`;
                 }
             }
@@ -58,7 +86,7 @@ client.interceptors.response.use(
         return response;
     },
     async (error) => {
-        if (DEMO_MODE) {
+        if (isDemoTransportEnabled()) {
             return Promise.reject(error);
         }
         const config = error.config || {};
