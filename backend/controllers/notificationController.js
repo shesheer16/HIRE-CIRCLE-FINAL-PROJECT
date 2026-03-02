@@ -25,7 +25,7 @@ const getMyNotifications = async (req, res) => {
             pages: Math.ceil(total / limit)
         });
     } catch (error) {
-        console.error("Fetch Notifications Error:", error);
+        console.warn("Fetch Notifications Error:", error);
         res.status(500).json({ message: "Failed to load notifications" });
     }
 };
@@ -46,7 +46,7 @@ const markNotificationRead = async (req, res) => {
 
         res.json(notification);
     } catch (error) {
-        console.error("Mark Read Error:", error);
+        console.warn("Mark Read Error:", error);
         res.status(500).json({ message: "Failed to mark as read" });
     }
 };
@@ -62,7 +62,7 @@ const markAllNotificationsRead = async (req, res) => {
 
         res.json({ message: "All notifications marked as read" });
     } catch (error) {
-        console.error("Mark All Read Error:", error);
+        console.warn("Mark All Read Error:", error);
         res.status(500).json({ message: "Failed to mark all as read" });
     }
 };
@@ -85,7 +85,7 @@ const registerPushToken = async (req, res) => {
 
         return res.json({ success: true, platform: platform || 'unknown' });
     } catch (error) {
-        console.error('Register Token Error:', error.message);
+        console.warn('Register Token Error:', error.message);
         return res.status(500).json({ success: false, message: 'Failed to register token' });
     }
 };
@@ -101,10 +101,10 @@ const createNotification = async ({ user, type, title, message, relatedData }) =
             relatedData
         });
 
-        // TODO: Emmit via socket.io if user is connected
+        // Socket emission can be enabled here when live notification fan-out is required.
         return notif;
     } catch (error) {
-        console.error("Failed to create notification:", error.message);
+        console.warn("Failed to create notification:", error.message);
     }
 };
 

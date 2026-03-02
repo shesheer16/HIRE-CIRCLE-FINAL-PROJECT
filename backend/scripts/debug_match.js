@@ -127,7 +127,7 @@ const runDebug = async () => {
         }
 
     } catch (err) {
-        console.error('❌ SCRIPT ERROR:', err);
+        console.warn('❌ SCRIPT ERROR:', err);
     } finally {
         mongoose.connection.close();
         console.log('\n🔒 DB Disconnected');

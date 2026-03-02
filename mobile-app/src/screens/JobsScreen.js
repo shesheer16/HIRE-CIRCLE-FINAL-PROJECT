@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
+    Animated,
     FlatList,
+    Image,
     Modal,
     Platform,
+    RefreshControl,
     ScrollView,
     Share,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
@@ -16,17 +20,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorageLib from '@react-native-async-storage/async-storage';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import client from '../api/client';
 import EmptyState from '../components/EmptyState';
 import JobCard from '../components/JobCard';
 import SkeletonLoader from '../components/SkeletonLoader';
+import NudgeToast from '../components/NudgeToast';
 import { DEMO_MODE, FEATURE_MATCH_UI_V1 } from '../config';
 import { useRefreshOnFocus } from '../hooks/useRefreshOnFocus';
 import { trackEvent } from '../services/analytics';
 import { useAppStore } from '../store/AppStore';
 import { logValidationError, validateJobsResponse } from '../utils/apiValidator';
 import { logger } from '../utils/logger';
+import { AuthContext } from '../context/AuthContext';
+import { RADIUS, SHADOWS, SPACING, theme } from '../theme/theme';
 import {
     getDisplayScorePercent,
     getNormalizedScore,
@@ -76,15 +84,33 @@ const getReadableError = (error, fallbackMessage) => {
     return fallbackMessage;
 };
 
+const formatDistanceLabel = (rawDistance, fallbackLocation) => {
+    const numeric = Number(rawDistance);
+    if (Number.isFinite(numeric) && numeric > 0) {
+        if (numeric < 1) {
+            return `${Math.round(numeric * 1000)}m away`;
+        }
+        return `${numeric.toFixed(1)}km away`;
+    }
+    const locationText = String(fallbackLocation || '').trim();
+    if (!locationText || locationText.toLowerCase().includes('remote')) {
+        return 'Remote friendly';
+    }
+    return `Near ${locationText}`;
+};
+
 export default function JobsScreen() {
     const navigation = useNavigation();
     const route = useRoute();
     const insets = useSafeAreaInsets();
     const { featureFlags } = useAppStore();
+    const { userInfo } = React.useContext(AuthContext);
 
     const listRef = useRef(null);
     const fetchDebounceRef = useRef(null);
     const matchApiCallsRef = useRef(0);
+    const retentionPingRef = useRef({ jobsNear: false, dailyMatch: false });
+    const contentOpacity = useRef(new Animated.Value(0.9)).current;
 
     const [activeFilter, setActiveFilter] = useState('All');
     const [userRole, setUserRole] = useState('candidate');
@@ -93,6 +119,7 @@ export default function JobsScreen() {
     const [dismissedJobs, setDismissedJobs] = useState([]);
     const [reportedJobIds, setReportedJobIds] = useState(new Set());
     const [isLoading, setIsLoading] = useState(!DEMO_MODE);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
 
     const [usingRecommendedFeed, setUsingRecommendedFeed] = useState(false);
@@ -105,6 +132,7 @@ export default function JobsScreen() {
     const [currentWorkerProfileId, setCurrentWorkerProfileId] = useState('');
 
     const [filterModalVisible, setFilterModalVisible] = useState(false);
+    const [matchInfoModal, setMatchInfoModal] = useState({ visible: false, title: '', detail: '' });
     const [locationFilter, setLocationFilter] = useState('');
     const [minSalaryFilter, setMinSalaryFilter] = useState('');
     const [minMatchFilter, setMinMatchFilter] = useState(0);
@@ -112,6 +140,12 @@ export default function JobsScreen() {
     const [appliedLocation, setAppliedLocation] = useState('');
     const [appliedMinSalary, setAppliedMinSalary] = useState(0);
     const [appliedMinMatch, setAppliedMinMatch] = useState(0);
+    const [nudgeToast, setNudgeToast] = useState(null);
+    const [showInactiveBanner, setShowInactiveBanner] = useState(false);
+
+    // Map View States
+    const [isMapView, setIsMapView] = useState(false);
+    const [searchRadiusKm, setSearchRadiusKm] = useState(25);
 
     const matchOptions = [
         { label: 'All', value: 0 },
@@ -130,9 +164,15 @@ export default function JobsScreen() {
     const formatJobRow = useCallback((item, source = 'generic') => {
         const job = item?.job || item || {};
         const normalizedScore = getNormalizedScore(item);
+        const fallbackKey = [
+            source,
+            String(job?.title || 'untitled'),
+            String(job?.companyName || 'company'),
+            String(job?.location || 'location'),
+        ].join('-').replace(/\s+/g, '-').toLowerCase();
 
         return {
-            _id: String(job._id || item?._id || `${source}-${Math.random()}`),
+            _id: String(job._id || item?._id || fallbackKey),
             title: String(job.title || 'Untitled Job'),
             companyName: String(job.companyName || 'Looking for Someone'),
             location: String(job.location || 'Remote'),
@@ -150,6 +190,17 @@ export default function JobsScreen() {
             explainability: item?.explainability || {},
             matchModelVersionUsed: item?.matchModelVersionUsed || null,
             source,
+            urgentHiring: Boolean(job?.urgentHiring || item?.urgentHiring),
+            activelyHiring: job?.activelyHiring !== false,
+            distanceLabel: formatDistanceLabel(job?.distanceKm ?? item?.distanceKm ?? item?.distance, job?.location),
+            hiredCount: Number(
+                job?.totalHires
+                ?? job?.hiredCount
+                ?? job?.stats?.hiredCount
+                ?? item?.hiredCount
+                ?? 0,
+            ),
+            responseTimeLabel: String(job?.responseTimeLabel || item?.responseTimeLabel || 'Responds fast'),
             job: job,
         };
     }, []);
@@ -188,8 +239,10 @@ export default function JobsScreen() {
         };
     }, [appliedLocation, currentWorkerProfileId]);
 
-    const fetchGenericJobs = useCallback(async () => {
-        const { data } = await client.get('/api/matches/candidate');
+    const fetchGenericJobs = useCallback(async ({ searchRadiusKm }) => {
+        const { data } = await client.get('/api/matches/candidate', {
+            params: { radiusKm: searchRadiusKm }
+        });
         const matches = validateJobsResponse(data);
 
         return matches
@@ -197,7 +250,7 @@ export default function JobsScreen() {
             .sort((left, right) => getNormalizedScore(right) - getNormalizedScore(left));
     }, [formatJobRow]);
 
-    const fetchRecommendedJobs = useCallback(async ({ workerId, city }) => {
+    const fetchRecommendedJobs = useCallback(async ({ workerId, city, searchRadiusKm }) => {
         if (!workerId) return [];
         if (matchApiCallsRef.current >= MAX_MATCH_API_CALLS_PER_LOAD) {
             logger.warn('Skipping recommended fetch: match API call budget exhausted for this load.');
@@ -206,8 +259,9 @@ export default function JobsScreen() {
 
         matchApiCallsRef.current += 1;
 
-        const params = { workerId };
+        const params = { workerId, preferences: true };
         if (city) params.city = city;
+        if (searchRadiusKm) params.radiusKm = searchRadiusKm;
 
         const { data } = await client.get('/api/jobs/recommended', { params });
         const rows = Array.isArray(data?.recommendedJobs) ? data.recommendedJobs : [];
@@ -218,8 +272,8 @@ export default function JobsScreen() {
         return [...strongAndGood, ...possible].slice(0, 20);
     }, [formatJobRow]);
 
-    const fetchJobs = useCallback(async () => {
-        if (!DEMO_MODE) setIsLoading(true);
+    const fetchJobs = useCallback(async ({ isRefresh = false } = {}) => {
+        if (!DEMO_MODE && !isRefresh) setIsLoading(true);
         setErrorMsg('');
         matchApiCallsRef.current = 0;
 
@@ -246,11 +300,22 @@ export default function JobsScreen() {
 
             if (shouldUseMatchUi) {
                 try {
-                    const recommendedRows = await fetchRecommendedJobs({ workerId: workerProfileId || userId, city });
+                    const recommendedRows = await fetchRecommendedJobs({
+                        workerId: workerProfileId || userId,
+                        city,
+                        searchRadiusKm
+                    });
                     if (recommendedRows.length > 0) {
                         nextJobs = recommendedRows;
                         isRecommended = true;
                         setRecommendedCount(recommendedRows.length);
+
+                        if (!retentionPingRef.current.dailyMatch) {
+                            retentionPingRef.current.dailyMatch = true;
+                            import('../services/NotificationService')
+                                .then(({ triggerLocalNotification }) => triggerLocalNotification('daily_match_alert', { count: recommendedRows.length }))
+                                .catch(() => { });
+                        }
 
                         const topJob = recommendedRows[0];
                         trackEvent('MATCH_RECOMMENDATION_VIEWED', {
@@ -267,17 +332,17 @@ export default function JobsScreen() {
             }
 
             if (!nextJobs.length) {
-                nextJobs = await fetchGenericJobs();
+                nextJobs = await fetchGenericJobs({ searchRadiusKm });
             }
 
             setUsingRecommendedFeed(isRecommended);
             setShowRecommendedFallback(Boolean(shouldUseMatchUi && !isRecommended));
             if (!isRecommended) setRecommendedCount(0);
 
-            setJobs(nextJobs);
+            setJobs(nextJobs.slice(0, 20));
 
             try {
-                await AsyncStorageLib.setItem(CACHE_KEY, JSON.stringify(nextJobs));
+                await AsyncStorageLib.setItem(CACHE_KEY, JSON.stringify(nextJobs.slice(0, 20)));
             } catch (cacheWriteError) {
                 logger.error('Error saving cached jobs', cacheWriteError);
             }
@@ -289,7 +354,12 @@ export default function JobsScreen() {
             }
             setErrorMsg(getReadableError(error, 'Could not load jobs right now. Please try again.'));
         } finally {
-            if (!DEMO_MODE) setIsLoading(false);
+            if (isRefresh) {
+                setIsRefreshing(false);
+            }
+            if (!DEMO_MODE && !isRefresh) {
+                setIsLoading(false);
+            }
         }
     }, [fetchGenericJobs, fetchRecommendedJobs, resolveWorkerContext, route.params?.source]);
 
@@ -297,7 +367,17 @@ export default function JobsScreen() {
         if (fetchDebounceRef.current) {
             clearTimeout(fetchDebounceRef.current);
         }
-        fetchDebounceRef.current = setTimeout(fetchJobs, FETCH_DEBOUNCE_MS);
+        fetchDebounceRef.current = setTimeout(() => fetchJobs(), FETCH_DEBOUNCE_MS);
+    }, [fetchJobs]);
+
+    const handleRefresh = useCallback(() => {
+        if (isRefreshing) return;
+        setIsRefreshing(true);
+        fetchJobs({ isRefresh: true });
+    }, [fetchJobs, isRefreshing]);
+
+    const handleRetry = useCallback(() => {
+        fetchJobs();
     }, [fetchJobs]);
 
     const loadDismissed = useCallback(async () => {
@@ -351,6 +431,64 @@ export default function JobsScreen() {
             clearTimeout(dismissTimer);
         };
     }, [recommendedCount, route.params?.highlightMatches, route.params?.recommendedCount, usingRecommendedFeed]);
+
+    useEffect(() => {
+        Animated.timing(contentOpacity, {
+            toValue: isLoading ? 0.9 : 1,
+            duration: 160,
+            useNativeDriver: true,
+        }).start();
+    }, [contentOpacity, isLoading]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const checkInactivity = async () => {
+            try {
+                const lastActive = await AsyncStorageLib.getItem('@hc_last_active_at');
+                if (!lastActive || !isMounted) return;
+
+                const lastActiveEpoch = Number(lastActive);
+                if (!Number.isFinite(lastActiveEpoch)) return;
+
+                const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+                if ((Date.now() - lastActiveEpoch) >= threeDaysMs) {
+                    setShowInactiveBanner(true);
+                    setNudgeToast({
+                        text: 'Welcome back. You have new opportunities waiting.',
+                        actionLabel: 'Refresh',
+                        onAction: () => handleRefresh(),
+                    });
+                    if (!retentionPingRef.current.jobsNear) {
+                        retentionPingRef.current.jobsNear = true;
+                        import('../services/NotificationService')
+                            .then(({ triggerLocalNotification }) => triggerLocalNotification('jobs_near_you', { city: appliedLocation || undefined }))
+                            .catch(() => { });
+                    }
+                }
+            } catch (error) {
+                logger.warn('Inactivity nudge check failed', error?.message || error);
+            }
+        };
+
+        checkInactivity();
+        return () => { isMounted = false; };
+    }, [appliedLocation, handleRefresh]);
+
+    useEffect(() => {
+        if (userRole === 'employer') return;
+        if (Boolean(userInfo?.hasCompletedProfile)) return;
+
+        const timeout = setTimeout(() => {
+            setNudgeToast({
+                text: 'Complete Smart Interview to unlock better matches.',
+                actionLabel: 'Start',
+                onAction: () => navigation.navigate('SmartInterview'),
+            });
+        }, 1000);
+
+        return () => clearTimeout(timeout);
+    }, [navigation, userInfo?.hasCompletedProfile, userRole]);
 
     const toggleTierFilter = useCallback((tier) => {
         if (tier === 'ALL') {
@@ -466,6 +604,8 @@ export default function JobsScreen() {
     }, []);
 
     const handleReasonPress = useCallback((job, reason) => {
+        const score = getDisplayScorePercent(job);
+        const fallbackDetail = `Match score combines your skills, recent activity, expected salary fit, and location readiness.`;
         trackEvent('MATCH_REASON_CLICKED', {
             workerId: currentWorkerProfileId || currentWorkerUserId,
             jobId: String(job?._id || ''),
@@ -473,6 +613,11 @@ export default function JobsScreen() {
             tier: String(job?.tier || ''),
             reasonId: String(reason?.id || ''),
             reasonLabel: String(reason?.label || ''),
+        });
+        setMatchInfoModal({
+            visible: true,
+            title: `${score}% match confidence`,
+            detail: String(reason?.label || fallbackDetail),
         });
     }, [currentWorkerProfileId, currentWorkerUserId]);
 
@@ -523,10 +668,30 @@ export default function JobsScreen() {
     const bannerCount = Number(route.params?.recommendedCount || recommendedCount || 0);
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}> 
+        <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
                 <View style={styles.headerTopRow}>
-                    <Text style={styles.headerTitle}>{userRole === 'employer' ? 'Your Job Postings' : 'Jobs for You'}</Text>
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>{userRole === 'employer' ? 'Your Job Postings' : 'Jobs for You'}</Text>
+                        <Text style={styles.headerSubtitle}>
+                            {userRole === 'employer'
+                                ? 'Pipeline visibility and hiring momentum in one place.'
+                                : 'Prioritized by match quality, pay, trust, and urgency.'}
+                        </Text>
+                    </View>
+
+                    {userRole !== 'employer' && (
+                        <View style={styles.mapToggleContainer}>
+                            <Text style={styles.mapToggleLabel}>Map</Text>
+                            <Switch
+                                value={isMapView}
+                                onValueChange={setIsMapView}
+                                trackColor={{ false: '#e2e8f0', true: '#bfdbfe' }}
+                                thumbColor={isMapView ? theme.primary : '#94a3b8'}
+                                ios_backgroundColor="#e2e8f0"
+                            />
+                        </View>
+                    )}
 
                     <TouchableOpacity
                         style={styles.filtersBtn}
@@ -537,7 +702,6 @@ export default function JobsScreen() {
                             setFilterModalVisible(true);
                         }}
                     >
-                        <Text style={styles.filtersBtnIcon}>⚙️</Text>
                         <Text style={styles.filtersBtnText}>Filters</Text>
                         {activeFilterCount > 0 ? (
                             <View style={styles.filtersBadge}>
@@ -609,79 +773,126 @@ export default function JobsScreen() {
 
                 {showMatchBanner && shouldRenderMatchInsights ? (
                     <View style={styles.matchBanner}>
-                        <Text style={styles.matchBannerTitle}>Jobs just for you</Text>
-                        <Text style={styles.matchBannerSubtitle}>{bannerCount || recommendedCount || 0} matched roles based on your profile</Text>
+                        <Text style={styles.matchBannerTitle}>Refreshed for your profile</Text>
+                        <Text style={styles.matchBannerSubtitle}>{bannerCount || recommendedCount || 0} matched roles ready now</Text>
                     </View>
                 ) : null}
 
                 {showRecommendedFallback ? (
                     <View style={styles.fallbackBanner}>
-                        <Text style={styles.fallbackBannerText}>No close matches found — here are all jobs near you</Text>
+                        <Text style={styles.fallbackBannerText}>Strong signals are limited right now. Showing broader nearby opportunities.</Text>
+                    </View>
+                ) : null}
+
+                {showInactiveBanner ? (
+                    <View style={styles.inactiveBanner}>
+                        <Text style={styles.inactiveBannerText}>You were inactive for a few days. New roles were queued for you.</Text>
                     </View>
                 ) : null}
             </View>
 
             {isLoading && jobs.length === 0 ? (
                 <View style={styles.loadingWrap}>
-                    <SkeletonLoader height={140} style={styles.loadingCard} />
-                    <SkeletonLoader height={140} style={styles.loadingCard} />
-                    <SkeletonLoader height={140} style={styles.loadingCard} />
+                    <SkeletonLoader height={132} style={styles.loadingCard} tone="tint" />
+                    <SkeletonLoader height={132} style={styles.loadingCard} tone="tint" />
+                    <SkeletonLoader height={132} style={styles.loadingCard} tone="tint" />
                 </View>
             ) : null}
 
-            {!isLoading && errorMsg && filteredJobs.length === 0 ? (
-                <EmptyState
-                    icon={<Text style={styles.emptyEmoji}>⚠️</Text>}
-                    title="Could Not Load Jobs"
-                    message={errorMsg}
-                    actionLabel="Retry"
-                    onAction={fetchJobs}
-                />
-            ) : (
-                <>
-                    {errorMsg && filteredJobs.length > 0 ? (
-                        <View style={styles.errorBanner}>
-                            <Text style={styles.errorBannerText}>{errorMsg}</Text>
-                            <TouchableOpacity onPress={fetchJobs} style={styles.errorRetryBtn}>
-                                <Text style={styles.errorRetryText}>Retry</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ) : null}
+            {errorMsg && filteredJobs.length > 0 ? (
+                <View style={styles.errorBanner}>
+                    <Text style={styles.errorBannerText}>Couldn’t load data. Pull down to refresh.</Text>
+                    <TouchableOpacity onPress={handleRetry} style={styles.errorRetryBtn}>
+                        <Text style={styles.errorRetryText}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
 
-                    <FlatList
-                        ref={listRef}
-                        data={filteredJobs}
-                        keyExtractor={(item, index) => `${item?._id || 'job'}-${index}`}
-                        renderItem={renderJobCard}
-                        contentContainerStyle={styles.listContent}
-                        showsVerticalScrollIndicator={false}
-                        maxToRenderPerBatch={10}
-                        windowSize={10}
-                        removeClippedSubviews={Platform.OS === 'android'}
-                        initialNumToRender={10}
-                        ListEmptyComponent={
-                            <EmptyState
-                                icon={<Text style={styles.emptyEmoji}>🔍</Text>}
-                                title={showRecommendedFallback ? 'No close matches found' : 'No Jobs Found'}
-                                message={
-                                    showRecommendedFallback
-                                        ? 'No close matches found — here are all jobs near you'
-                                        : 'Try adjusting your search or filter.'
-                                }
-                                actionLabel={activeFilter !== 'All' ? 'Clear Filters' : null}
-                                onAction={
-                                    activeFilter !== 'All'
-                                        ? () => {
-                                            setActiveFilter('All');
-                                            handleClearFilters();
+            <View style={{ flex: 1 }}>
+                {isMapView ? (
+                    <View style={styles.mapContainer}>
+                        <MapView
+                            provider={PROVIDER_GOOGLE}
+                            style={styles.map}
+                            initialRegion={{
+                                latitude: 20.5937,
+                                longitude: 78.9629,
+                                latitudeDelta: 15,
+                                longitudeDelta: 15,
+                            }}
+                        >
+                            {filteredJobs.map((job) => {
+                                const lat = job?.job?.geo?.coordinates?.[1];
+                                const lng = job?.job?.geo?.coordinates?.[0];
+
+                                if (!lat || !lng || (lat === 0 && lng === 0)) return null;
+
+                                return (
+                                    <Marker
+                                        key={`marker-${job._id}`}
+                                        coordinate={{ latitude: lat, longitude: lng }}
+                                        title={job.title}
+                                        description={job.companyName}
+                                        pinColor={job.matchScore > 80 ? theme.primary : '#94a3b8'}
+                                    />
+                                );
+                            })}
+                        </MapView>
+                    </View>
+                ) : (
+                    <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
+                        <FlatList
+                            ref={listRef}
+                            data={filteredJobs}
+                            keyExtractor={(item) => String(item?._id || 'job')}
+                            renderItem={renderJobCard}
+                            contentContainerStyle={styles.listContent}
+                            showsVerticalScrollIndicator={false}
+                            maxToRenderPerBatch={10}
+                            windowSize={10}
+                            removeClippedSubviews={Platform.OS === 'android'}
+                            initialNumToRender={10}
+                            refreshControl={(
+                                <RefreshControl
+                                    refreshing={isRefreshing}
+                                    onRefresh={handleRefresh}
+                                    tintColor={theme.textSecondary}
+                                />
+                            )}
+                            ListEmptyComponent={
+                                errorMsg ? (
+                                    <EmptyState
+                                        icon="⚠️"
+                                        title="Couldn’t load data"
+                                        subtitle="Pull down to refresh."
+                                        actionLabel="Retry"
+                                        onAction={handleRetry}
+                                    />
+                                ) : (
+                                    <EmptyState
+                                        icon={showRecommendedFallback ? '🔍' : '💼'}
+                                        title={showRecommendedFallback ? 'No matches yet' : 'No jobs yet'}
+                                        subtitle={
+                                            showRecommendedFallback
+                                                ? 'Update your profile to get better matches'
+                                                : 'Try adjusting your search or filters.'
                                         }
-                                        : null
-                                }
-                            />
-                        }
-                    />
-                </>
-            )}
+                                        actionLabel={activeFilter !== 'All' ? 'Clear Filters' : null}
+                                        onAction={
+                                            activeFilter !== 'All'
+                                                ? () => {
+                                                    setActiveFilter('All');
+                                                    handleClearFilters();
+                                                }
+                                                : null
+                                        }
+                                    />
+                                )
+                            }
+                        />
+                    </Animated.View>
+                )}
+            </View>
 
             <Modal
                 visible={filterModalVisible}
@@ -699,6 +910,30 @@ export default function JobsScreen() {
                         </View>
 
                         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.filterModalContent}>
+
+                            <Text style={styles.filterLabel}>SEARCH RADIUS</Text>
+                            <View style={styles.matchOptions}>
+                                {[10, 25, 50].map((radius) => (
+                                    <TouchableOpacity
+                                        key={`radius-${radius}`}
+                                        style={[
+                                            styles.matchOption,
+                                            searchRadiusKm === radius && styles.matchOptionActive,
+                                        ]}
+                                        onPress={() => setSearchRadiusKm(radius)}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.matchOptionText,
+                                                searchRadiusKm === radius && styles.matchOptionTextActive,
+                                            ]}
+                                        >
+                                            {radius}km
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
                             <Text style={styles.filterLabel}>LOCATION</Text>
                             <TextInput
                                 style={styles.filterInput}
@@ -760,6 +995,34 @@ export default function JobsScreen() {
                     </View>
                 </View>
             </Modal>
+
+            <NudgeToast
+                visible={Boolean(nudgeToast)}
+                text={nudgeToast?.text}
+                actionLabel={nudgeToast?.actionLabel}
+                onAction={nudgeToast?.onAction}
+                onDismiss={() => setNudgeToast(null)}
+            />
+
+            <Modal
+                visible={matchInfoModal.visible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setMatchInfoModal({ visible: false, title: '', detail: '' })}
+            >
+                <View style={styles.matchInfoOverlay}>
+                    <View style={styles.matchInfoCard}>
+                        <Text style={styles.matchInfoTitle}>{matchInfoModal.title || 'Match details'}</Text>
+                        <Text style={styles.matchInfoText}>{matchInfoModal.detail || 'Match scoring detail unavailable right now.'}</Text>
+                        <TouchableOpacity
+                            style={styles.matchInfoBtn}
+                            onPress={() => setMatchInfoModal({ visible: false, title: '', detail: '' })}
+                        >
+                            <Text style={styles.matchInfoBtnText}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -767,63 +1030,71 @@ export default function JobsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: theme.background,
     },
     header: {
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 12,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 2,
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        paddingHorizontal: SPACING.md,
+        paddingTop: SPACING.smd + 2,
+        paddingBottom: SPACING.smd,
+        borderBottomWidth: 1,
+        borderBottomColor: '#edf1f7',
         zIndex: 10,
+        ...SHADOWS.sm,
     },
     headerTopRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 12,
+        alignItems: 'flex-start',
+        marginBottom: 10,
+        gap: 12,
+    },
+    headerTitleWrap: {
+        flex: 1,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: '700',
-        color: '#0f172a',
+        color: theme.textPrimary,
+        letterSpacing: -0.2,
+    },
+    headerSubtitle: {
+        marginTop: 2,
+        fontSize: 14,
+        color: '#64748b',
+        fontWeight: '400',
     },
     filtersBtn: {
-        flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#faf5ff',
-        paddingHorizontal: 12,
-        paddingVertical: 7,
-        borderRadius: 20,
+        justifyContent: 'center',
+        minWidth: 76,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        paddingHorizontal: SPACING.smd,
+        paddingVertical: SPACING.sm,
+        borderRadius: RADIUS.md,
         borderWidth: 1,
-        borderColor: '#e9d5ff',
-        gap: 4,
-    },
-    filtersBtnIcon: {
-        fontSize: 14,
+        borderColor: '#e6ebf4',
     },
     filtersBtnText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#7e22ce',
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#334155',
     },
     filtersBadge: {
-        backgroundColor: '#9333ea',
+        position: 'absolute',
+        top: -6,
+        right: -6,
+        backgroundColor: theme.primary,
         width: 18,
         height: 18,
         borderRadius: 9,
         justifyContent: 'center',
         alignItems: 'center',
-        marginLeft: 2,
     },
     filtersBadgeText: {
-        color: '#fff',
+        color: '#ffffff',
         fontSize: 10,
-        fontWeight: '900',
+        fontWeight: '700',
     },
     filtersRow: {
         flexDirection: 'row',
@@ -832,26 +1103,26 @@ const styles = StyleSheet.create({
         paddingRight: 16,
     },
     filterChip: {
-        backgroundColor: '#f1f5f9',
-        borderRadius: 9999,
-        paddingHorizontal: 16,
-        paddingVertical: 6,
-        marginRight: 8,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderRadius: RADIUS.full,
+        paddingHorizontal: SPACING.smd + 2,
+        paddingVertical: SPACING.xs + 3,
+        marginRight: 10,
         borderWidth: 1,
-        borderColor: 'transparent',
+        borderColor: '#e8edf4',
     },
     filterChipActive: {
-        backgroundColor: '#faf5ff',
-        borderColor: '#d8b4fe',
+        backgroundColor: '#eef3ff',
+        borderColor: '#d7e1f0',
     },
     filterChipText: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#475569',
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#334155',
     },
     filterChipTextActive: {
-        color: '#6d28d9',
-        fontWeight: '700',
+        color: '#1f2937',
+        fontWeight: '600',
     },
     tierChipsRow: {
         flexDirection: 'row',
@@ -860,81 +1131,96 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     tierChip: {
-        borderRadius: 999,
+        borderRadius: RADIUS.full,
         borderWidth: 1,
-        borderColor: '#cbd5e1',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        backgroundColor: '#ffffff',
+        borderColor: '#d1dbe7',
+        paddingHorizontal: SPACING.smd,
+        paddingVertical: SPACING.xs + 2,
+        backgroundColor: '#f8fafd',
     },
     tierChipActive: {
         borderColor: '#1d4ed8',
-        backgroundColor: '#dbeafe',
+        backgroundColor: '#e8f0ff',
     },
     tierChipText: {
         fontSize: 12,
-        color: '#334155',
-        fontWeight: '700',
+        color: '#475569',
+        fontWeight: '500',
     },
     tierChipTextActive: {
         color: '#1d4ed8',
+        fontWeight: '600',
     },
     matchBanner: {
-        marginTop: 12,
-        borderRadius: 14,
+        marginTop: SPACING.smd,
+        borderRadius: RADIUS.md,
         borderWidth: 1,
-        borderColor: '#bbf7d0',
-        backgroundColor: '#ecfdf5',
-        padding: 12,
+        borderColor: '#d9e7ff',
+        backgroundColor: '#f4f8ff',
+        padding: SPACING.smd + 1,
     },
     matchBannerTitle: {
-        color: '#065f46',
+        color: '#1e3a8a',
         fontSize: 14,
-        fontWeight: '800',
+        fontWeight: '600',
     },
     matchBannerSubtitle: {
         marginTop: 4,
-        color: '#047857',
+        color: '#1d4ed8',
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    fallbackBanner: {
+        marginTop: SPACING.smd,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#f6deb0',
+        backgroundColor: '#fff9ee',
+        padding: SPACING.smd,
+    },
+    fallbackBannerText: {
+        color: '#9a6a14',
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    inactiveBanner: {
+        marginTop: 10,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        backgroundColor: '#eff6ff',
+        padding: SPACING.smd,
+    },
+    inactiveBannerText: {
+        color: '#1e40af',
         fontSize: 12,
         fontWeight: '600',
     },
-    fallbackBanner: {
-        marginTop: 12,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#fde68a',
-        backgroundColor: '#fffbeb',
-        padding: 10,
-    },
-    fallbackBannerText: {
-        color: '#92400e',
-        fontSize: 12,
-        fontWeight: '700',
-    },
     loadingWrap: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
+        paddingHorizontal: SPACING.md,
+        paddingTop: SPACING.smd,
     },
     loadingCard: {
-        borderRadius: 12,
-        marginBottom: 16,
+        borderRadius: RADIUS.lg,
+        marginBottom: 20,
     },
     listContent: {
-        padding: 16,
-        paddingBottom: 32,
+        paddingHorizontal: SPACING.md,
+        paddingTop: SPACING.smd,
+        paddingBottom: 40,
     },
     emptyEmoji: {
         fontSize: 48,
         marginBottom: 16,
     },
     errorBanner: {
-        marginHorizontal: 16,
-        marginTop: 12,
+        marginHorizontal: 20,
+        marginTop: SPACING.smd,
         marginBottom: 4,
-        backgroundColor: '#fef2f2',
-        borderRadius: 10,
+        backgroundColor: '#fff3f4',
+        borderRadius: RADIUS.md,
         borderWidth: 1,
-        borderColor: '#fecaca',
+        borderColor: '#f4cbd0',
         padding: 12,
         flexDirection: 'row',
         alignItems: 'center',
@@ -943,19 +1229,19 @@ const styles = StyleSheet.create({
     },
     errorBannerText: {
         flex: 1,
-        color: '#b91c1c',
+        color: '#9d3e49',
         fontSize: 12,
-        fontWeight: '600',
+        fontWeight: '500',
     },
     errorRetryBtn: {
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 8,
-        backgroundColor: '#fee2e2',
+        backgroundColor: '#fbe4e7',
     },
     errorRetryText: {
-        color: '#b91c1c',
-        fontWeight: '800',
+        color: '#9d3e49',
+        fontWeight: '600',
         fontSize: 11,
     },
     filterModalOverlay: {
@@ -964,26 +1250,33 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     filterModalSheet: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingHorizontal: 24,
-        paddingTop: 24,
+        backgroundColor: '#ffffff',
+        borderTopLeftRadius: RADIUS.xxl,
+        borderTopRightRadius: RADIUS.xxl,
+        paddingHorizontal: 20,
+        paddingTop: 20,
         maxHeight: '75%',
     },
     filterModalHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
+        marginBottom: 16,
     },
     filterModalTitle: {
-        fontSize: 18,
-        fontWeight: '900',
+        fontSize: 24,
+        fontWeight: '600',
         color: '#0f172a',
     },
     filterModalClose: {
-        padding: 8,
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: RADIUS.md,
+        backgroundColor: '#f8fbff',
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
     },
     filterModalCloseText: {
         fontSize: 18,
@@ -994,18 +1287,18 @@ const styles = StyleSheet.create({
         paddingBottom: 24,
     },
     filterLabel: {
-        fontSize: 10,
-        fontWeight: '900',
+        fontSize: 11,
+        fontWeight: '600',
         color: '#94a3b8',
         textTransform: 'uppercase',
         letterSpacing: 1,
         marginBottom: 8,
     },
     filterInput: {
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#f8fbff',
         borderWidth: 1,
-        borderColor: '#e2e8f0',
-        borderRadius: 12,
+        borderColor: '#dbe3ec',
+        borderRadius: RADIUS.md,
         paddingHorizontal: 16,
         paddingVertical: 13,
         fontSize: 15,
@@ -1020,23 +1313,24 @@ const styles = StyleSheet.create({
     matchOption: {
         flex: 1,
         paddingVertical: 12,
-        backgroundColor: '#f1f5f9',
-        borderRadius: 12,
+        backgroundColor: '#f4f7fb',
+        borderRadius: RADIUS.md,
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: 'transparent',
+        borderColor: '#dbe3ec',
     },
     matchOptionActive: {
-        backgroundColor: '#faf5ff',
-        borderColor: '#e9d5ff',
+        backgroundColor: '#e8f0ff',
+        borderColor: '#bfd5ff',
     },
     matchOptionText: {
-        fontSize: 14,
-        fontWeight: '700',
+        fontSize: 13,
+        fontWeight: '500',
         color: '#64748b',
     },
     matchOptionTextActive: {
-        color: '#7e22ce',
+        color: '#1d4ed8',
+        fontWeight: '600',
     },
     filterActions: {
         flexDirection: 'row',
@@ -1046,27 +1340,100 @@ const styles = StyleSheet.create({
     clearBtn: {
         flex: 1,
         paddingVertical: 14,
-        backgroundColor: '#f1f5f9',
-        borderRadius: 12,
+        backgroundColor: '#f4f7fb',
+        borderRadius: RADIUS.md,
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
     },
     clearBtnText: {
         fontSize: 14,
-        fontWeight: '900',
+        fontWeight: '600',
         color: '#64748b',
-        letterSpacing: 0.5,
     },
     applyBtn: {
         flex: 2,
         paddingVertical: 14,
-        backgroundColor: '#9333ea',
-        borderRadius: 12,
+        backgroundColor: theme.primary,
+        borderRadius: RADIUS.md,
         alignItems: 'center',
     },
     applyBtnText: {
         fontSize: 14,
-        fontWeight: '900',
-        color: '#fff',
-        letterSpacing: 0.5,
+        fontWeight: '600',
+        color: '#ffffff',
+    },
+    matchInfoOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.42)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+    },
+    matchInfoCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: RADIUS.lg,
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+    matchInfoTitle: {
+        color: '#0f172a',
+        fontSize: 16,
+        fontWeight: '800',
+        marginBottom: 8,
+    },
+    matchInfoText: {
+        color: '#475569',
+        fontSize: 13,
+        lineHeight: 19,
+        fontWeight: '500',
+    },
+    matchInfoBtn: {
+        alignSelf: 'flex-end',
+        marginTop: 14,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#cfe0ff',
+        backgroundColor: '#eef4ff',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    matchInfoBtnText: {
+        color: '#1d4ed8',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    mapToggleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 2,
+        paddingHorizontal: 8,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#e6ebf4',
+    },
+    mapToggleLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#334155',
+        marginRight: 6,
+    },
+    mapContainer: {
+        flex: 1,
+        borderRadius: RADIUS.md,
+        overflow: 'hidden',
+        margin: SPACING.md,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        ...SHADOWS.sm,
+    },
+    map: {
+        width: '100%',
+        height: '100%',
     },
 });

@@ -71,7 +71,16 @@ export default function ApplicantTimelineScreen({ route, navigation }) {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity
+                    onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                            return;
+                        }
+                        navigation.navigate('MainTab', { screen: 'My Jobs' });
+                    }}
+                    style={styles.backButton}
+                >
                     <Text style={styles.backText}>‹</Text>
                 </TouchableOpacity>
                 <View style={{ flex: 1 }}>

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { safeEmitEventEnvelope } = require('../services/eventEnvelopeService');
 
 const hiringLifecycleEventSchema = mongoose.Schema(
     {
@@ -7,8 +8,16 @@ const hiringLifecycleEventSchema = mongoose.Schema(
             enum: [
                 'INTERVIEW_CONFIRMED',
                 'APPLICATION_CREATED',
+                'APPLICATION_APPLIED',
                 'APPLICATION_SHORTLISTED',
+                'INTERVIEW_REQUESTED',
+                'INTERVIEW_COMPLETED',
+                'OFFER_SENT',
+                'OFFER_ACCEPTED',
+                'OFFER_DECLINED',
                 'APPLICATION_HIRED',
+                'APPLICATION_REJECTED',
+                'APPLICATION_WITHDRAWN',
                 'RETENTION_30D',
             ],
             required: true,
@@ -85,5 +94,24 @@ hiringLifecycleEventSchema.index(
         },
     }
 );
+
+hiringLifecycleEventSchema.post('save', (doc) => {
+    safeEmitEventEnvelope({
+        eventId: `lifecycle-${String(doc._id)}`,
+        eventType: doc.eventType || 'HIRING_LIFECYCLE_EVENT',
+        actorId: doc.userId ? String(doc.userId) : (doc.employerId ? String(doc.employerId) : null),
+        entityId: doc.applicationId ? String(doc.applicationId) : (doc.jobId ? String(doc.jobId) : null),
+        metadata: {
+            city: doc.city,
+            roleCluster: doc.roleCluster,
+            salaryBand: doc.salaryBand,
+            shift: doc.shift,
+            ...(doc.metadata || {}),
+        },
+        timestampUTC: doc.occurredAt || doc.createdAt || new Date(),
+        region: doc.city || null,
+        source: 'HiringLifecycleEvent',
+    });
+});
 
 module.exports = mongoose.model('HiringLifecycleEvent', hiringLifecycleEventSchema);

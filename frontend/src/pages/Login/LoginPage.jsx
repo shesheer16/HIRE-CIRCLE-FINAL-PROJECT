@@ -5,6 +5,7 @@ import { IoChevronBack } from 'react-icons/io5';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
+import { buildApiUrl } from '../../config/api';
 
 const LoginPage = () => {
   const [activeTab, setActiveTab] = useState('email'); // 'phone' or 'email'
@@ -46,12 +47,11 @@ const LoginPage = () => {
 
       // Sending data to backend
       const { data } = await axios.post(
-        'http://localhost:5001/api/users/login',
+        buildApiUrl('/api/users/login'),
         { email: formData.email, password: formData.password },
         config
       );
 
-      console.log('Login Successful:', data);
       localStorage.setItem('userInfo', JSON.stringify(data));
 
       // Redirect to home page
@@ -75,7 +75,7 @@ const LoginPage = () => {
     <div className="login-container">
       <div className="login-card">
         {/* Back Button */}
-        <button className="back-btn" onClick={() => console.log('Go back')}>
+        <button className="back-btn" onClick={() => navigate(-1)}>
           <IoChevronBack /> Back
         </button>
 

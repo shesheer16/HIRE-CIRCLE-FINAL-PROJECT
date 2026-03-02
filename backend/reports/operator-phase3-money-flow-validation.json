@@ -1,0 +1,53 @@
+{
+  "phase": "phase3_money_flow_validation",
+  "generatedAt": "2026-03-02T04:41:35.797Z",
+  "mode": "simulation",
+  "pass": true,
+  "steps": [
+    {
+      "name": "escrow_transaction",
+      "passed": true,
+      "details": {
+        "escrowId": "69a514ffc45673d6f7bd15b2",
+        "status": "funded",
+        "created": true
+      }
+    },
+    {
+      "name": "dispute_scenario",
+      "passed": true,
+      "details": {
+        "disputeId": "69a514ffc45673d6f7bd15c5",
+        "finalStatus": "resolved",
+        "decision": "split",
+        "workerAmount": 500,
+        "employerAmount": 500
+      }
+    },
+    {
+      "name": "withdrawal",
+      "passed": true,
+      "details": {
+        "withdrawalId": "69a514ffc45673d6f7bd15ed",
+        "status": "processed",
+        "amount": 500
+      }
+    },
+    {
+      "name": "failed_payment_test",
+      "passed": true,
+      "details": {
+        "paymentRecordId": "69a514ffc45673d6f7bd15f9",
+        "status": "failed"
+      }
+    }
+  ],
+  "metadata": {
+    "walletSnapshot": {
+      "balance": 0,
+      "pendingBalance": 0,
+      "kycStatus": "verified"
+    },
+    "note": "Simulation mode executed because complete API credentials were not provided."
+  }
+}

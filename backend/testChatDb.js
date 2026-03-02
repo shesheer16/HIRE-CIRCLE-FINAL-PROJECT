@@ -12,7 +12,7 @@ async function test() {
         console.log("Messages found:", messages.length);
         process.exit(0);
     } catch (err) {
-        console.error("Test Error:", err);
+        console.warn("Test Error:", err);
         process.exit(1);
     }
 }

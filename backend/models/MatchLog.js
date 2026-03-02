@@ -53,7 +53,4 @@ const matchLogSchema = mongoose.Schema(
     }
 );
 
-matchLogSchema.index({ matchRunId: 1 });
-matchLogSchema.index({ jobId: 1 });
-
 module.exports = mongoose.model('MatchLog', matchLogSchema);

@@ -1,6 +1,39 @@
-import React, { memo, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { theme, RADIUS } from '../../theme/theme';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
+import { RADIUS } from '../../theme/theme';
+import { connectPalette } from './connectPalette';
+import { MOTION } from '../../theme/motion';
+
+function AnimatedTabLabel({ tab, active, onPress }) {
+    const scale = useRef(new Animated.Value(active ? 1 : 0.96)).current;
+    const opacity = useRef(new Animated.Value(active ? 1 : 0.75)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.spring(scale, {
+                toValue: active ? 1 : 0.96,
+                stiffness: 220,
+                damping: 16,
+                mass: 0.8,
+                useNativeDriver: true,
+            }),
+            Animated.timing(opacity, {
+                toValue: active ? 1 : 0.75,
+                duration: MOTION.tabTransitionMs,
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, [active, opacity, scale]);
+
+    return (
+        <TouchableOpacity style={styles.tabButton} onPress={onPress} activeOpacity={0.75}>
+            <Animated.View style={{ transform: [{ scale }], opacity }}>
+                <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab}</Text>
+            </Animated.View>
+            {active ? <View style={styles.tabIndicator} /> : null}
+        </TouchableOpacity>
+    );
+}
 
 function ConnectTabBarComponent({ tabs, activeTab, onTabPress }) {
     const handleTabPress = useCallback((tab) => {
@@ -13,10 +46,12 @@ function ConnectTabBarComponent({ tabs, activeTab, onTabPress }) {
                 {tabs.map((tab) => {
                     const isActive = activeTab === tab;
                     return (
-                        <TouchableOpacity key={tab} style={styles.tabButton} onPress={() => handleTabPress(tab)} activeOpacity={0.7}>
-                            <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{tab}</Text>
-                            {isActive ? <View style={styles.tabIndicator} /> : null}
-                        </TouchableOpacity>
+                        <AnimatedTabLabel
+                            key={tab}
+                            tab={tab}
+                            active={isActive}
+                            onPress={() => handleTabPress(tab)}
+                        />
                     );
                 })}
             </ScrollView>
@@ -28,35 +63,35 @@ export default memo(ConnectTabBarComponent);
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderBottomWidth: 1,
-        borderBottomColor: theme.border,
+        borderBottomColor: connectPalette.line,
     },
     content: {
-        paddingHorizontal: 8,
+        paddingHorizontal: 10,
     },
     tabButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
         alignItems: 'center',
     },
     tabText: {
-        fontSize: 11,
-        fontWeight: '900',
-        color: theme.textMuted,
+        fontSize: 28 / 2,
+        fontWeight: '700',
+        color: connectPalette.subtle,
         textTransform: 'uppercase',
-        letterSpacing: 1,
+        letterSpacing: 1.4,
     },
     tabTextActive: {
-        color: theme.primary,
+        color: connectPalette.accent,
     },
     tabIndicator: {
         position: 'absolute',
         bottom: 0,
         left: 12,
         right: 12,
-        height: 2,
-        backgroundColor: theme.primary,
+        height: 2.5,
+        backgroundColor: connectPalette.accent,
         borderRadius: RADIUS.sm,
     },
 });

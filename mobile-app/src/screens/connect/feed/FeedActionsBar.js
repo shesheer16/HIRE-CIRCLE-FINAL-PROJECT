@@ -1,7 +1,41 @@
-import React, { memo, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { memo, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { IconCheck } from '../../../components/Icons';
-import { theme } from '../../../theme/theme';
+import { connectPalette } from '../connectPalette';
+import { MOTION } from '../../../theme/motion';
+import { RADIUS, SHADOWS } from '../../../theme/theme';
+
+function ActionCountButton({ children, onPress }) {
+    const scale = useRef(new Animated.Value(1)).current;
+
+    return (
+        <Animated.View style={{ transform: [{ scale }] }}>
+            <TouchableOpacity
+                style={styles.actionButton}
+                onPress={onPress}
+                activeOpacity={0.88}
+                onPressIn={() => {
+                    Animated.timing(scale, {
+                        toValue: 0.96,
+                        duration: MOTION.pressInMs,
+                        useNativeDriver: true,
+                    }).start();
+                }}
+                onPressOut={() => {
+                    Animated.spring(scale, {
+                        toValue: 1,
+                        stiffness: MOTION.modalSpring.stiffness,
+                        damping: MOTION.modalSpring.damping,
+                        mass: MOTION.modalSpring.mass,
+                        useNativeDriver: true,
+                    }).start();
+                }}
+            >
+                {children}
+            </TouchableOpacity>
+        </Animated.View>
+    );
+}
 
 function FeedActionsBarComponent({
     postId,
@@ -28,19 +62,19 @@ function FeedActionsBarComponent({
 
     return (
         <View style={[styles.container, isBounty && styles.containerBounty]}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleLike} activeOpacity={0.8}>
+            <ActionCountButton onPress={handleLike}>
                 <Text style={[styles.actionText, isLiked && styles.actionTextLiked, isBounty && styles.actionTextBounty]}>
                     {'👍 '}
                     {likeCount}
                 </Text>
-            </TouchableOpacity>
+            </ActionCountButton>
 
-            <TouchableOpacity style={styles.actionButton} onPress={handleComment} activeOpacity={0.8}>
+            <ActionCountButton onPress={handleComment}>
                 <Text style={[styles.actionText, isBounty && styles.actionTextBounty]}>
                     {'💬 '}
                     {commentCount}
                 </Text>
-            </TouchableOpacity>
+            </ActionCountButton>
 
             <TouchableOpacity
                 style={[
@@ -51,7 +85,7 @@ function FeedActionsBarComponent({
                 onPress={handleVouch}
                 activeOpacity={0.85}
             >
-                {vouched ? <IconCheck size={14} color={theme.surface} /> : null}
+                {vouched ? <IconCheck size={14} color={connectPalette.surface} /> : null}
                 <Text
                     style={[
                         styles.vouchText,
@@ -72,7 +106,7 @@ const styles = StyleSheet.create({
     container: {
         marginTop: 4,
         borderTopWidth: 1,
-        borderTopColor: theme.border,
+        borderTopColor: connectPalette.line,
         paddingTop: 10,
         flexDirection: 'row',
         alignItems: 'center',
@@ -84,17 +118,20 @@ const styles = StyleSheet.create({
     actionButton: {
         flexDirection: 'row',
         alignItems: 'center',
+        borderRadius: RADIUS.md,
+        paddingHorizontal: 6,
+        paddingVertical: 4,
     },
     actionText: {
-        color: theme.textSecondary,
+        color: connectPalette.muted,
         fontSize: 12,
         fontWeight: '800',
     },
     actionTextLiked: {
-        color: theme.primary,
+        color: connectPalette.accent,
     },
     actionTextBounty: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     vouchButton: {
         marginLeft: 'auto',
@@ -103,29 +140,30 @@ const styles = StyleSheet.create({
         gap: 4,
         borderWidth: 1,
         borderColor: 'transparent',
-        borderRadius: 12,
+        borderRadius: RADIUS.md,
         paddingHorizontal: 12,
         paddingVertical: 6,
-        backgroundColor: theme.background,
+        backgroundColor: '#f5f6fb',
+        ...SHADOWS.sm,
     },
     vouchButtonActive: {
-        borderColor: theme.primary,
-        backgroundColor: theme.primary,
+        borderColor: connectPalette.accent,
+        backgroundColor: connectPalette.accent,
     },
     vouchButtonBounty: {
-        borderColor: theme.surface,
+        borderColor: connectPalette.surface,
         backgroundColor: 'rgba(255,255,255,0.12)',
     },
     vouchText: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
         fontSize: 11,
         fontWeight: '900',
         letterSpacing: 0.4,
     },
     vouchTextActive: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     vouchTextBounty: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
 });

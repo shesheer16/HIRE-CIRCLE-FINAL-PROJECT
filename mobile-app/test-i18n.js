@@ -9,5 +9,5 @@ try {
   const result = i18n.use(initReactI18next);
   console.log('use() succeeded:', !!result);
 } catch (error) {
-  console.error('use() failed:', error.message);
+  console.warn('use() failed:', error.message);
 }

@@ -35,7 +35,7 @@ const Profiles = () => {
                 setProfile(data.profile);
             }
         } catch (error) {
-            console.error("Error fetching profile:", error);
+            console.warn("Error fetching profile:", error);
         } finally {
             setLoading(false);
         }
@@ -79,7 +79,7 @@ const Profiles = () => {
                 setEditingIndex(-1);
             }
         } catch (error) {
-            console.error("Error updating profile:", error);
+            console.warn("Error updating profile:", error);
             alert("Failed to save changes.");
         }
     };

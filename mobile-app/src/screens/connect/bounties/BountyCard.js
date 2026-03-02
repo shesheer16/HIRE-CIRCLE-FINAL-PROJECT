@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function getExpiryStyle(days) {
     if (days <= 2) {
@@ -52,7 +53,7 @@ function BountyCardComponent({ bounty, isReferred, onReferPress }) {
         <View style={styles.card}>
             <View style={styles.topRow}>
                 <View style={styles.leftTopRow}>
-                    <View style={[styles.logo, { backgroundColor: bounty.logoBg || theme.primary }]}>
+                    <View style={[styles.logo, { backgroundColor: bounty.logoBg || connectPalette.accent }]}>
                         <Text style={styles.logoText}>{bounty.logoLetter}</Text>
                     </View>
                     <View>
@@ -90,17 +91,13 @@ export default memo(BountyCardComponent);
 
 const styles = StyleSheet.create({
     card: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderColor: connectPalette.line,
+        ...connectShadow,
     },
     topRow: {
         flexDirection: 'row',
@@ -125,17 +122,17 @@ const styles = StyleSheet.create({
     logoText: {
         fontSize: 18,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     companyText: {
         fontSize: 13,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
     },
     categoryBadge: {
         alignSelf: 'flex-start',
         marginTop: 4,
-        backgroundColor: theme.border,
+        backgroundColor: '#f2f4f8',
         paddingHorizontal: 8,
         paddingVertical: 3,
         borderRadius: RADIUS.sm,
@@ -143,7 +140,7 @@ const styles = StyleSheet.create({
     categoryBadgeText: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.textSecondary,
+        color: connectPalette.muted,
     },
     expiryBadge: {
         paddingHorizontal: 8,
@@ -155,27 +152,27 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     expiryUrgent: {
-        backgroundColor: theme.error,
+        backgroundColor: connectPalette.danger,
     },
     expiryUrgentText: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     expirySoon: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     expirySoonText: {
-        color: theme.primaryDark,
+        color: connectPalette.accentDark,
     },
     expiryNormal: {
-        backgroundColor: theme.success,
+        backgroundColor: connectPalette.success,
     },
     expiryNormalText: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     roleText: {
         fontSize: 15,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         marginBottom: 10,
     },
     bottomRow: {
@@ -186,29 +183,29 @@ const styles = StyleSheet.create({
     bonusText: {
         fontSize: 22,
         fontWeight: '900',
-        color: theme.primary,
+        color: connectPalette.accent,
     },
     metaText: {
         fontSize: 10,
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         fontWeight: '600',
     },
     referButton: {
-        backgroundColor: theme.darkCard,
+        backgroundColor: connectPalette.dark,
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
         marginLeft: 12,
     },
     referButtonDone: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     referButtonText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     referButtonTextDone: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
 });

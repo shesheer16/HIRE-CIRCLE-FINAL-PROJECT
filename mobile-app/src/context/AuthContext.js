@@ -1,17 +1,40 @@
 import React, { createContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { wipeSensitiveCache } from '../utils/cacheManager';
-import { getPrimaryRoleFromUser } from '../utils/roleMode';
+import { getPrimaryRoleFromUser, hasUserSelectedRole, getRoleContractFromUser } from '../utils/roleMode';
 import SocketService from '../services/socket';
+import client from '../api/client';
 import { logger } from '../utils/logger';
 
 export const AuthContext = createContext();
+
+const normalizeUserInfo = (value = {}) => {
+    const roleContract = getRoleContractFromUser(value);
+    return {
+        ...value,
+        roles: roleContract.roles,
+        activeRole: roleContract.activeRole,
+        primaryRole: roleContract.activeRole || getPrimaryRoleFromUser(value),
+        capabilities: roleContract.capabilities,
+        hasSelectedRole: hasUserSelectedRole({ ...value, ...roleContract }),
+        hasCompletedProfile: Boolean(value?.hasCompletedProfile),
+    };
+};
 
 export const AuthProvider = ({ children }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [userToken, setUserToken] = useState(null);
     const [userInfo, setUserInfo] = useState(null);
     const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+
+    const getOrCreateDeviceId = async () => {
+        const existing = await AsyncStorage.getItem('@device_id');
+        if (existing) return existing;
+        const generated = `m-${Math.random().toString(36).slice(2, 12)}-${Date.now()}`;
+        await AsyncStorage.setItem('@device_id', generated);
+        return generated;
+    };
 
     const isTokenValid = (token) => {
         try {
@@ -41,12 +64,10 @@ export const AuthProvider = ({ children }) => {
     const login = async (data) => {
         setIsLoading(true);
         try {
-            const normalizedUser = {
-                ...data,
-                primaryRole: getPrimaryRoleFromUser(data),
-            };
+            const normalizedUser = normalizeUserInfo(data);
             await SecureStore.setItemAsync('userInfo', JSON.stringify(normalizedUser));
             await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+            await AsyncStorage.setItem('@onboarding_completed', 'true');
             setHasCompletedOnboarding(true);
             setUserInfo(normalizedUser);
             setUserToken(normalizedUser.token);
@@ -58,11 +79,10 @@ export const AuthProvider = ({ children }) => {
 
     const updateUserInfo = async (updates = {}) => {
         try {
-            const merged = {
+            const merged = normalizeUserInfo({
                 ...(userInfo || {}),
                 ...updates,
-            };
-            merged.primaryRole = getPrimaryRoleFromUser(merged);
+            });
 
             await SecureStore.setItemAsync('userInfo', JSON.stringify(merged));
             setUserInfo(merged);
@@ -79,6 +99,20 @@ export const AuthProvider = ({ children }) => {
     const logout = async () => {
         setIsLoading(true);
         try {
+            const currentUser = userInfo || JSON.parse(await SecureStore.getItemAsync('userInfo') || 'null');
+            const refreshToken = currentUser?.refreshToken || null;
+            const deviceId = await getOrCreateDeviceId();
+            const token = currentUser?.token || null;
+
+            if (token) {
+                await client.post('/api/users/logout', { refreshToken, deviceId }, {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'x-device-id': deviceId,
+                        'x-device-platform': 'mobile',
+                    },
+                }).catch(() => {});
+            }
             await SecureStore.deleteItemAsync('userInfo');
             await SecureStore.deleteItemAsync('hasCompletedOnboarding');
             await wipeSensitiveCache();
@@ -97,18 +131,20 @@ export const AuthProvider = ({ children }) => {
             setIsLoading(true);
             const userInfoStr = await SecureStore.getItemAsync('userInfo');
             const onboardingStr = await SecureStore.getItemAsync('hasCompletedOnboarding');
-            let resolvedOnboarding = onboardingStr === 'true';
+            const localOnboardingStr = await AsyncStorage.getItem('@onboarding_completed');
+            let resolvedOnboarding = onboardingStr === 'true' || localOnboardingStr === 'true';
 
             if (userInfoStr) {
                 let user = JSON.parse(userInfoStr);
                 if (isTokenValid(user?.token)) {
-                    user = { ...user, primaryRole: getPrimaryRoleFromUser(user) };
+                    user = normalizeUserInfo(user);
                     await SecureStore.setItemAsync('userInfo', JSON.stringify(user));
                     setUserInfo(user);
                     setUserToken(user.token);
 
                     if (!resolvedOnboarding) {
                         await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+                        await AsyncStorage.setItem('@onboarding_completed', 'true');
                         resolvedOnboarding = true;
                     }
                 } else {
@@ -131,6 +167,7 @@ export const AuthProvider = ({ children }) => {
 
     const completeOnboarding = async () => {
         await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+        await AsyncStorage.setItem('@onboarding_completed', 'true');
         setHasCompletedOnboarding(true);
     };
 

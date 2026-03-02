@@ -5,23 +5,32 @@ import * as Localization from 'expo-localization';
 const resources = {
     en: {
         translation: {
-            welcome: "Welcome to HireApp",
-            findJob: "Find a Job",
-            postJob: "Post a Need",
-            login: "Log In",
-            register: "Create Account",
-            smartInterview: "Smart Interview",
-            // ... expand this iteratively
+            welcome: 'Welcome to Hire',
+            findJob: 'Find a Job',
+            postJob: 'Post a Need',
+            login: 'Log In',
+            register: 'Create Account',
+            smartInterview: 'Smart Interview',
+            settings: {
+                language: 'Language',
+                english: 'English',
+                hindi: 'Hindi',
+            },
         }
     },
-    es: {
+    hi: {
         translation: {
-            welcome: "Bienvenido a HireApp",
-            findJob: "Encontrar un trabajo",
-            postJob: "Publicar una necesidad",
-            login: "Iniciar sesión",
-            register: "Crear cuenta",
-            smartInterview: "Entrevista Inteligente",
+            welcome: 'Hire में आपका स्वागत है',
+            findJob: 'नौकरी खोजें',
+            postJob: 'आवश्यकता पोस्ट करें',
+            login: 'लॉग इन करें',
+            register: 'अकाउंट बनाएं',
+            smartInterview: 'स्मार्ट इंटरव्यू',
+            settings: {
+                language: 'भाषा',
+                english: 'अंग्रेज़ी',
+                hindi: 'हिंदी',
+            },
         }
     }
 };
@@ -30,7 +39,7 @@ i18n
     .use(initReactI18next)
     .init({
         resources,
-        lng: Localization.locale || 'en', // Automatically detect device language
+        lng: String(Localization.locale || 'en').toLowerCase().startsWith('hi') ? 'hi' : 'en',
         fallbackLng: 'en',
         interpolation: {
             escapeValue: false // react already safes from xss

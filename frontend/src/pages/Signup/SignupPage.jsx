@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import '../Login/LoginPage.css'; // Reusing your existing CSS
+import { buildApiUrl } from '../../config/api';
 
 const SignupPage = () => {
   const navigate = useNavigate();
@@ -36,7 +37,7 @@ const SignupPage = () => {
 
       // Send Name, Email, Password AND the Role we saved earlier
       const { data } = await axios.post(
-        'http://127.0.0.1:5001/api/users/register', // Hardcoded for safety
+        buildApiUrl('/api/users/register'),
         { ...formData, role },
         config
       );

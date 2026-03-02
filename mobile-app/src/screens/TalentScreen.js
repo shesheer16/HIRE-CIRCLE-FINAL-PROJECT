@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ActivityIndicator, FlatList, Platform, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import client from '../api/client';
 import SkeletonLoader from '../components/SkeletonLoader';
@@ -30,8 +31,6 @@ const STATUS_COLOR_MAP = {
     'Offer Accepted': '#10b981',
 };
 
-const FILTERS = ['All', 'Shortlisted', 'Accepted'];
-
 export default function TalentScreen({ navigation, route }) {
     const [selectedPool, setSelectedPool] = useState(null);
     const [selectedCandidate, setSelectedCandidate] = useState(null);
@@ -44,7 +43,6 @@ export default function TalentScreen({ navigation, route }) {
     const [poolError, setPoolError] = useState('');
     const [candidateError, setCandidateError] = useState('');
     const [statusUpdating, setStatusUpdating] = useState(false);
-    const [activeFilter, setActiveFilter] = useState('All');
     const insets = useSafeAreaInsets();
 
     const getReadableError = (error, fallback) => {
@@ -67,7 +65,6 @@ export default function TalentScreen({ navigation, route }) {
         } catch (e) { logger.error('Cache read err', e); }
 
         try {
-            logger.log('🔍 Fetching jobs for People Nearby...');
             const [jobsRes, applicationsRes] = await Promise.all([
                 client.get('/api/jobs/my-jobs'),
                 client.get('/api/applications'),
@@ -82,8 +79,6 @@ export default function TalentScreen({ navigation, route }) {
                 acc[jobId] = (acc[jobId] || 0) + 1;
                 return acc;
             }, {});
-            logger.log('✅ People Nearby jobs mapped:', jobsArray.length);
-
             const newPools = jobsArray.map(j => ({
                 id: j._id,
                 name: j.title,
@@ -145,6 +140,10 @@ export default function TalentScreen({ navigation, route }) {
                     statusRaw: rawStatus,
                     statusLabel,
                     interviewVerified: Boolean(w.interviewVerified),
+                    communicationClarityTag: item.communicationClarityTag || 'Needs Review',
+                    profileStrengthLabel: item.profileStrengthLabel || 'Weak',
+                    salaryAlignmentStatus: item.salaryAlignmentStatus || 'ALIGNED',
+                    verifiedPriorityActive: Boolean(item.verifiedPriorityActive),
                 };
             });
             setCandidates(mapped);
@@ -191,7 +190,7 @@ export default function TalentScreen({ navigation, route }) {
 
         SocketService.on('new_application', handleNewApplication);
         return () => {
-            SocketService.off('new_application');
+            SocketService.off('new_application', handleNewApplication);
         };
     }, [selectedPool?.id, fetchCandidatesForPool]);
 
@@ -263,14 +262,9 @@ export default function TalentScreen({ navigation, route }) {
         }
     }, [fetchCandidatesForPool, getReadableError, selectedPool?.id]);
 
-    const filteredCandidates = useMemo(() => {
-        if (activeFilter === 'All') return candidates;
-        return candidates.filter((candidate) => candidate.statusLabel === activeFilter);
-    }, [activeFilter, candidates]);
-
     if (selectedCandidate) {
         return (
-            <View style={[styles.container, { backgroundColor: '#F8FAFC' }]}>
+            <View style={[styles.container, { backgroundColor: '#f7f9ff' }]}>
                 {/* Header includes safe area */}
                 <View style={[styles.headerPurple, { paddingTop: insets.top + 16 }]}>
                     <TouchableOpacity onPress={() => setSelectedCandidate(null)} style={styles.backButton}>
@@ -297,17 +291,33 @@ export default function TalentScreen({ navigation, route }) {
                             </Text>
                         </View>
                         {selectedCandidate.interviewVerified ? (
-                            <View style={styles.verifiedInterviewBadge}>
+                            <View style={[
+                                styles.verifiedInterviewBadge,
+                                selectedCandidate.verifiedPriorityActive && styles.verifiedInterviewBadgeGlow,
+                            ]}>
                                 <Text style={styles.verifiedInterviewBadgeText}>Verified Interview Profile</Text>
                             </View>
                         ) : null}
+                        <View style={styles.profileStrengthChip}>
+                            <Text style={styles.profileStrengthChipText}>
+                                Profile Strength: {selectedCandidate.profileStrengthLabel || 'Weak'}
+                            </Text>
+                        </View>
+                        <View style={styles.clarityTagChip}>
+                            <Text style={styles.clarityTagChipText}>
+                                Communication: {selectedCandidate.communicationClarityTag || 'Needs Review'}
+                            </Text>
+                        </View>
                     </View>
 
                     <View style={styles.sectionContainer}>
                         <View style={styles.card}>
                             <View style={styles.cardHeaderRow}>
                                 <Text style={styles.cardTitle}>Professional Summary</Text>
-                                <TouchableOpacity style={styles.resumeButton}>
+                                <TouchableOpacity
+                                    style={styles.resumeButton}
+                                    onPress={() => Alert.alert('Resume', 'Resume preview is not available for this candidate.')}
+                                >
                                     <Text style={styles.resumeButtonText}>VIEW RESUME</Text>
                                 </TouchableOpacity>
                             </View>
@@ -383,7 +393,7 @@ export default function TalentScreen({ navigation, route }) {
     if (selectedPool) {
         if (!selectedPool.id) {
             return (
-                <View style={[styles.container, { backgroundColor: '#F8FAFC' }]}>
+                <View style={[styles.container, { backgroundColor: '#f7f9ff' }]}>
                     <EmptyState
                         title="No Job Selected"
                         message="Select a job to view candidates."
@@ -396,7 +406,7 @@ export default function TalentScreen({ navigation, route }) {
         }
 
         return (
-            <View style={[styles.container, { backgroundColor: '#F8FAFC' }]}>
+            <View style={[styles.container, { backgroundColor: '#f7f9ff' }]}>
                 <View style={[styles.headerPurple, { paddingTop: insets.top + 16 }]}>
                     <TouchableOpacity onPress={() => setSelectedPool(null)} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={24} color="#FFF" />
@@ -406,19 +416,6 @@ export default function TalentScreen({ navigation, route }) {
                         <Text style={styles.headerSubtitleWhite}>{candidates.length} CANDIDATES FOUND</Text>
                     </View>
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-                    {FILTERS.map((filter) => (
-                        <TouchableOpacity
-                            key={filter}
-                            style={[styles.filterPill, activeFilter === filter && styles.filterPillActive]}
-                            onPress={() => setActiveFilter(filter)}
-                        >
-                            <Text style={[styles.filterPillText, activeFilter === filter && styles.filterPillTextActive]}>
-                                {filter}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
 
                 <View style={styles.content}>
                     <View style={styles.listContainer}>
@@ -430,23 +427,23 @@ export default function TalentScreen({ navigation, route }) {
                             </View>
                         ) : candidateError ? (
                             <EmptyState
-                                title="Could Not Load Candidates"
-                                message={candidateError}
-                                icon={<Ionicons name="people-outline" size={56} color="#94a3b8" />}
+                                icon="⚠️"
+                                title="Couldn’t load data"
+                                subtitle="Pull down to refresh."
                                 actionLabel="Retry"
                                 onAction={() => fetchCandidatesForPool(selectedPool.id)}
                             />
-                        ) : filteredCandidates.length === 0 ? (
+                        ) : candidates.length === 0 ? (
                             <EmptyState
-                                title="No Candidates Matched Yet"
-                                message="Candidates will appear here when new applications or matches arrive."
-                                icon={<Ionicons name="people-outline" size={56} color="#94a3b8" />}
+                                icon="👥"
+                                title="No candidates found"
+                                subtitle="Matches will appear as workers update their profiles"
                                 actionLabel="Refresh"
                                 onAction={() => fetchCandidatesForPool(selectedPool.id)}
                             />
                         ) : (
                             <FlatList
-                                data={filteredCandidates}
+                                data={candidates}
                                 keyExtractor={(item) => item.id}
                                 renderItem={({ item: profile }) => (
                                     <TouchableOpacity
@@ -467,8 +464,19 @@ export default function TalentScreen({ navigation, route }) {
                                             <Text style={styles.candidateCardSubtitle}>{profile.experienceYears} Years Exp • {profile.location}</Text>
                                             <Text style={{ color: '#7c3aed', fontSize: 12, marginTop: 4, fontWeight: 'bold' }}>{profile.matchScore}% Match</Text>
                                             {profile.interviewVerified ? (
-                                                <Text style={styles.candidateVerifiedInline}>Verified Interview Profile</Text>
+                                                <Text style={[
+                                                    styles.candidateVerifiedInline,
+                                                    profile.verifiedPriorityActive && styles.candidateVerifiedInlineGlow,
+                                                ]}>
+                                                    Verified Interview Profile
+                                                </Text>
                                             ) : null}
+                                            <Text style={styles.candidateStrengthInline}>
+                                                Strength: {profile.profileStrengthLabel || 'Weak'}
+                                            </Text>
+                                            <Text style={styles.candidateClarityInline}>
+                                                Clarity: {profile.communicationClarityTag || 'Needs Review'}
+                                            </Text>
                                         </View>
                                     </TouchableOpacity>
                                 )}
@@ -491,11 +499,16 @@ export default function TalentScreen({ navigation, route }) {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: '#F8FAFC' }]}>
-            <View style={[styles.headerPurpleLarge, { paddingTop: insets.top + 24 }]}>
-                <Text style={styles.largeHeaderTitle}>People Nearby</Text>
+        <View style={[styles.container, { backgroundColor: '#f7f9ff' }]}>
+            <LinearGradient
+                colors={['#7c3aed', '#9333ea']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.headerPurpleLarge, { paddingTop: insets.top + 24 }]}
+            >
+                <Text style={styles.largeHeaderTitle}>Talent Pools</Text>
                 <Text style={styles.largeHeaderSubtitle}>Organize and track your candidate pipelines</Text>
-            </View>
+            </LinearGradient>
 
             <View style={styles.content}>
                 <View style={styles.listContainer}>
@@ -507,17 +520,17 @@ export default function TalentScreen({ navigation, route }) {
                         </View>
                     ) : poolError ? (
                         <EmptyState
-                            title="Could Not Load Talent Pools"
-                            message={poolError}
-                            icon={<Ionicons name="briefcase-outline" size={56} color="#94a3b8" />}
+                            icon="⚠️"
+                            title="Couldn’t load data"
+                            subtitle="Pull down to refresh."
                             actionLabel="Retry"
                             onAction={fetchJobsAsPools}
                         />
                     ) : pools.length === 0 ? (
                         <EmptyState
-                            title="No Job Postings Found"
-                            message="Post a job to start receiving candidate matches."
-                            icon={<Ionicons name="briefcase-outline" size={56} color="#94a3b8" />}
+                            icon="📭"
+                            title="No candidates yet"
+                            subtitle="Your job posts will surface matches here"
                             actionLabel="Refresh"
                             onAction={fetchJobsAsPools}
                         />
@@ -530,7 +543,7 @@ export default function TalentScreen({ navigation, route }) {
                                     <View style={styles.poolCardHeader}>
                                         <Text style={styles.poolCardTitle}>{pool.name}</Text>
                                         <View style={styles.poolCardBadge}>
-                                            <Text style={styles.poolCardBadgeText}>{pool.count} Applicants</Text>
+                                            <Text style={styles.poolCardBadgeText}>{pool.count} Candidates</Text>
                                         </View>
                                     </View>
                                     <TouchableOpacity
@@ -538,7 +551,7 @@ export default function TalentScreen({ navigation, route }) {
                                         onPress={() => handleSelectPool(pool)}
                                         activeOpacity={0.7}
                                     >
-                                        <Text style={styles.viewCandidatesBtnText}>View Matched Candidates</Text>
+                                        <Text style={styles.viewCandidatesBtnText}>View Candidates</Text>
                                     </TouchableOpacity>
                                 </View>
                             )}
@@ -623,8 +636,8 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
     headerPurpleLarge: {
-        backgroundColor: '#9333ea',
-        padding: 24,
+        paddingHorizontal: 24,
+        paddingBottom: 22,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.1,
@@ -634,31 +647,34 @@ const styles = StyleSheet.create({
     },
     largeHeaderTitle: {
         color: '#FFF',
-        fontSize: 24,
-        fontWeight: 'bold',
+        fontSize: 26,
+        fontWeight: '700',
         marginBottom: 4,
     },
     largeHeaderSubtitle: {
-        color: '#e9d5ff',
+        color: 'rgba(255,255,255,0.75)',
         fontSize: 14,
+        fontWeight: '500',
     },
     content: {
         flex: 1,
     },
     listContainer: {
-        padding: 16,
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 10,
     },
     poolCard: {
-        backgroundColor: '#FFF',
-        padding: 20,
-        borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        padding: 18,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
-        shadowColor: '#000',
+        borderColor: '#eaf0f8',
+        shadowColor: '#94a3b8',
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 2,
         marginBottom: 16,
     },
     poolCardHeader: {
@@ -668,39 +684,39 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     poolCardTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
+        fontSize: 17,
+        fontWeight: '700',
         color: '#1e293b',
         flex: 1,
     },
     poolCardBadge: {
         backgroundColor: '#f3e8ff',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 999,
         borderWidth: 1,
         borderColor: '#e9d5ff',
         marginLeft: 8,
     },
     poolCardBadgeText: {
         color: '#6b21a8',
-        fontSize: 11,
-        fontWeight: 'bold',
+        fontSize: 12,
+        fontWeight: '600',
     },
     viewCandidatesBtn: {
         width: '100%',
-        paddingVertical: 10,
+        paddingVertical: 13,
         borderWidth: 1,
-        borderColor: '#e9d5ff',
+        borderColor: '#e7d6f7',
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#FFF',
+        backgroundColor: 'rgba(255,255,255,0.98)',
     },
     viewCandidatesBtnText: {
         color: '#9333ea',
-        fontSize: 14,
-        fontWeight: 'bold',
+        fontSize: 15,
+        fontWeight: '700',
     },
     candidateCard: {
         backgroundColor: '#FFF',
@@ -763,6 +779,23 @@ const styles = StyleSheet.create({
         color: '#059669',
         fontWeight: '700',
     },
+    candidateVerifiedInlineGlow: {
+        textShadowColor: 'rgba(16,185,129,0.26)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 8,
+    },
+    candidateStrengthInline: {
+        marginTop: 3,
+        fontSize: 11,
+        color: '#7c3aed',
+        fontWeight: '700',
+    },
+    candidateClarityInline: {
+        marginTop: 3,
+        fontSize: 11,
+        color: '#475569',
+        fontWeight: '600',
+    },
     candidateHeader: {
         alignItems: 'center',
         paddingTop: 32,
@@ -804,8 +837,43 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         paddingVertical: 5,
     },
+    verifiedInterviewBadgeGlow: {
+        shadowColor: '#10b981',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.22,
+        shadowRadius: 8,
+        elevation: 3,
+    },
     verifiedInterviewBadgeText: {
         color: '#065f46',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    profileStrengthChip: {
+        marginTop: 7,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#dbeafe',
+        backgroundColor: '#eff6ff',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    profileStrengthChipText: {
+        color: '#1d4ed8',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    clarityTagChip: {
+        marginTop: 7,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    clarityTagChipText: {
+        color: '#6d28d9',
         fontSize: 11,
         fontWeight: '700',
     },

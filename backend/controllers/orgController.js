@@ -1,6 +1,7 @@
 const Organization = require('../models/Organization');
 const User = require('../models/userModel');
 const EmployerProfile = require('../models/EmployerProfile');
+const logger = require('../utils/logger');
 
 // @desc Create a new Organization (Team Account)
 // @route POST /api/organizations
@@ -27,7 +28,7 @@ const createOrganization = async (req, res) => {
 
         res.status(201).json(org);
     } catch (error) {
-        console.error("Create Org Error:", error);
+        console.warn("Create Org Error:", error);
         res.status(500).json({ message: "Failed to create organization" });
     }
 };
@@ -55,18 +56,21 @@ const inviteMember = async (req, res) => {
             await existingUser.save();
             return res.json({ message: "User attached to organization." });
         } else {
-            // Mock triggering an email invitation via marketingService
-            console.log(`[ORG INVITE] Sending invitation email to ${email} for ${org.name}`);
+            logger.info({
+                event: 'org_invite_email_triggered',
+                email: String(email || '').toLowerCase(),
+                organizationId: String(org._id),
+            });
             return res.json({ message: "Invitation sent to new user." });
         }
 
     } catch (error) {
-        console.error("Invite Member Error:", error);
+        console.warn("Invite Member Error:", error);
         res.status(500).json({ message: "Failed to invite member" });
     }
 };
 
-// @desc Initiate SSO Config (Mock/Stub for Auth0/SAML)
+// @desc Initiate SSO Config (stub for Auth0/SAML)
 // @route PUT /api/organizations/sso
 const configureSSO = async (req, res) => {
     try {
@@ -85,7 +89,7 @@ const configureSSO = async (req, res) => {
         res.json({ message: "SSO Configured successfully.", ssoDomain: org.ssoDomain });
 
     } catch (error) {
-        console.error("Configure SSO Error:", error);
+        console.warn("Configure SSO Error:", error);
         res.status(500).json({ message: "Failed to configure SSO" });
     }
 };
@@ -131,7 +135,7 @@ const getOrganization = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error("Get Organization Error:", error);
+        console.warn("Get Organization Error:", error);
         res.status(500).json({ message: "Failed to load organization details" });
     }
 };

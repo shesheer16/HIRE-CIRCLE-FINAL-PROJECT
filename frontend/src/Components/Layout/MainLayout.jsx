@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import TopBar from './TopBar';
 // Correct Path: Up one level from Layout to Components
 import VideoRecorder from '../VideoRecorder';
+import { useI18n } from '../../i18n/useI18n';
 import {
   IoChatbubblesOutline,
   IoPeopleOutline,
@@ -16,18 +17,27 @@ const MainLayout = ({ children, role }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [isRecordingMode, setIsRecordingMode] = useState(false);
+  const { t } = useI18n();
 
   const getTitle = () => {
     const path = location.pathname.split('/').pop();
-    return path ? path.charAt(0).toUpperCase() + path.slice(1) : 'Dashboard';
+    if (!path) return 'Dashboard';
+    const keyMap = {
+      connect: 'nav.connect',
+      profiles: 'nav.profiles',
+      applications: 'nav.applications',
+      jobs: 'nav.jobs',
+      settings: 'nav.settings',
+    };
+    return t(keyMap[path], path.charAt(0).toUpperCase() + path.slice(1));
   };
 
   const tabs = [
-    { name: 'Connect', icon: <IoChatbubblesOutline />, path: `/${role}/connect` },
-    { name: 'Profiles', icon: <IoPeopleOutline />, path: `/${role}/profiles` },
-    { name: 'Applications', icon: <IoDocumentTextOutline />, path: `/${role}/applications` },
-    { name: 'Jobs', icon: <IoBriefcaseOutline />, path: `/${role}/jobs` },
-    { name: 'Settings', icon: <IoSettingsOutline />, path: `/${role}/settings` },
+    { name: t('nav.connect', 'Connect'), icon: <IoChatbubblesOutline />, path: `/${role}/connect` },
+    { name: t('nav.profiles', 'Profiles'), icon: <IoPeopleOutline />, path: `/${role}/profiles` },
+    { name: t('nav.applications', 'Applications'), icon: <IoDocumentTextOutline />, path: `/${role}/applications` },
+    { name: t('nav.jobs', 'Jobs'), icon: <IoBriefcaseOutline />, path: `/${role}/jobs` },
+    { name: t('nav.settings', 'Settings'), icon: <IoSettingsOutline />, path: `/${role}/settings` },
   ];
 
   return (

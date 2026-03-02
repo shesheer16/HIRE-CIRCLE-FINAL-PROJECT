@@ -6,7 +6,7 @@ import { theme, RADIUS } from '../../theme/theme';
 
 const PROFILE_SKILLS = ['Logistics', 'Operations', 'React', 'Node'];
 
-function MyProfileModalComponent({ visible, insetsTop, userInfo, avatar, onClose }) {
+function MyProfileModalComponent({ visible, insetsTop, userInfo, avatar, onClose, onEditProfile }) {
     return (
         <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
             <View style={[styles.container, { paddingTop: insetsTop }]}> 
@@ -16,9 +16,9 @@ function MyProfileModalComponent({ visible, insetsTop, userInfo, avatar, onClose
                             <Text style={styles.headerBackIcon}>‹</Text>
                         </TouchableOpacity>
                         <Text style={styles.headerTitle}>My Profile</Text>
-                        <TouchableOpacity style={styles.headerButton}>
+                        <View style={styles.headerButton}>
                             <IconSettings size={18} color={theme.surface} />
-                        </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
 
@@ -78,7 +78,7 @@ function MyProfileModalComponent({ visible, insetsTop, userInfo, avatar, onClose
                             </View>
                         </View>
 
-                        <TouchableOpacity style={styles.editButton}>
+                        <TouchableOpacity style={styles.editButton} onPress={onEditProfile}>
                             <Text style={styles.editButtonText}>Edit Profile Details</Text>
                         </TouchableOpacity>
                     </View>

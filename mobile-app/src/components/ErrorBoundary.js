@@ -25,12 +25,19 @@ class ErrorBoundary extends React.Component {
 
     render() {
         if (this.state.hasError) {
+            const hasNetworkHint = String(this.state.error?.message || '').toLowerCase().includes('network');
+            const title = hasNetworkHint ? 'Connection hiccup' : 'We hit a small snag';
+            const description = hasNetworkHint
+                ? 'Please check your network and try again.'
+                : 'This screen can be refreshed safely. Your progress is still saved.';
+
             return (
                 <View style={styles.container}>
-                    <Text style={styles.title}>Oops, something went wrong.</Text>
-                    <Text style={styles.subtitle}>{this.state.error?.toString()}</Text>
+                    <Text style={styles.icon}>⚠️</Text>
+                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.subtitle}>{description}</Text>
                     <TouchableOpacity style={styles.button} onPress={this.handleReset}>
-                        <Text style={styles.buttonText}>Try Again</Text>
+                        <Text style={styles.buttonText}>Retry</Text>
                     </TouchableOpacity>
                 </View>
             );
@@ -48,9 +55,13 @@ const styles = StyleSheet.create({
         padding: 24,
         backgroundColor: '#f8fafc',
     },
+    icon: {
+        fontSize: 36,
+        marginBottom: 10,
+    },
     title: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontWeight: '700',
         color: '#0f172a',
         marginBottom: 8,
     },
@@ -58,17 +69,18 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#64748b',
         textAlign: 'center',
+        lineHeight: 21,
         marginBottom: 24,
     },
     button: {
-        backgroundColor: '#7c3aed',
+        backgroundColor: '#1d4ed8',
         paddingHorizontal: 24,
         paddingVertical: 12,
-        borderRadius: 8,
+        borderRadius: 10,
     },
     buttonText: {
         color: '#ffffff',
-        fontWeight: 'bold',
+        fontWeight: '700',
     },
 });
 

@@ -17,12 +17,12 @@ const processingPollIntervalMs = Number.parseInt(process.env.LOAD_TEST_PROCESSIN
 const processingMaxWaitMs = Number.parseInt(process.env.LOAD_TEST_PROCESSING_MAX_WAIT_MS || String(20 * 60 * 1000), 10);
 
 if (!authToken) {
-    console.error('Missing LOAD_TEST_TOKEN.');
+    console.warn('Missing LOAD_TEST_TOKEN.');
     process.exit(1);
 }
 
 if (!fs.existsSync(videoFilePath)) {
-    console.error(`Video file not found at ${videoFilePath}`);
+    console.warn(`Video file not found at ${videoFilePath}`);
     process.exit(1);
 }
 
@@ -228,6 +228,6 @@ const run = async () => {
 };
 
 run().catch((error) => {
-    console.error('Load test failed:', error.message);
+    console.warn('Load test failed:', error.message);
     process.exit(1);
 });

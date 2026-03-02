@@ -1,7 +1,8 @@
 import React, { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { IconBell } from '../../components/Icons';
-import { theme, RADIUS } from '../../theme/theme';
+import { RADIUS, SHADOWS, SPACING } from '../../theme/theme';
+import { connectPalette } from './connectPalette';
 
 function ConnectHeaderComponent({ avatar, onNotificationsPress, onProfilePress }) {
     return (
@@ -12,7 +13,7 @@ function ConnectHeaderComponent({ avatar, onNotificationsPress, onProfilePress }
             </View>
             <View style={styles.headerRight}>
                 <TouchableOpacity style={styles.bellButton} onPress={onNotificationsPress}>
-                    <IconBell size={20} color={theme.textSecondary} />
+                    <IconBell size={20} color={connectPalette.muted} />
                     <View style={styles.bellDot} />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress} activeOpacity={0.85}>
@@ -30,79 +31,76 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: theme.surface,
+        paddingHorizontal: SPACING.md + 2,
+        paddingVertical: SPACING.sm + 2,
+        backgroundColor: connectPalette.surface,
         borderBottomWidth: 1,
-        borderBottomColor: theme.border,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderBottomColor: connectPalette.line,
+        ...SHADOWS.sm,
     },
     headerLeft: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     logoBox: {
-        width: 32,
-        height: 32,
+        width: 34,
+        height: 34,
         borderRadius: RADIUS.sm,
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 8,
+        marginRight: 10,
     },
     logoH: {
-        color: theme.surface,
-        fontSize: 16,
+        color: connectPalette.surface,
+        fontSize: 15,
         fontWeight: '900',
         fontStyle: 'italic',
     },
     logoTitle: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: theme.textPrimary,
-        letterSpacing: -0.5,
+        fontSize: 37 / 2,
+        fontWeight: '800',
+        color: connectPalette.text,
+        letterSpacing: -0.3,
     },
     logoCircle: {
-        color: theme.primary,
+        color: connectPalette.accent,
     },
     headerRight: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     bellButton: {
-        width: 40,
-        height: 40,
+        width: 36,
+        height: 36,
         justifyContent: 'center',
         alignItems: 'center',
     },
     bellDot: {
         position: 'absolute',
-        top: 8,
-        right: 8,
-        width: 8,
-        height: 8,
+        top: 6,
+        right: 6,
+        width: 7,
+        height: 7,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.error,
+        backgroundColor: connectPalette.danger,
         borderWidth: 2,
-        borderColor: theme.surface,
+        borderColor: connectPalette.surface,
     },
     avatarButton: {
-        marginLeft: 8,
+        marginLeft: 10,
         borderRadius: RADIUS.full,
         borderWidth: 2,
-        borderColor: theme.primary,
-        width: 40,
-        height: 40,
+        borderColor: connectPalette.accent,
+        width: 38,
+        height: 38,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: connectPalette.surface,
     },
     avatarImage: {
-        width: 36,
-        height: 36,
+        width: 33,
+        height: 33,
         borderRadius: RADIUS.full,
     },
 });

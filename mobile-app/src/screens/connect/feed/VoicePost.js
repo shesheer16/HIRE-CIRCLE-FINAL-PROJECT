@@ -1,13 +1,14 @@
 import React, { memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { theme, RADIUS } from '../../../theme/theme';
+import { View, Text, StyleSheet } from 'react-native';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette } from '../connectPalette';
 
 function VoicePostComponent({ duration }) {
     return (
         <View style={styles.container}>
-            <TouchableOpacity style={styles.playButton} activeOpacity={0.8}>
+            <View style={styles.playButton}>
                 <Text style={styles.playText}>▶</Text>
-            </TouchableOpacity>
+            </View>
             <View style={styles.progressTrack}>
                 <View style={styles.progressFill} />
             </View>
@@ -22,10 +23,10 @@ const styles = StyleSheet.create({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         borderRadius: RADIUS.lg,
         borderWidth: 1,
-        borderColor: theme.primaryLight,
+        borderColor: connectPalette.accentSoftAlt,
         padding: 12,
         marginBottom: 16,
     },
@@ -33,16 +34,16 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: theme.primary,
+        shadowColor: connectPalette.accentDark,
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
+        shadowOpacity: 0.16,
+        shadowRadius: 6,
     },
     playText: {
-        color: theme.surface,
+        color: connectPalette.surface,
         fontSize: 14,
         marginLeft: 2,
     },
@@ -50,17 +51,17 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 6,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: '#dfccff',
         marginHorizontal: 12,
         overflow: 'hidden',
     },
     progressFill: {
         width: '35%',
         height: '100%',
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
     },
     durationText: {
-        color: theme.primaryDark,
+        color: connectPalette.accentDark,
         fontSize: 11,
         fontWeight: '900',
     },

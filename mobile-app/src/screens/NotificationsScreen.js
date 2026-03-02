@@ -12,6 +12,8 @@ import { DEMO_MODE } from '../config';
 
 export default function NotificationsScreen({ navigation }) {
     const { setNotificationsCount, activeChatId, role } = useAppStore();
+    const normalizedRole = String(role || '').toLowerCase();
+    const isEmployer = normalizedRole === 'employer' || normalizedRole === 'recruiter';
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(!DEMO_MODE);
     const [error, setError] = useState('');
@@ -70,7 +72,7 @@ export default function NotificationsScreen({ navigation }) {
         if (!item.isRead) markAsRead(item._id);
 
         if (item.type === 'application_received' && item.relatedData?.jobId) {
-            navigation.navigate('MainTab', { screen: role === 'employer' ? 'My Jobs' : 'Applications' });
+            navigation.navigate('MainTab', { screen: isEmployer ? 'My Jobs' : 'Applications' });
         } else if (item.type === 'status_update') {
             navigation.navigate('MainTab', { screen: 'Applications' });
         } else if (item.type === 'message_received') {
@@ -152,17 +154,18 @@ export default function NotificationsScreen({ navigation }) {
 
             {error ? (
                 <EmptyState
-                    title="Could Not Load Notifications"
-                    message={error}
-                    icon={<Ionicons name="warning-outline" size={48} color="#94a3b8" />}
+                    title="Couldn’t load data"
+                    subtitle="Pull down to refresh."
+                    icon="⚠️"
                     actionLabel="Retry"
                     onAction={fetchNotifications}
                 />
             ) : notifications.length === 0 ? (
-                <View style={styles.emptyState}>
-                    <Ionicons name="notifications-off-outline" size={48} color="#cbd5e1" />
-                    <Text style={styles.emptyText}>No notifications yet.</Text>
-                </View>
+                <EmptyState
+                    icon="🔔"
+                    title="You’re all caught up"
+                    subtitle="Notifications appear here when there’s activity"
+                />
             ) : (
                 <FlatList
                     data={notifications}

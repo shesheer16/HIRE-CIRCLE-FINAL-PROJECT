@@ -1,5 +1,6 @@
 let CloudWatchClient = null;
 let PutMetricDataCommand = null;
+const logger = require('../utils/logger');
 
 try {
     ({
@@ -48,7 +49,7 @@ const publishMetric = async ({
     ];
 
     if (!cloudwatchClient || !PutMetricDataCommand) {
-        console.log(JSON.stringify({
+        logger.info({
             metric: metricName,
             value: numericValue,
             unit,
@@ -56,7 +57,7 @@ const publishMetric = async ({
             environment,
             correlationId,
             source: 'metric_fallback_log',
-        }));
+        });
         return;
     }
 
@@ -75,7 +76,7 @@ const publishMetric = async ({
         });
         await cloudwatchClient.send(command);
     } catch (error) {
-        console.error('CloudWatch metric publish failed:', error.message);
+        console.warn('CloudWatch metric publish failed:', error.message);
     }
 };
 

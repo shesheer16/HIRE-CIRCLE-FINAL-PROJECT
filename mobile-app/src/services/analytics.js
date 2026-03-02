@@ -51,10 +51,10 @@ export const getAnalyticsSummary = () => {
     };
 };
 
-export const logDemoAnalyticsSummary = (datasetSummary = null) => {
+export const logAnalyticsSummary = (datasetSummary = null) => {
     if (!__DEV__) return;
     const analyticsSummary = getAnalyticsSummary();
-    logger.log('[demo-metrics]', {
+    logger.log('[analytics-metrics]', {
         dataset: datasetSummary,
         analytics: analyticsSummary,
     });

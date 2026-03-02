@@ -14,6 +14,7 @@ let tokenExpiresAt = 0;
 async function getSecret(secretName) {
     const currentEnv = process.env.NODE_ENV || 'development';
     const fullSecretId = `hireapp/${currentEnv}/${secretName}`;
+    const isProduction = String(currentEnv).toLowerCase() === 'production';
 
     if (cachedSecrets && cachedSecrets[fullSecretId] && Date.now() < tokenExpiresAt) {
         return cachedSecrets[fullSecretId];
@@ -38,9 +39,10 @@ async function getSecret(secretName) {
 
         throw new Error("SecretBinary not supported in this simplistic wrapper.");
     } catch (error) {
-        console.error(`Error fetching secret ${fullSecretId}:`, error);
-        // Graceful fallback to local process.env variables if Secrets Manager fails
-        // Critical for local development where AWS access might be restricted
+        console.warn(`Error fetching secret ${fullSecretId}:`, error);
+        if (isProduction) {
+            throw new Error(`Failed to fetch required secret: ${fullSecretId}`);
+        }
         return process.env;
     }
 }

@@ -1,15 +1,16 @@
 import React, { memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { theme, RADIUS } from '../../../theme/theme';
+import { View, Text, StyleSheet } from 'react-native';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette } from '../connectPalette';
 
 function BountyPostComponent({ reward }) {
     return (
         <View style={styles.container}>
             <Text style={styles.label}>REFERRAL BOUNTY</Text>
             <Text style={styles.reward}>{reward || '₹2,000'}</Text>
-            <TouchableOpacity style={styles.button} activeOpacity={0.85}>
+            <View style={styles.button}>
                 <Text style={styles.buttonText}>REFER A PEER</Text>
-            </TouchableOpacity>
+            </View>
         </View>
     );
 }
@@ -23,26 +24,26 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     label: {
-        color: theme.primaryLight,
+        color: '#e9ddff',
         fontSize: 11,
         fontWeight: '900',
         letterSpacing: 1,
         marginBottom: 4,
     },
     reward: {
-        color: theme.surface,
+        color: connectPalette.surface,
         fontSize: 24,
         fontWeight: '900',
         marginBottom: 12,
     },
     button: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         paddingVertical: 10,
         alignItems: 'center',
         borderRadius: RADIUS.md,
     },
     buttonText: {
-        color: theme.primaryDark,
+        color: connectPalette.accentDark,
         fontSize: 12,
         fontWeight: '900',
     },

@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-03-02T04:41:32.307Z",
+  "runtime": {
+    "nodeVersion": "v22.22.0",
+    "gcExposed": false
+  },
+  "baseline": {
+    "label": "baseline",
+    "timestamp": "2026-03-02T04:41:31.679Z",
+    "rssMb": 35.7,
+    "heapTotalMb": 4.89,
+    "heapUsedMb": 3.34,
+    "externalMb": 1.17
+  },
+  "stages": [
+    {
+      "stage": "smartInterviewPeakUsage",
+      "simulatedRecords": 1200,
+      "aggregateScore": 594,
+      "memory": {
+        "label": "smartInterviewPeakUsage",
+        "timestamp": "2026-03-02T04:41:31.749Z",
+        "rssMb": 43.58,
+        "heapTotalMb": 8.89,
+        "heapUsedMb": 4.44,
+        "externalMb": 1.17
+      }
+    },
+    {
+      "stage": "chatBurstUsage",
+      "simulatedMessages": 15000,
+      "uniqueRooms": 500,
+      "memory": {
+        "label": "chatBurstUsage",
+        "timestamp": "2026-03-02T04:41:31.942Z",
+        "rssMb": 49.3,
+        "heapTotalMb": 15.14,
+        "heapUsedMb": 7.12,
+        "externalMb": 1.17
+      }
+    },
+    {
+      "stage": "feedBurstUsage",
+      "simulatedFeedRows": 30000,
+      "topSampleCount": 50,
+      "memory": {
+        "label": "feedBurstUsage",
+        "timestamp": "2026-03-02T04:41:32.156Z",
+        "rssMb": 73.92,
+        "heapTotalMb": 49.16,
+        "heapUsedMb": 14.02,
+        "externalMb": 1.17
+      }
+    }
+  ],
+  "postAudit": {
+    "label": "postAudit",
+    "timestamp": "2026-03-02T04:41:32.307Z",
+    "rssMb": 73.92,
+    "heapTotalMb": 49.16,
+    "heapUsedMb": 14.03,
+    "externalMb": 1.17
+  },
+  "analysis": {
+    "baselineHeapMb": 3.34,
+    "peakHeapMb": 14.03,
+    "residualHeapDeltaMb": 10.69,
+    "leakPatternDetected": false,
+    "passed": true
+  },
+  "passed": true
+}

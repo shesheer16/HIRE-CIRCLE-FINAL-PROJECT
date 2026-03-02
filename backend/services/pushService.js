@@ -43,7 +43,7 @@ const sendPushNotification = async (pushTokens, title, body, data = {}) => {
             },
         });
     } catch (err) {
-        console.error('Push notification failed:', err.message);
+        console.warn('Push notification failed:', err.message);
         // Non-blocking — never throw, just log
     }
 };

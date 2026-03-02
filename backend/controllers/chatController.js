@@ -1,6 +1,25 @@
 const Message = require('../models/Message');
 const Application = require('../models/Application');
 const WorkerProfile = require('../models/WorkerProfile');
+const { trackFunnelStage } = require('../services/growthFunnelService');
+const { recordFeatureUsage } = require('../services/monetizationIntelligenceService');
+const { safeLogPlatformEvent } = require('../services/eventLoggingService');
+const { enqueueBackgroundJob } = require('../services/backgroundQueueService');
+const { queueNotificationDispatch } = require('../services/notificationEngineService');
+const { recordTrustEdge } = require('../services/trustGraphService');
+const { resolvePagination } = require('../utils/pagination');
+const { sanitizeText } = require('../utils/sanitizeText');
+const CHAT_ENABLED_STATUSES = new Set([
+    'interview_requested',
+    'interview_completed',
+    'offer_sent',
+    'offer_accepted',
+    'hired',
+    // Legacy compatibility.
+    'accepted',
+    'offer_proposed',
+    'interview',
+]);
 
 // Get Chat History (Paginated)
 const getChatHistory = async (req, res) => {
@@ -24,13 +43,16 @@ const getChatHistory = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to view this chat' });
         }
 
-        if (String(application.status || '').toLowerCase() !== 'accepted') {
+        if (!CHAT_ENABLED_STATUSES.has(String(application.status || '').toLowerCase())) {
             return res.status(403).json({ message: 'Chat is available after acceptance' });
         }
 
-        const page = parseInt(req.query.page) || 1;
-        const limit = 20;
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination({
+            page: req.query.page,
+            limit: req.query.limit,
+            defaultLimit: 20,
+            maxLimit: 100,
+        });
 
         const messages = await Message.find({ applicationId })
             .sort({ createdAt: -1 }) // Latest first for UI
@@ -42,8 +64,8 @@ const getChatHistory = async (req, res) => {
         // Returning as is (Latest is index 0) is fine for "inverted" FlatLists.
         res.status(200).json(messages);
     } catch (error) {
-        console.error("Get History Error:", error);
-        res.status(500).json({ message: "Failed to fetch history", error: error.message, stack: error.stack });
+        console.warn("Get History Error:", error);
+        res.status(500).json({ message: "Failed to fetch history", error: error.message });
     }
 };
 
@@ -65,21 +87,102 @@ const sendMessageREST = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to message in this chat' });
         }
 
-        if (String(application.status || '').toLowerCase() !== 'accepted') {
+        if (!CHAT_ENABLED_STATUSES.has(String(application.status || '').toLowerCase())) {
             return res.status(403).json({ message: 'Chat is available after acceptance' });
         }
 
-        if (!String(text || '').trim()) {
+        const sanitizedText = sanitizeText(text || '', { maxLength: 5000 });
+        if (!sanitizedText) {
             return res.status(400).json({ message: 'Message text is required' });
         }
 
         const message = await Message.create({
             applicationId,
             sender,
-            text: String(text).trim()
+            text: sanitizedText
         });
 
+        await Application.updateOne(
+            { _id: application._id },
+            {
+                $set: {
+                    conversationLastActiveAt: new Date(),
+                    lastActivityAt: new Date(),
+                },
+            }
+        );
+
         const fullMsg = await message.populate('sender', 'name firstName role');
+        const receiverUserId = isEmployer ? workerProfile?.user : application.employer;
+        if (receiverUserId) {
+            await recordTrustEdge({
+                fromUserId: sender,
+                toUserId: receiverUserId,
+                edgeType: 'messaged',
+                weight: 20,
+                qualityScore: 4,
+                negative: false,
+                referenceType: 'message',
+                referenceId: String(message._id),
+                metadata: {
+                    applicationId: String(application._id),
+                    transport: 'rest',
+                },
+            }).catch(() => null);
+        }
+        if (receiverUserId) {
+            await queueNotificationDispatch({
+                userId: receiverUserId,
+                type: 'message_received',
+                title: 'New Message',
+                message: sanitizedText,
+                relatedData: {
+                    applicationId: String(application._id),
+                    messageId: String(message._id),
+                },
+                pushCategory: 'application_status',
+            });
+        }
+
+        safeLogPlatformEvent({
+            type: 'message_sent',
+            userId: sender,
+            meta: {
+                applicationId: String(application._id),
+                messageId: String(message._id),
+            },
+        });
+        setImmediate(() => {
+            enqueueBackgroundJob({
+                type: 'trust_recalculation',
+                payload: {
+                    userId: String(sender),
+                    reason: 'message_sent_rest',
+                },
+            }).catch(() => {});
+        });
+
+        setImmediate(async () => {
+            try {
+                await trackFunnelStage({
+                    userId: sender,
+                    stage: 'chat',
+                    source: 'chat_rest_send',
+                    metadata: {
+                        applicationId: String(applicationId),
+                    },
+                });
+                await recordFeatureUsage({
+                    userId: sender,
+                    featureKey: 'chat_message_sent',
+                    metadata: {
+                        applicationId: String(applicationId),
+                    },
+                });
+            } catch (_error) {
+                // Non-blocking analytics path.
+            }
+        });
 
         // If using hybrid, we might emit here too if we have access to io, 
         // but typically controller doesn't have 'io' scope unless passed.

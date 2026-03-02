@@ -1,5 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const { validate } = require('../middleware/validate');
+const { jobPostLimiter } = require('../middleware/rateLimiters');
+const { jobPostSchema } = require('../schemas/requestSchemas');
+const { trustGuard } = require('../middleware/trustGuardMiddleware');
+const { abuseDefenseGuard } = require('../middleware/abuseDefenseMiddleware');
+const { enforceJobReadProtection } = require('../services/dataProtectionService');
 const { 
     createJob, 
     getJobs,
@@ -40,9 +46,9 @@ const { protect, employer } = require('../middleware/authMiddleware');
  *         description: Unauthorized
  */
 // @route   POST /api/jobs
-router.post('/', protect, employer, createJob);
-router.get('/', protect, getJobs);
-router.get('/recommended', protect, getRecommendedJobs);
+router.post('/', protect, employer, trustGuard('job_post'), abuseDefenseGuard('job_post'), jobPostLimiter, validate({ body: jobPostSchema }), createJob);
+router.get('/', protect, enforceJobReadProtection, getJobs);
+router.get('/recommended', protect, enforceJobReadProtection, getRecommendedJobs);
 
 // @route   GET /api/jobs/my-jobs
 router.get('/my-jobs', protect, employer, getEmployerJobs);

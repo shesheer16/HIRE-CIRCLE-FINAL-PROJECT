@@ -1,7 +1,8 @@
 import React, { memo, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { IconUsers } from '../../../components/Icons';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function CircleCardComponent({ variant, circle, onOpenCircle, onJoinCircle }) {
     const handleOpen = useCallback(() => {
@@ -19,7 +20,7 @@ function CircleCardComponent({ variant, circle, onOpenCircle, onJoinCircle }) {
             <View style={styles.joinedCard}>
                 <View style={styles.joinedLeft}>
                     <View style={styles.relativeAvatar}>
-                        <Image source={{ uri: `https://ui-avatars.com/api/?name=${circle.name}&background=7c3aed&color=fff&rounded=true` }} style={styles.joinedAvatar} />
+                        <Image source={{ uri: `https://ui-avatars.com/api/?name=${circle.name}&background=8b3dff&color=fff&rounded=true` }} style={styles.joinedAvatar} />
                         <View style={styles.onlineDot} />
                     </View>
                     <View>
@@ -36,14 +37,19 @@ function CircleCardComponent({ variant, circle, onOpenCircle, onJoinCircle }) {
 
     return (
         <View style={styles.exploreCard}>
-            <IconUsers size={96} color={theme.textPrimary} style={styles.exploreBgIcon} />
+            <IconUsers size={96} color={connectPalette.text} style={styles.exploreBgIcon} />
             <View style={styles.exploreTop}>
-                <Image source={{ uri: `https://ui-avatars.com/api/?name=${circle.name}&background=random&rounded=true` }} style={styles.exploreAvatar} />
+                <Image source={{ uri: `https://ui-avatars.com/api/?name=${circle.name}&background=8b3dff&color=fff&rounded=true` }} style={styles.exploreAvatar} />
                 <View style={styles.exploreMain}>
                     <View style={styles.exploreHeaderRow}>
                         <View>
                             <Text style={styles.exploreTitle}>{circle.name}</Text>
                             <Text style={styles.exploreCategory}>{circle.category}</Text>
+                            {Number(circle?.members || 0) >= 200 ? (
+                                <View style={styles.trendingBadge}>
+                                    <Text style={styles.trendingBadgeText}>TRENDING CIRCLE</Text>
+                                </View>
+                            ) : null}
                         </View>
                         <TouchableOpacity style={styles.joinBtn} onPress={handleJoin}>
                             <Text style={styles.joinBtnText}>JOIN</Text>
@@ -71,7 +77,7 @@ export default memo(CircleCardComponent);
 
 const styles = StyleSheet.create({
     joinedCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.xl,
         padding: 16,
         marginBottom: 12,
@@ -79,12 +85,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderColor: connectPalette.line,
+        ...connectShadow,
     },
     joinedLeft: {
         flexDirection: 'row',
@@ -106,46 +108,42 @@ const styles = StyleSheet.create({
         width: 12,
         height: 12,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.success,
+        backgroundColor: connectPalette.success,
         borderWidth: 2,
-        borderColor: theme.surface,
+        borderColor: connectPalette.surface,
     },
     joinedTitle: {
         fontSize: 14,
         fontWeight: '800',
-        color: theme.textPrimary,
+        color: connectPalette.text,
         marginBottom: 2,
     },
     joinedMeta: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.primary,
+        color: connectPalette.muted,
     },
     openBtn: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
     },
     openBtnText: {
         fontSize: 11,
-        fontWeight: '900',
-        color: theme.primary,
+        fontWeight: '800',
+        color: connectPalette.accentDark,
     },
 
     exploreCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.xl,
         padding: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
         overflow: 'hidden',
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        ...connectShadow,
     },
     exploreBgIcon: {
         position: 'absolute',
@@ -175,21 +173,37 @@ const styles = StyleSheet.create({
     exploreTitle: {
         fontSize: 14,
         fontWeight: '800',
-        color: theme.textPrimary,
+        color: connectPalette.text,
     },
     exploreCategory: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.textSecondary,
-        backgroundColor: theme.border,
+        color: connectPalette.muted,
+        backgroundColor: '#f2f4f8',
         alignSelf: 'flex-start',
         paddingHorizontal: 6,
         paddingVertical: 2,
         borderRadius: RADIUS.sm,
         marginTop: 4,
     },
+    trendingBadge: {
+        alignSelf: 'flex-start',
+        marginTop: 4,
+        borderRadius: RADIUS.sm,
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        backgroundColor: '#fee2e2',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    trendingBadgeText: {
+        color: '#b91c1c',
+        fontSize: 9,
+        fontWeight: '900',
+        letterSpacing: 0.3,
+    },
     joinBtn: {
-        backgroundColor: theme.darkCard,
+        backgroundColor: connectPalette.dark,
         paddingHorizontal: 16,
         paddingVertical: 6,
         borderRadius: RADIUS.sm,
@@ -197,18 +211,18 @@ const styles = StyleSheet.create({
     joinBtnText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     exploreDescription: {
         fontSize: 12,
-        color: theme.textSecondary,
+        color: connectPalette.muted,
         lineHeight: 18,
     },
     exploreBottom: {
         flexDirection: 'row',
         alignItems: 'center',
         borderTopWidth: 1,
-        borderTopColor: theme.border,
+        borderTopColor: connectPalette.line,
         paddingTop: 12,
     },
     exploreAvatarGroup: {
@@ -220,9 +234,9 @@ const styles = StyleSheet.create({
         width: 24,
         height: 24,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.borderMedium,
+        backgroundColor: '#edf0f8',
         borderWidth: 2,
-        borderColor: theme.surface,
+        borderColor: connectPalette.surface,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -236,13 +250,13 @@ const styles = StyleSheet.create({
     },
     miniAvatarText: {
         fontSize: 10,
-        color: theme.textSecondary,
+        color: connectPalette.muted,
         fontWeight: '700',
     },
     exploreOnline: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.textMuted,
+        color: connectPalette.muted,
     },
     exploreTopicWrap: {
         flex: 1,
@@ -251,8 +265,8 @@ const styles = StyleSheet.create({
     exploreTopic: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.primary,
-        backgroundColor: theme.primaryLight,
+        color: connectPalette.accentDark,
+        backgroundColor: connectPalette.accentSoft,
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: RADIUS.md,

@@ -112,7 +112,7 @@ const seedProfiles = async () => {
         console.log("\n✅ Seeding Complete!");
 
     } catch (error) {
-        console.error("💥 Error:", error);
+        console.warn("💥 Error:", error);
     } finally {
         mongoose.disconnect();
     }

@@ -4,31 +4,52 @@ const Application = require('../models/Application');
 const WorkerProfile = require('../models/WorkerProfile');
 const BetaCode = require('../models/BetaCode');
 const CityEmployerPipeline = require('../models/CityEmployerPipeline');
+const EmployerTier = require('../models/EmployerTier');
 const MatchModelReport = require('../models/MatchModelReport');
+const RevenueEvent = require('../models/RevenueEvent');
+const Report = require('../models/Report');
+const DailyMetrics = require('../models/DailyMetrics');
+const Message = require('../models/Message');
+const FeatureFlag = require('../models/FeatureFlag');
+const UserTrustScore = require('../models/UserTrustScore');
+const Post = require('../models/Post');
+const Circle = require('../models/Circle');
+const CirclePost = require('../models/CirclePost');
 const { getAndPersistCalibrationSuggestion } = require('../match/matchModelCalibration');
 const { getMatchPerformanceAlerts } = require('../services/matchMetricsService');
+const { getLatestCityLiquidity } = require('../services/cityLiquidityService');
+const { getLatestCityExpansionSignals } = require('../services/cityExpansionSignalService');
+const { getMarketAlerts } = require('../services/marketAnomalyService');
+const { getMarketInsights } = require('../services/marketInsightsService');
+const { getCompetitiveThreatSignals } = require('../services/competitiveThreatService');
+const HiringTrajectoryModel = require('../models/HiringTrajectoryModel');
+const { CANDIDATE_ROLE, recruiterRoleQuery } = require('../utils/roleGuards');
+const { getMonitoringSnapshot } = require('../services/systemMonitoringService');
+const { setFeatureFlag, listFeatureFlags } = require('../services/featureFlagService');
 
 // @desc Get high-level platform statistics
 // @route GET /api/admin/stats
 const getPlatformStats = async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
-        const totalEmployers = await User.countDocuments({ role: 'employer' });
-        const totalCandidates = await User.countDocuments({ role: 'candidate' });
+        const totalEmployers = await User.countDocuments({ role: recruiterRoleQuery() });
+        const totalCandidates = await User.countDocuments({ role: CANDIDATE_ROLE });
         const totalJobs = await Job.countDocuments();
         const activeJobs = await Job.countDocuments({ isOpen: true });
         const totalApplications = await Application.countDocuments();
+        const pendingReports = await Report.countDocuments({ status: 'pending' });
 
-        // Calculate some basic mock revenue or engagement metric based on apps/jobs
+        // Calculate a lightweight engagement proxy based on applications per job.
         const engagementScore = (totalApplications / (totalJobs || 1)).toFixed(1);
 
         res.json({
             users: { total: totalUsers, employers: totalEmployers, candidates: totalCandidates },
             jobs: { total: totalJobs, active: activeJobs },
-            activity: { totalApplications, avgAppsPerJob: engagementScore }
+            activity: { totalApplications, avgAppsPerJob: engagementScore },
+            reports: { pending: pendingReports },
         });
     } catch (error) {
-        console.error("Admin Stats Error:", error);
+        console.warn("Admin Stats Error:", error);
         res.status(500).json({ message: "Failed to load platform stats" });
     }
 };
@@ -56,7 +77,7 @@ const getAllUsers = async (req, res) => {
             pages: Math.ceil(total / limit)
         });
     } catch (error) {
-        console.error("Admin Users Error:", error);
+        console.warn("Admin Users Error:", error);
         res.status(500).json({ message: "Failed to load users" });
     }
 };
@@ -83,8 +104,318 @@ const getAllJobs = async (req, res) => {
             pages: Math.ceil(total / limit)
         });
     } catch (error) {
-        console.error("Admin Jobs Error:", error);
+        console.warn("Admin Jobs Error:", error);
         res.status(500).json({ message: "Failed to load jobs" });
+    }
+};
+
+// @desc Get moderation reports
+// @route GET /api/admin/reports
+const getAllReports = async (req, res) => {
+    try {
+        const page = Number.parseInt(req.query.page || '1', 10);
+        const limit = Number.parseInt(req.query.limit || '20', 10);
+        const status = req.query.status ? String(req.query.status).trim().toLowerCase() : null;
+        const skip = (Math.max(page, 1) - 1) * Math.max(limit, 1);
+
+        const query = {};
+        if (status) {
+            query.status = status;
+        }
+
+        const [reports, total] = await Promise.all([
+            Report.find(query)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .populate('reporterId', 'name email')
+                .lean(),
+            Report.countDocuments(query),
+        ]);
+
+        return res.json({
+            success: true,
+            reports: reports.map((report) => ({
+                ...report,
+                reporterName: report.reporterId?.name || 'Unknown Reporter',
+                reporterEmail: report.reporterId?.email || null,
+            })),
+            total,
+            page: Math.max(page, 1),
+            pages: Math.ceil(total / Math.max(limit, 1)),
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to load reports' });
+    }
+};
+
+// @desc Dismiss moderation report
+// @route PATCH /api/admin/reports/:id/dismiss
+const dismissReport = async (req, res) => {
+    try {
+        const report = await Report.findByIdAndUpdate(
+            req.params.id,
+            {
+                $set: {
+                    status: 'dismissed',
+                    reviewedBy: req.admin?._id || null,
+                    reviewedAt: new Date(),
+                    resolutionNotes: String(req.body?.resolutionNotes || '').trim(),
+                },
+            },
+            { new: true }
+        );
+
+        if (!report) {
+            return res.status(404).json({ message: 'Report not found' });
+        }
+
+        return res.json({ success: true, report });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to dismiss report' });
+    }
+};
+
+const removeReportedTarget = async (report) => {
+    const targetId = String(report.targetId || '');
+    if (!targetId) return;
+
+    if (report.targetType === 'job') {
+        await Job.findByIdAndUpdate(targetId, {
+            $set: {
+                isDisabled: true,
+                disabledAt: new Date(),
+                disabledReason: 'Removed by moderation',
+                isOpen: false,
+                status: 'closed',
+            },
+        });
+        return;
+    }
+
+    if (report.targetType === 'user') {
+        await User.findByIdAndUpdate(targetId, {
+            $set: {
+                isBanned: true,
+                banReason: 'Banned by moderation',
+                bannedAt: new Date(),
+                isFlagged: true,
+                trustStatus: 'restricted',
+            },
+        });
+        return;
+    }
+
+    if (report.targetType === 'message') {
+        await Message.findByIdAndDelete(targetId);
+        return;
+    }
+
+    if (report.targetType === 'post' || report.targetType === 'bounty') {
+        await Post.findByIdAndDelete(targetId);
+        return;
+    }
+
+    if (report.targetType === 'circle_post') {
+        await CirclePost.findByIdAndDelete(targetId);
+        return;
+    }
+
+    if (report.targetType === 'circle') {
+        await Circle.findByIdAndDelete(targetId);
+        return;
+    }
+
+    if (report.targetType === 'application') {
+        await Application.findByIdAndDelete(targetId);
+    }
+};
+
+// @desc Review and action moderation report
+// @route PATCH /api/admin/reports/:id
+const reviewReport = async (req, res) => {
+    try {
+        const action = String(req.body?.action || '').trim().toLowerCase();
+        if (!['approve', 'remove', 'dismiss'].includes(action)) {
+            return res.status(400).json({ message: 'action must be approve, remove, or dismiss' });
+        }
+
+        const report = await Report.findById(req.params.id);
+        if (!report) {
+            return res.status(404).json({ message: 'Report not found' });
+        }
+
+        if (action === 'remove') {
+            await removeReportedTarget(report);
+        }
+
+        report.status = action === 'dismiss' ? 'dismissed' : (action === 'remove' ? 'removed' : 'approved');
+        report.reviewedBy = req.admin?._id || null;
+        report.reviewedAt = new Date();
+        report.resolutionNotes = String(req.body?.resolutionNotes || '').trim();
+        await report.save();
+
+        return res.json({ success: true, report });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to review report' });
+    }
+};
+
+// @desc Get platform intelligence metrics
+// @route GET /api/admin/metrics
+const getPlatformMetrics = async (req, res) => {
+    try {
+        const [latestDailyMetrics, pendingReports, flaggedUsers, monitoring, featureFlags] = await Promise.all([
+            DailyMetrics.findOne({}).sort({ day: -1 }).lean(),
+            Report.countDocuments({ status: 'pending' }),
+            UserTrustScore.countDocuments({ isFlagged: true }),
+            getMonitoringSnapshot(),
+            listFeatureFlags(),
+        ]);
+
+        return res.json({
+            success: true,
+            metrics: {
+                daily: latestDailyMetrics,
+                moderation: {
+                    pendingReports,
+                    flaggedUsers,
+                },
+                monitoring,
+                featureFlags,
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to load metrics' });
+    }
+};
+
+// @desc Ban or unban user
+// @route PATCH /api/admin/ban-user
+const banUser = async (req, res) => {
+    try {
+        const userId = String(req.body?.userId || '').trim();
+        const ban = typeof req.body?.ban === 'boolean' ? req.body.ban : true;
+        const reason = String(req.body?.reason || (ban ? 'Banned by admin' : '')).trim();
+
+        if (!userId) {
+            return res.status(400).json({ message: 'userId is required' });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            userId,
+            {
+                $set: {
+                    isBanned: ban,
+                    banReason: ban ? reason : null,
+                    bannedAt: ban ? new Date() : null,
+                    isFlagged: ban ? true : Boolean(req.body?.isFlagged),
+                    trustStatus: ban ? 'restricted' : 'healthy',
+                },
+            },
+            { new: true }
+        ).select('-password');
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        await UserTrustScore.findOneAndUpdate(
+            { userId },
+            {
+                $set: {
+                    score: ban ? 0 : 100,
+                    status: ban ? 'restricted' : 'healthy',
+                    isFlagged: Boolean(ban),
+                    reasons: ban ? [`admin_ban:${reason || 'policy'}`] : [],
+                    lastEvaluatedAt: new Date(),
+                },
+            },
+            { upsert: true }
+        );
+
+        return res.json({
+            success: true,
+            user,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to update user ban state' });
+    }
+};
+
+// @desc Disable or enable job
+// @route PATCH /api/admin/disable-job
+const disableJob = async (req, res) => {
+    try {
+        const jobId = String(req.body?.jobId || '').trim();
+        const disable = typeof req.body?.disable === 'boolean' ? req.body.disable : true;
+        const reason = String(req.body?.reason || (disable ? 'Disabled by admin' : '')).trim();
+
+        if (!jobId) {
+            return res.status(400).json({ message: 'jobId is required' });
+        }
+
+        const update = disable
+            ? {
+                isDisabled: true,
+                disabledAt: new Date(),
+                disabledReason: reason,
+                isOpen: false,
+                status: 'closed',
+            }
+            : {
+                isDisabled: false,
+                disabledAt: null,
+                disabledReason: null,
+                isOpen: true,
+                status: 'active',
+            };
+
+        const job = await Job.findByIdAndUpdate(jobId, { $set: update }, { new: true });
+        if (!job) {
+            return res.status(404).json({ message: 'Job not found' });
+        }
+
+        return res.json({
+            success: true,
+            job,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to update job state' });
+    }
+};
+
+// @desc Toggle feature flags dynamically
+// @route PATCH /api/admin/feature-toggle
+const updateFeatureToggle = async (req, res) => {
+    try {
+        const key = String(req.body?.key || '').trim().toUpperCase();
+        const enabledInput = req.body?.enabled;
+        const description = String(req.body?.description || '').trim();
+
+        if (!key) {
+            return res.status(400).json({ message: 'key is required' });
+        }
+        if (typeof enabledInput !== 'boolean') {
+            return res.status(400).json({ message: 'enabled must be boolean' });
+        }
+
+        const flag = await setFeatureFlag({
+            key,
+            enabled: enabledInput,
+            description,
+            updatedByAdmin: req.admin?._id || null,
+            metadata: {
+                source: 'admin_controller',
+            },
+        });
+
+        return res.json({
+            success: true,
+            featureFlag: flag,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to update feature flag' });
     }
 };
 
@@ -110,7 +441,7 @@ const generateBetaCodes = async (req, res) => {
             codes: insertedCodes.map(c => c.code)
         });
     } catch (error) {
-        console.error("Generate Beta Codes Error:", error);
+        console.warn("Generate Beta Codes Error:", error);
         res.status(500).json({ message: "Failed to generate beta codes" });
     }
 };
@@ -147,7 +478,7 @@ const createCityPipelineEntry = async (req, res) => {
 
         return res.status(201).json({ success: true, data: entry });
     } catch (error) {
-        console.error('Create city pipeline entry error:', error);
+        console.warn('Create city pipeline entry error:', error);
         return res.status(500).json({ message: 'Failed to create pipeline entry' });
     }
 };
@@ -181,7 +512,7 @@ const getCityPipelineEntries = async (req, res) => {
             total,
         });
     } catch (error) {
-        console.error('Get city pipeline entries error:', error);
+        console.warn('Get city pipeline entries error:', error);
         return res.status(500).json({ message: 'Failed to load city pipeline entries' });
     }
 };
@@ -210,7 +541,7 @@ const updateCityPipelineEntry = async (req, res) => {
 
         return res.json({ success: true, data: updated });
     } catch (error) {
-        console.error('Update city pipeline entry error:', error);
+        console.warn('Update city pipeline entry error:', error);
         return res.status(500).json({ message: 'Failed to update city pipeline entry' });
     }
 };
@@ -251,7 +582,7 @@ const getCityPipelineSummary = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('City pipeline summary error:', error);
+        console.warn('City pipeline summary error:', error);
         return res.status(500).json({ message: 'Failed to load city pipeline summary' });
     }
 };
@@ -274,7 +605,7 @@ const getMatchReport = async (req, res) => {
             data: report,
         });
     } catch (error) {
-        console.error('Get match model report error:', error);
+        console.warn('Get match model report error:', error);
         return res.status(500).json({ message: 'Failed to load match model report' });
     }
 };
@@ -303,7 +634,7 @@ const getMatchCalibrationSuggestions = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Get match calibration suggestions error:', error);
+        console.warn('Get match calibration suggestions error:', error);
         return res.status(500).json({ message: 'Failed to generate calibration suggestions' });
     }
 };
@@ -329,8 +660,205 @@ const getMatchPerformanceAlertsController = async (req, res) => {
             data: result,
         });
     } catch (error) {
-        console.error('Get match performance alerts error:', error);
+        console.warn('Get match performance alerts error:', error);
         return res.status(500).json({ message: 'Failed to load match performance alerts' });
+    }
+};
+
+// @desc Get latest city liquidity metrics
+// @route GET /api/admin/city-liquidity
+const getCityLiquidity = async (req, res) => {
+    try {
+        const city = req.query.city ? String(req.query.city).trim() : null;
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+        const rows = await getLatestCityLiquidity({ city, limit });
+
+        return res.json({
+            success: true,
+            data: rows,
+            summary: {
+                underSuppliedCities: rows.filter((row) => row.marketBand === 'under_supplied').length,
+                overSuppliedCities: rows.filter((row) => row.marketBand === 'over_supplied').length,
+            },
+        });
+    } catch (error) {
+        console.warn('Get city liquidity error:', error);
+        return res.status(500).json({ message: 'Failed to load city liquidity' });
+    }
+};
+
+// @desc Get city expansion readiness signals
+// @route GET /api/admin/city-expansion-signals
+const getCityExpansionSignalsController = async (req, res) => {
+    try {
+        const city = req.query.city ? String(req.query.city).trim() : null;
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+        const rows = await getLatestCityExpansionSignals({ city, limit });
+
+        return res.json({
+            success: true,
+            data: rows,
+            summary: {
+                readyForScaleCities: rows.filter((row) => row.readinessStatus === 'READY_FOR_SCALE').length,
+                watchlistCities: rows.filter((row) => row.readinessStatus === 'WATCHLIST').length,
+            },
+        });
+    } catch (error) {
+        console.warn('Get city expansion signals error:', error);
+        return res.status(500).json({ message: 'Failed to load city expansion signals' });
+    }
+};
+
+// @desc Get market anomaly alerts
+// @route GET /api/admin/market-alerts
+const getMarketAlertsController = async (req, res) => {
+    try {
+        const city = req.query.city ? String(req.query.city).trim() : null;
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+        const rows = await getMarketAlerts({ city, limit });
+
+        return res.json({
+            success: true,
+            data: rows,
+        });
+    } catch (error) {
+        console.warn('Get market alerts error:', error);
+        return res.status(500).json({ message: 'Failed to load market alerts' });
+    }
+};
+
+// @desc Market control dashboard overview
+// @route GET /api/admin/market-control
+const getMarketControlOverview = async (req, res) => {
+    try {
+        const now = new Date();
+        const from30d = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+        const [cityLiquidityRows, cityExpansionRows, tierRows, revenueRows] = await Promise.all([
+            getLatestCityLiquidity({ limit: 200 }),
+            getLatestCityExpansionSignals({ limit: 200 }),
+            EmployerTier.aggregate([
+                {
+                    $group: {
+                        _id: '$tier',
+                        count: { $sum: 1 },
+                    },
+                },
+            ]),
+            RevenueEvent.aggregate([
+                {
+                    $match: {
+                        status: 'succeeded',
+                        settledAt: { $gte: from30d, $lte: now },
+                    },
+                },
+                {
+                    $group: {
+                        _id: '$city',
+                        revenueInr: { $sum: '$amountInr' },
+                    },
+                },
+                { $sort: { revenueInr: -1 } },
+            ]),
+        ]);
+
+        const totalTieredEmployers = tierRows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+        const tierDistribution = tierRows.map((row) => ({
+            tier: row._id || 'Unknown',
+            count: Number(row.count || 0),
+            share: totalTieredEmployers > 0 ? Number((Number(row.count || 0) / totalTieredEmployers).toFixed(4)) : 0,
+        }));
+
+        const fillRatePerCity = cityLiquidityRows.map((row) => ({
+            city: row.city,
+            fillRate: Number(row.fillRate || 0),
+            workersPerJob: Number(row.workersPerJob || 0),
+            marketBand: row.marketBand,
+        }));
+
+        const expansionByCity = cityExpansionRows.map((row) => ({
+            city: row.city,
+            expansionReadinessScore: Number(row.expansionReadinessScore || 0),
+            readinessStatus: row.readinessStatus,
+        }));
+
+        return res.json({
+            success: true,
+            data: {
+                generatedAt: now.toISOString(),
+                cityLiquidity: cityLiquidityRows,
+                fillRatePerCity,
+                tierDistribution,
+                employerTierShare: tierDistribution,
+                revenuePerCity: revenueRows.map((row) => ({
+                    city: row._id || 'unknown',
+                    revenueInr: Number(row.revenueInr || 0),
+                })),
+                expansionReadiness: expansionByCity,
+            },
+        });
+    } catch (error) {
+        console.warn('Get market control overview error:', error);
+        return res.status(500).json({ message: 'Failed to load market control overview' });
+    }
+};
+
+// @desc Get internal market insights data product payload
+// @route GET /api/admin/market-insights
+const getMarketInsightsController = async (req, res) => {
+    try {
+        const data = await getMarketInsights({ day: new Date() });
+        return res.json({
+            success: true,
+            data,
+        });
+    } catch (error) {
+        console.warn('Get market insights error:', error);
+        return res.status(500).json({ message: 'Failed to load market insights' });
+    }
+};
+
+// @desc Get strategic competitive threat signals
+// @route GET /api/admin/competitive-threat-signals
+const getCompetitiveThreatSignalsController = async (req, res) => {
+    try {
+        const city = req.query.city ? String(req.query.city).trim() : null;
+        const status = req.query.status ? String(req.query.status).trim() : null;
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+        const rows = await getCompetitiveThreatSignals({ city, status, limit });
+        return res.json({
+            success: true,
+            data: rows,
+        });
+    } catch (error) {
+        console.warn('Get competitive threat signals error:', error);
+        return res.status(500).json({ message: 'Failed to load competitive threat signals' });
+    }
+};
+
+// @desc Get hiring trajectory model outputs
+// @route GET /api/admin/hiring-trajectories
+const getHiringTrajectoryController = async (req, res) => {
+    try {
+        const entityType = req.query.entityType ? String(req.query.entityType).trim() : null;
+        const city = req.query.city ? String(req.query.city).trim() : null;
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+
+        const rows = await HiringTrajectoryModel.find({
+            ...(entityType ? { entityType } : {}),
+            ...(city ? { city: new RegExp(`^${city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } : {}),
+        })
+            .sort({ trajectoryScore: -1, computedAt: -1 })
+            .limit(limit)
+            .lean();
+
+        return res.json({
+            success: true,
+            data: rows,
+        });
+    } catch (error) {
+        console.warn('Get hiring trajectories error:', error);
+        return res.status(500).json({ message: 'Failed to load hiring trajectories' });
     }
 };
 
@@ -338,6 +866,13 @@ module.exports = {
     getPlatformStats,
     getAllUsers,
     getAllJobs,
+    getAllReports,
+    reviewReport,
+    dismissReport,
+    getPlatformMetrics,
+    banUser,
+    disableJob,
+    updateFeatureToggle,
     generateBetaCodes,
     createCityPipelineEntry,
     getCityPipelineEntries,
@@ -346,4 +881,11 @@ module.exports = {
     getMatchReport,
     getMatchCalibrationSuggestions,
     getMatchPerformanceAlertsController,
+    getCityLiquidity,
+    getCityExpansionSignalsController,
+    getMarketAlertsController,
+    getMarketControlOverview,
+    getMarketInsightsController,
+    getCompetitiveThreatSignalsController,
+    getHiringTrajectoryController,
 };

@@ -2,9 +2,11 @@ import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSearch } from '../../../components/Icons';
+import EmptyState from '../../../components/EmptyState';
 import MyCommunitiesSection from './MyCommunitiesSection';
 import CircleCard from './CircleCard';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function CirclesTabComponent({
     circles,
@@ -34,7 +36,7 @@ function CirclesTabComponent({
     const listHeader = useMemo(() => (
         <>
             <LinearGradient
-                colors={[theme.primary, theme.indigo]}
+                colors={[connectPalette.accent, connectPalette.accentDark]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.hero}
@@ -49,11 +51,19 @@ function CirclesTabComponent({
             <MyCommunitiesSection circles={joined} onOpenCircle={onOpenCircle} />
 
             <View style={styles.sectionHeaderRow}>
-                <IconSearch size={16} color={theme.textMuted} />
+                <IconSearch size={16} color={connectPalette.subtle} />
                 <Text style={styles.sectionTitle}>EXPLORE CATEGORIES</Text>
             </View>
         </>
     ), [joined, onOpenCircle]);
+
+    const listEmpty = useMemo(() => (
+        <EmptyState
+            icon="👥"
+            title="No communities yet"
+            subtitle="Circles appear here once created"
+        />
+    ), []);
 
     return (
         <FlatList
@@ -61,6 +71,7 @@ function CirclesTabComponent({
             keyExtractor={keyExtractor}
             renderItem={renderExploreItem}
             ListHeaderComponent={listHeader}
+            ListEmptyComponent={listEmpty}
             ListFooterComponent={<View style={styles.bottomGap} />}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={contentContainerStyle}
@@ -80,11 +91,7 @@ const styles = StyleSheet.create({
         padding: 24,
         marginBottom: 24,
         overflow: 'hidden',
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        ...connectShadow,
     },
     heroRing: {
         position: 'absolute',
@@ -93,19 +100,19 @@ const styles = StyleSheet.create({
         width: 120,
         height: 120,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         opacity: 0.1,
     },
     heroTitle: {
         fontSize: 22,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
         marginBottom: 8,
     },
     heroSub: {
         fontSize: 12,
         fontWeight: '500',
-        color: theme.primaryLight,
+        color: '#efe1ff',
         lineHeight: 18,
     },
     bottomGap: {
@@ -119,8 +126,8 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         letterSpacing: 1,
     },
 });

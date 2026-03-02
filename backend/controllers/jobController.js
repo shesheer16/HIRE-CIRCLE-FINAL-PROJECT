@@ -1,5 +1,7 @@
 const Job = require('../models/Job');
+const Post = require('../models/Post');
 const WorkerProfile = require('../models/WorkerProfile');
+const EmployerProfile = require('../models/EmployerProfile');
 const User = require('../models/userModel');
 const MatchRun = require('../models/MatchRun');
 const MatchLog = require('../models/MatchLog');
@@ -9,7 +11,7 @@ const redisClient = require('../config/redis');
 const { matchCache } = require('./matchingController');
 const UpsellExposure = require('../models/UpsellExposure');
 const matchEngineV2 = require('../match/matchEngineV2');
-const { scoreSinglePair } = require('../match/matchProbabilistic');
+const { applyOverlay } = require('../match/applyProbabilisticOverlay');
 const InterviewProcessingJob = require('../models/InterviewProcessingJob');
 const {
     markJobConfirmed,
@@ -25,6 +27,26 @@ const {
     recordJobFillCompletedOnce,
     recordMatchPerformanceMetric,
 } = require('../services/matchMetricsService');
+const { safeLogPlatformEvent } = require('../services/eventLoggingService');
+const { enqueueBackgroundJob } = require('../services/backgroundQueueService');
+const { FEATURES, hasFeatureAccess } = require('../services/subscriptionService');
+const { EMPLOYER_PRIMARY_ROLE } = require('../utils/roleGuards');
+const { isMatchUiV1Enabled } = require('../config/featureFlags');
+const { buildMatchIntelligenceContext } = require('../services/matchQualityIntelligenceService');
+const { filterJobsByApplyIntent } = require('../services/matchIntentFilterService');
+const { resolveJobGeo, normalizeCountryCode } = require('../services/geoExpansionService');
+const { recordFeatureUsage } = require('../services/monetizationIntelligenceService');
+const { resolvePagination } = require('../utils/pagination');
+const { sanitizeText } = require('../utils/sanitizeText');
+const {
+    evaluateEmployerProfileCompletion,
+    isActionAllowedByProfileCompletion,
+} = require('../services/profileCompletionService');
+const logger = require('../utils/logger');
+const { buildCacheKey, getJSON, setJSON, delByPattern, CACHE_TTL_SECONDS } = require('../services/cacheService');
+const { dispatchAsyncTask, TASK_TYPES } = require('../services/asyncTaskDispatcher');
+const { isCrossBorderAllowed, filterJobsByGeo } = require('../services/geoMatchService');
+const { resolveRoutingContext } = require('../services/regionRoutingService');
 
 const logRecommendedRun = async ({
     userId,
@@ -60,7 +82,7 @@ const logRecommendedRun = async ({
             })), { ordered: false });
         }
     } catch (error) {
-        console.error('Recommended jobs logging failed:', error.message);
+        console.warn('Recommended jobs logging failed:', error.message);
     }
 };
 
@@ -95,26 +117,199 @@ const tierThresholdMap = {
     POSSIBLE: 0.62,
 };
 
+const MAX_SALARY_VALUE = 10_000_000;
+
+const parseSalaryValue = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return Number.NaN;
+    return parsed;
+};
+
 // @desc    Create a new job
 // @route   POST /api/jobs/
 // @access  Protected
 const createJob = async (req, res) => {
-    const { title, companyName, salaryRange, location, requirements, screeningQuestions, minSalary, maxSalary, shift, mandatoryLicenses, isPulse } = req.body;
+    const {
+        title,
+        companyName,
+        salaryRange,
+        location,
+        requirements,
+        screeningQuestions,
+        minSalary,
+        maxSalary,
+        shift,
+        mandatoryLicenses,
+        isPulse,
+        remoteAllowed,
+        expiresAt,
+    } = req.body;
 
     try {
+        const employerUser = await User.findById(req.user._id)
+            .select('name city isVerified hasCompletedProfile activeRole primaryRole role isDeleted')
+            .lean();
+        if (!employerUser || employerUser.isDeleted) {
+            return res.status(404).json({
+                success: false,
+                message: 'Employer account not found',
+            });
+        }
+
+        const employerProfile = await EmployerProfile.findOne({ user: req.user._id }).lean();
+        const completion = evaluateEmployerProfileCompletion({
+            user: employerUser,
+            employerProfile: employerProfile || {},
+        });
+        const gate = isActionAllowedByProfileCompletion({
+            action: 'post_job',
+            completion,
+        });
+        if (!gate.allowed) {
+            return res.status(403).json({
+                success: false,
+                message: `Complete your employer profile to at least ${gate.threshold}% before posting a job.`,
+                code: gate.code,
+                completion,
+                missingRequiredFields: gate.missingRequiredFields,
+            });
+        }
+
+        const parsedMinSalary = parseSalaryValue(minSalary);
+        const parsedMaxSalary = parseSalaryValue(maxSalary);
+
+        if (
+            Number.isNaN(parsedMinSalary)
+            || Number.isNaN(parsedMaxSalary)
+            || (parsedMinSalary !== null && (parsedMinSalary < 0 || parsedMinSalary > MAX_SALARY_VALUE))
+            || (parsedMaxSalary !== null && (parsedMaxSalary < 0 || parsedMaxSalary > MAX_SALARY_VALUE))
+            || (parsedMinSalary !== null && parsedMaxSalary !== null && parsedMaxSalary < parsedMinSalary)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid salary bounds',
+            });
+        }
+
+        const safeTitle = sanitizeText(title, { maxLength: 120 });
+        const safeCompanyName = sanitizeText(companyName, { maxLength: 120 });
+        const safeSalaryRange = sanitizeText(salaryRange, { maxLength: 120 });
+        const safeLocation = sanitizeText(location, { maxLength: 120 });
+        const safeRequirements = Array.isArray(requirements)
+            ? requirements.map((item) => sanitizeText(item, { maxLength: 120 })).filter(Boolean)
+            : [];
+        const safeScreeningQuestions = Array.isArray(screeningQuestions)
+            ? screeningQuestions.map((item) => sanitizeText(item, { maxLength: 250 })).filter(Boolean)
+            : [];
+        const safeMandatoryLicenses = Array.isArray(mandatoryLicenses)
+            ? mandatoryLicenses.map((item) => sanitizeText(item, { maxLength: 120 })).filter(Boolean)
+            : [];
+
+        if (!safeTitle || !safeCompanyName || !safeSalaryRange || !safeLocation) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid job payload',
+            });
+        }
+
+        let resolvedExpiryAt = null;
+        if (expiresAt !== undefined && expiresAt !== null && String(expiresAt).trim()) {
+            const parsedExpiryAt = new Date(expiresAt);
+            if (Number.isNaN(parsedExpiryAt.getTime()) || parsedExpiryAt <= new Date()) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'expiresAt must be a valid future timestamp',
+                });
+            }
+            resolvedExpiryAt = parsedExpiryAt;
+        }
+
+        const geo = resolveJobGeo({
+            location: safeLocation,
+            countryCode: req.body?.countryCode || req.user?.country || 'IN',
+        });
+        const priorityListing = await hasFeatureAccess({
+            userId: req.user._id,
+            feature: FEATURES.PRIORITY_LISTING,
+        });
+
         const job = await Job.create({
             employerId: req.user._id,
-            title,
-            companyName,
-            salaryRange,
-            location,
-            requirements: requirements || [],
-            screeningQuestions: screeningQuestions || [],
-            minSalary,
-            maxSalary,
+            title: safeTitle,
+            companyName: safeCompanyName,
+            salaryRange: safeSalaryRange,
+            location: safeLocation,
+            country: geo.countryCode,
+            region: String(req.body?.region || req.body?.regionCode || geo.regionCode || '').toUpperCase(),
+            countryCode: geo.countryCode,
+            regionCode: String(req.body?.regionCode || geo.regionCode || '').toUpperCase(),
+            currencyCode: String(req.body?.currencyCode || geo.currencyCode || '').toUpperCase(),
+            languageCode: req.body?.languageCode || geo.languageCode,
+            requirements: safeRequirements,
+            screeningQuestions: safeScreeningQuestions,
+            minSalary: parsedMinSalary,
+            maxSalary: parsedMaxSalary,
             shift: shift || 'Flexible',
-            mandatoryLicenses: mandatoryLicenses || [],
+            mandatoryLicenses: safeMandatoryLicenses,
             isPulse: Boolean(isPulse),
+            remoteAllowed: Boolean(remoteAllowed),
+            priorityListing: Boolean(priorityListing),
+            ...(resolvedExpiryAt ? { expiresAt: resolvedExpiryAt } : {}),
+        });
+
+        await Post.create({
+            user: req.user._id,
+            authorId: req.user._id,
+            postType: 'job',
+            type: 'job',
+            visibility: 'public',
+            content: sanitizeText(`${safeTitle} at ${safeCompanyName} in ${safeLocation}`, { maxLength: 5000 }),
+            media: [],
+            mediaUrl: '',
+            trustWeight: Number(req.user?.isVerified ? 0.2 : 0) + Number(req.user?.hasCompletedProfile ? 0.1 : 0),
+            meta: {
+                jobId: String(job._id),
+            },
+        }).catch(() => {});
+
+        safeLogPlatformEvent({
+            type: 'job_post',
+            userId: req.user._id,
+            meta: {
+                jobId: String(job._id),
+                priorityListing: Boolean(priorityListing),
+            },
+        });
+        setImmediate(() => {
+            enqueueBackgroundJob({
+                type: 'trust_recalculation',
+                payload: {
+                    userId: String(req.user._id),
+                    reason: 'job_post',
+                },
+            }).catch(() => {});
+        });
+
+        fireAndForget('trackJobPostUsage', () => recordFeatureUsage({
+            userId: req.user._id,
+            featureKey: 'job_post_created',
+            metadata: {
+                jobId: String(job._id),
+                countryCode: job.countryCode,
+                regionCode: job.regionCode,
+            },
+        }), { userId: String(req.user._id), jobId: String(job._id) });
+        await delByPattern('cache:jobs:*');
+        await delByPattern('cache:analytics:employer-summary:*');
+        void dispatchAsyncTask({
+            type: TASK_TYPES.MATCH_RECALCULATION,
+            payload: {
+                scope: 'job_created',
+                jobId: String(job._id),
+                employerId: String(req.user._id),
+            },
+            label: 'job_created_recalculation',
         });
 
         res.status(201).json({
@@ -134,9 +329,12 @@ const createJob = async (req, res) => {
 // @access  Protected
 const getEmployerJobs = async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination({
+            page: req.query.page,
+            limit: req.query.limit,
+            defaultLimit: 20,
+            maxLimit: 100,
+        });
 
         const jobs = await Job.find({ employerId: req.user._id })
             .sort({ createdAt: -1 })
@@ -167,7 +365,24 @@ const getEmployerJobs = async (req, res) => {
 const getJobs = async (req, res) => {
     try {
         const { companyId } = req.query;
+        const countryFilter = normalizeCountryCode(req.query.country || req.user?.country || 'IN');
+        const routing = resolveRoutingContext({
+            user: req.user || null,
+            requestedRegion: req.query.region,
+        });
+        const regionFilter = String(req.query.region || req.user?.regionCode || '').trim().toUpperCase();
+        const regionCandidates = Array.from(new Set([regionFilter, ...routing.failoverRegions]
+            .map((value) => String(value || '').trim().toUpperCase())
+            .filter(Boolean)));
+        const crossBorderEnabled = ['true', '1', 'yes', 'on'].includes(String(req.query.crossBorder || '').toLowerCase());
+        const { page, limit, skip } = resolvePagination({
+            page: req.query.page,
+            limit: req.query.limit,
+            defaultLimit: 20,
+            maxLimit: 100,
+        });
         const query = {};
+        query.isDisabled = { $ne: true };
 
         if (companyId) {
             const companyFilters = [];
@@ -180,14 +395,58 @@ const getJobs = async (req, res) => {
         } else {
             query.isOpen = true;
             query.status = 'active';
+            if (!crossBorderEnabled) {
+                query.$or = [
+                    { countryCode: countryFilter },
+                    { country: countryFilter },
+                    { remoteAllowed: true },
+                ];
+                if (regionCandidates.length) {
+                    query.$and = [
+                        { $or: [
+                            { regionCode: { $in: regionCandidates } },
+                            { region: { $in: regionCandidates } },
+                            { remoteAllowed: true },
+                        ] },
+                    ];
+                }
+            } else if (regionCandidates.length) {
+                query.$or = [
+                    { regionCode: { $in: regionCandidates } },
+                    { region: { $in: regionCandidates } },
+                    { remoteAllowed: true },
+                ];
+            }
         }
 
-        const jobs = await Job.find(query).sort({ createdAt: -1 }).limit(100);
-        res.status(200).json({
+        const cacheKey = buildCacheKey('jobs:list', {
+            companyId: companyId || null,
+            countryFilter: countryFilter || null,
+            regionFilter: regionCandidates.length ? regionCandidates : null,
+            crossBorderEnabled,
+            page,
+            limit,
+            query,
+        });
+        const cached = await getJSON(cacheKey);
+        if (cached) {
+            return res.status(200).json(cached);
+        }
+
+        const [jobs, total] = await Promise.all([
+            Job.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+            Job.countDocuments(query),
+        ]);
+        const responsePayload = {
             success: true,
             count: jobs.length,
+            total,
+            page,
+            pages: Math.max(1, Math.ceil(total / limit)),
             data: jobs,
-        });
+        };
+        await setJSON(cacheKey, responsePayload, CACHE_TTL_SECONDS.jobs);
+        return res.status(200).json(responsePayload);
     } catch (error) {
         res.status(500).json({
             success: false,
@@ -217,7 +476,7 @@ const suggestRequirements = async (req, res) => {
             data: suggestions,
         });
     } catch (error) {
-        console.error('AI Suggestion Error:', error.message);
+        console.warn('AI Suggestion Error:', error.message);
         res.status(500).json({
             success: false,
             message: 'Failed to generate AI suggestions'
@@ -233,19 +492,19 @@ const clearJobMatches = async (jobId) => {
         // Clear from Redis
         if (redisClient && redisClient.isOpen) {
             const pattern = `match:${jobId}:*`;
-            console.log(`🗑️ [CLEANUP] Scanning Redis for pattern: ${pattern}`);
+            logger.info({ event: 'job_cache_cleanup_scan', pattern });
 
             const keys = await redisClient.keys(pattern);
             if (keys.length > 0) {
                 await redisClient.del(keys);
                 totalDeleted += keys.length;
-                console.log(`✅ [CLEANUP] Deleted ${keys.length} Redis cache entries`);
+                logger.info({ event: 'job_cache_cleanup_redis_deleted', deletedCount: keys.length, jobId: String(jobId) });
             } else {
-                console.log(`ℹ️ [CLEANUP] No Redis cache entries found for job ${jobId}`);
+                logger.info({ event: 'job_cache_cleanup_redis_none', jobId: String(jobId) });
             }
         }
     } catch (redisError) {
-        console.error('❌ [CLEANUP REDIS ERROR]:', redisError.message);
+        console.warn('❌ [CLEANUP REDIS ERROR]:', redisError.message);
         // Don't throw - continue to Map cleanup
     }
 
@@ -261,15 +520,15 @@ const clearJobMatches = async (jobId) => {
             }
             if (mapDeletedCount > 0) {
                 totalDeleted += mapDeletedCount;
-                console.log(`✅ [CLEANUP] Deleted ${mapDeletedCount} Map cache entries`);
+                logger.info({ event: 'job_cache_cleanup_map_deleted', deletedCount: mapDeletedCount, jobId: String(jobId) });
             }
         }
     } catch (mapError) {
-        console.error('❌ [CLEANUP MAP ERROR]:', mapError.message);
+        console.warn('❌ [CLEANUP MAP ERROR]:', mapError.message);
         // Don't throw - cache cleanup failure shouldn't block job deletion
     }
 
-    console.log(`🎯 [CLEANUP COMPLETE] Total cache entries cleared: ${totalDeleted}`);
+    logger.info({ event: 'job_cache_cleanup_complete', jobId: String(jobId), totalDeleted });
     return totalDeleted;
 };
 
@@ -290,10 +549,21 @@ const deleteJob = async (req, res) => {
         }
 
         // CRITICAL: Clear all cached matches for this job BEFORE deletion
-        console.log(`🗑️ [JOB DELETE] Clearing all matches for job ${job._id}...`);
+        logger.info({ event: 'job_delete_cache_cleanup_start', jobId: String(job._id) });
         const deletedCount = await clearJobMatches(job._id);
 
         await job.deleteOne();
+        await delByPattern('cache:jobs:*');
+        await delByPattern('cache:analytics:employer-summary:*');
+        void dispatchAsyncTask({
+            type: TASK_TYPES.MATCH_RECALCULATION,
+            payload: {
+                scope: 'job_deleted',
+                jobId: String(job._id),
+                employerId: String(req.user._id),
+            },
+            label: 'job_deleted_recalculation',
+        });
 
         res.status(200).json({
             success: true,
@@ -301,7 +571,7 @@ const deleteJob = async (req, res) => {
             cacheEntriesCleared: deletedCount
         });
     } catch (error) {
-        console.error('❌ [JOB DELETE ERROR]:', error.message);
+        console.warn('❌ [JOB DELETE ERROR]:', error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -331,20 +601,58 @@ const updateJob = async (req, res) => {
             salaryRange,
             location,
             requirements,
+            minSalary,
+            maxSalary,
+            remoteAllowed,
             status: requestedStatus,
             processingId,
         } = req.body;
 
-        job.title = title || job.title;
-        job.companyName = companyName || job.companyName;
-        job.salaryRange = salaryRange || job.salaryRange;
-        job.location = location || job.location;
+        const parsedMinSalary = parseSalaryValue(minSalary);
+        const parsedMaxSalary = parseSalaryValue(maxSalary);
+        if (
+            Number.isNaN(parsedMinSalary)
+            || Number.isNaN(parsedMaxSalary)
+            || (parsedMinSalary !== null && (parsedMinSalary < 0 || parsedMinSalary > MAX_SALARY_VALUE))
+            || (parsedMaxSalary !== null && (parsedMaxSalary < 0 || parsedMaxSalary > MAX_SALARY_VALUE))
+            || (parsedMinSalary !== null && parsedMaxSalary !== null && parsedMaxSalary < parsedMinSalary)
+        ) {
+            return res.status(400).json({ success: false, message: 'Invalid salary bounds' });
+        }
+
+        const safeTitle = title !== undefined ? sanitizeText(title, { maxLength: 120 }) : null;
+        const safeCompanyName = companyName !== undefined ? sanitizeText(companyName, { maxLength: 120 }) : null;
+        const safeSalaryRange = salaryRange !== undefined ? sanitizeText(salaryRange, { maxLength: 120 }) : null;
+        const safeLocation = location !== undefined ? sanitizeText(location, { maxLength: 120 }) : null;
+
+        if (safeTitle !== null) job.title = safeTitle || job.title;
+        if (safeCompanyName !== null) job.companyName = safeCompanyName || job.companyName;
+        if (safeSalaryRange !== null) job.salaryRange = safeSalaryRange || job.salaryRange;
+        if (safeLocation !== null) job.location = safeLocation || job.location;
+        if (parsedMinSalary !== null) job.minSalary = parsedMinSalary;
+        if (parsedMaxSalary !== null) job.maxSalary = parsedMaxSalary;
+        if (location || req.body?.countryCode) {
+            const geo = resolveJobGeo({
+                location: job.location,
+                countryCode: req.body?.countryCode || job.countryCode || req.user?.country || 'IN',
+            });
+            job.country = geo.countryCode;
+            job.region = String(req.body?.region || req.body?.regionCode || geo.regionCode || '').toUpperCase();
+            job.countryCode = geo.countryCode;
+            job.regionCode = String(req.body?.regionCode || geo.regionCode || '').toUpperCase();
+            job.currencyCode = String(req.body?.currencyCode || geo.currencyCode || '').toUpperCase();
+            job.languageCode = req.body?.languageCode || geo.languageCode;
+        }
+
+        if (remoteAllowed !== undefined) {
+            job.remoteAllowed = Boolean(remoteAllowed);
+        }
 
         // Handle requirements array from string or array
         if (requirements) {
             job.requirements = Array.isArray(requirements)
-                ? requirements
-                : requirements.split(',').map(s => s.trim());
+                ? requirements.map((entry) => sanitizeText(entry, { maxLength: 120 })).filter(Boolean)
+                : requirements.split(',').map((s) => sanitizeText(s, { maxLength: 120 })).filter(Boolean);
         }
 
         if (requestedStatus) {
@@ -375,6 +683,18 @@ const updateJob = async (req, res) => {
         }
 
         const updatedJob = await job.save();
+        await delByPattern('cache:jobs:*');
+        await delByPattern('cache:analytics:employer-summary:*');
+        void dispatchAsyncTask({
+            type: TASK_TYPES.MATCH_RECALCULATION,
+            payload: {
+                scope: 'job_updated',
+                jobId: String(updatedJob._id),
+                employerId: String(req.user._id),
+                status: String(updatedJob.status || 'unknown'),
+            },
+            label: 'job_updated_recalculation',
+        });
         const nextStatus = String(updatedJob.status || '').toLowerCase();
         if (previousStatus !== 'active' && nextStatus === 'active') {
             fireAndForget('markFirstJobActivatedOnce', () => markFirstJobActivatedOnce({
@@ -408,34 +728,34 @@ const updateJob = async (req, res) => {
             const [draftCount, confirmedCount] = await Promise.all([
                 InterviewProcessingJob.countDocuments({
                     userId: req.user._id,
-                    role: 'employer',
+                    role: EMPLOYER_PRIMARY_ROLE,
                     createdJobId: { $ne: null },
                 }),
                 InterviewProcessingJob.countDocuments({
                     userId: req.user._id,
-                    role: 'employer',
+                    role: EMPLOYER_PRIMARY_ROLE,
                     createdJobId: { $ne: null },
                     jobConfirmedAt: { $ne: null },
                 }),
             ]);
-            console.log(JSON.stringify({
+            logger.info({
                 metric: 'draft_job_confirmed',
                 processingId: String(processingId),
                 jobId: String(updatedJob._id),
                 signalFinalized,
                 correlationId: String(processingId),
-            }));
-            console.log(JSON.stringify({
+            });
+            logger.info({
                 metric: 'draft_to_confirm_ratio',
                 value: confirmedCount / Math.max(1, draftCount),
                 confirmedCount,
                 draftCount,
                 correlationId: String(processingId),
-            }));
+            });
             await publishMetric({
                 metricName: 'DraftToConfirmRatio',
                 value: confirmedCount / Math.max(1, draftCount),
-                role: 'employer',
+                role: EMPLOYER_PRIMARY_ROLE,
                 correlationId: String(processingId),
             });
         }
@@ -452,6 +772,8 @@ const updateJob = async (req, res) => {
 const getRecommendedJobs = async (req, res) => {
     try {
         const cityFilter = String(req.query.city || '').trim();
+        const countryFilter = normalizeCountryCode(req.query.country || req.user?.country || 'IN');
+        const regionFilter = String(req.query.region || '').trim().toUpperCase();
         const roleClusterFilter = String(req.query.roleCluster || '').trim();
         const requestedWorkerId = String(req.query.workerId || '').trim();
         const includePreferences = ['true', '1', 'yes', 'on'].includes(String(req.query.preferences || '').toLowerCase());
@@ -460,17 +782,17 @@ const getRecommendedJobs = async (req, res) => {
         let worker = null;
         if (requestedWorkerId) {
             worker = await WorkerProfile.findById(requestedWorkerId)
-                .populate('user', 'isVerified hasCompletedProfile')
+                .populate('user', 'isVerified hasCompletedProfile country globalPreferences')
                 .lean();
 
             if (!worker) {
                 worker = await WorkerProfile.findOne({ user: requestedWorkerId })
-                    .populate('user', 'isVerified hasCompletedProfile')
+                    .populate('user', 'isVerified hasCompletedProfile country globalPreferences')
                     .lean();
             }
         } else {
             worker = await WorkerProfile.findOne({ user: req.user._id })
-                .populate('user', 'isVerified hasCompletedProfile')
+                .populate('user', 'isVerified hasCompletedProfile country globalPreferences')
                 .lean();
         }
 
@@ -489,14 +811,32 @@ const getRecommendedJobs = async (req, res) => {
 
         const workerUser = worker.user?._id
             ? worker.user
-            : await User.findById(workerOwnerId).select('isVerified hasCompletedProfile').lean();
+            : await User.findById(workerOwnerId).select('isVerified hasCompletedProfile country globalPreferences').lean();
         const matchPreferences = includePreferences ? (worker.settings?.matchPreferences || {}) : {};
+        const crossBorderEnabled = isCrossBorderAllowed({
+            user: workerUser,
+            queryValue: req.query.crossBorder,
+        });
 
         const query = {
             isOpen: true,
             status: 'active',
             employerId: { $ne: workerOwnerId || req.user._id },
         };
+
+        if (!crossBorderEnabled) {
+            query.$or = [
+                { countryCode: countryFilter },
+                { country: countryFilter },
+                { remoteAllowed: true },
+            ];
+        } else if (regionFilter) {
+            query.$or = [
+                { regionCode: regionFilter },
+                { region: regionFilter },
+                { remoteAllowed: true },
+            ];
+        }
 
         if (cityFilter) {
             query.location = new RegExp(`^${cityFilter}$`, 'i');
@@ -536,6 +876,12 @@ const getRecommendedJobs = async (req, res) => {
             .limit(5000)
             .lean();
 
+        jobs = filterJobsByGeo({
+            jobs,
+            user: workerUser,
+            allowCrossBorder: crossBorderEnabled,
+        }).jobs;
+
         if (includePreferences) {
             const salaryMin = Number(matchPreferences.salaryExpectationMin);
             const salaryMax = Number(matchPreferences.salaryExpectationMax);
@@ -553,75 +899,87 @@ const getRecommendedJobs = async (req, res) => {
             }
         }
 
+        const intentFiltered = await filterJobsByApplyIntent({
+            worker,
+            jobs,
+        });
+        jobs = intentFiltered.jobs;
+
+        if (intentFiltered.blocked || jobs.length === 0) {
+            return res.json({
+                recommendedJobs: [],
+                matchModelVersionUsed: null,
+                appliedPreferences: includePreferences ? matchPreferences : null,
+            });
+        }
+
+        const intelligence = await buildMatchIntelligenceContext({
+            worker,
+            jobs,
+            cityHint: cityFilter || worker.city || null,
+        });
+        const dynamicThresholds = intelligence.dynamicThresholds || tierThresholdMap;
+
         const deterministic = matchEngineV2.rankJobsForWorker({
             worker,
             workerUser: workerUser || {},
             jobs,
             roleCluster: roleClusterFilter || null,
             maxResults: 300,
+            scoringContextResolver: (job) => intelligence.getScoringContextForJob(job),
         });
 
         const scored = [];
         let matchModelVersionUsed = null;
 
         for (const row of deterministic.matches) {
-            const probabilistic = await scoreSinglePair({
+            const overlaid = await applyOverlay({
+                deterministicScore: row,
                 worker,
-                workerUser: workerUser || {},
                 job: row.job,
-                roleData: row.roleData,
-                deterministicScores: row.deterministicScores,
-            });
-
-            if (probabilistic.fallbackUsed) {
-                scored.push({
-                    ...row,
-                    matchProbability: row.finalScore,
-                    tier: row.tier,
-                    tierLabel: row.tierLabel,
-                    matchModelVersionUsed: probabilistic.modelVersionUsed,
-                    explainability: {
-                        ...(row.explainability || {}),
-                        matchProbability: row.finalScore,
-                    },
-                });
-                continue;
-            }
-
-            matchModelVersionUsed = probabilistic.modelVersionUsed;
-            if (probabilistic.tier === 'REJECT') continue;
-
-            scored.push({
-                ...row,
-                finalScore: probabilistic.matchProbability,
-                matchScore: Math.round(probabilistic.matchProbability * 100),
-                matchProbability: probabilistic.matchProbability,
-                tier: probabilistic.tier,
-                tierLabel: probabilistic.tierLabel,
-                matchModelVersionUsed: probabilistic.modelVersionUsed,
-                explainability: {
-                    ...(row.explainability || {}),
-                    ...(probabilistic.explainability || {}),
+                model: {
+                    user: req.user,
+                    workerUser: workerUser || {},
+                    roleData: row.roleData,
+                    deterministicScores: row.deterministicScores,
                 },
             });
+
+            if (!overlaid) {
+                continue;
+            }
+            if (overlaid.matchModelVersionUsed) {
+                matchModelVersionUsed = overlaid.matchModelVersionUsed;
+            }
+            scored.push(overlaid);
         }
 
         scored.sort(matchEngineV2.sortScoredMatches);
         const minTier = String(matchPreferences.minimumMatchTier || 'POSSIBLE').toUpperCase();
+        const thresholdMap = {
+            STRONG: Number(dynamicThresholds.STRONG || tierThresholdMap.STRONG),
+            GOOD: Number(dynamicThresholds.GOOD || tierThresholdMap.GOOD),
+            POSSIBLE: Number(dynamicThresholds.POSSIBLE || tierThresholdMap.POSSIBLE),
+        };
         const minThreshold = includePreferences
-            ? (tierThresholdMap[minTier] || tierThresholdMap.POSSIBLE)
-            : tierThresholdMap.POSSIBLE;
+            ? (thresholdMap[minTier] || thresholdMap.POSSIBLE)
+            : thresholdMap.POSSIBLE;
         const topRows = scored.filter((row) => (row.matchProbability ?? row.finalScore) >= minThreshold).slice(0, 20);
+        const matchUiV1Enabled = isMatchUiV1Enabled(req.user);
 
-        const responseRows = topRows.map((row) => ({
+        const responseRows = topRows.map((row) => {
+            const probability = Number(row.matchProbability ?? row.finalScore ?? 0);
+            const resolvedTier = matchEngineV2.mapTier(probability, dynamicThresholds);
+            return ({
             job: row.job,
             matchScore: row.matchScore,
-            matchProbability: row.matchProbability ?? row.finalScore,
-            tier: row.tier,
-            tierLabel: row.tierLabel || matchEngineV2.toLegacyTierLabel(row.tier),
+            matchProbability: probability,
+            tier: resolvedTier,
+            tierLabel: matchEngineV2.toLegacyTierLabel(resolvedTier),
             matchModelVersionUsed: row.matchModelVersionUsed || matchModelVersionUsed,
-            explainability: row.explainability || {},
-        }));
+            explainability: matchUiV1Enabled ? (row.explainability || {}) : {},
+            });
+        });
 
         setImmediate(() => {
             logRecommendedRun({
@@ -661,13 +1019,23 @@ const getRecommendedJobs = async (req, res) => {
             });
         });
 
+        fireAndForget('trackRecommendedJobsUsage', () => recordFeatureUsage({
+            userId: workerOwnerId || req.user._id,
+            featureKey: 'recommended_jobs_viewed',
+            metadata: {
+                totalReturned: responseRows.length,
+                countryCode: countryFilter,
+                regionCode: regionFilter || null,
+            },
+        }), { userId: String(workerOwnerId || req.user._id) });
+
         return res.json({
             recommendedJobs: responseRows,
             matchModelVersionUsed,
             appliedPreferences: includePreferences ? matchPreferences : null,
         });
     } catch (error) {
-        console.error('Recommended jobs failed:', error);
+        console.warn('Recommended jobs failed:', error);
         return res.status(500).json({ message: 'Failed to fetch recommended jobs' });
     }
 };

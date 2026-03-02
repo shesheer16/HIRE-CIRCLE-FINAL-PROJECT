@@ -143,6 +143,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-    console.error('[trainModel] failed:', error.message);
+    console.warn('[trainModel] failed:', error.message);
     process.exit(1);
 });

@@ -1,18 +1,28 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 
-const EmptyState = ({ title, message, icon, actionLabel, onAction }) => {
+const EmptyState = ({ title, message, subtitle, icon = '📭', actionLabel, action, onAction }) => {
+    const resolvedMessage = subtitle || message;
+    const resolvedActionLabel = action?.label || actionLabel;
+    const resolvedAction = action?.onPress || onAction;
+
     return (
         <View style={styles.container}>
-            {icon && <View style={styles.iconContainer}>{icon}</View>}
+            {icon ? (
+                <View style={styles.iconContainer}>
+                    {typeof icon === 'string'
+                        ? <Text style={styles.iconEmoji}>{icon}</Text>
+                        : icon}
+                </View>
+            ) : null}
 
             <Text style={styles.title}>{title}</Text>
 
-            {message && <Text style={styles.message}>{message}</Text>}
+            {resolvedMessage ? <Text style={styles.message}>{resolvedMessage}</Text> : null}
 
-            {actionLabel && onAction && (
-                <TouchableOpacity style={styles.button} onPress={onAction}>
-                    <Text style={styles.buttonText}>{actionLabel}</Text>
+            {resolvedActionLabel && resolvedAction && (
+                <TouchableOpacity style={styles.button} onPress={resolvedAction}>
+                    <Text style={styles.buttonText}>{resolvedActionLabel}</Text>
                 </TouchableOpacity>
             )}
         </View>
@@ -24,37 +34,46 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 40,
+        paddingHorizontal: 32,
+        paddingVertical: 40,
         minHeight: 300,
     },
     iconContainer: {
-        marginBottom: 20,
-        opacity: 0.8
+        marginBottom: 16,
+        opacity: 0.72,
+    },
+    iconEmoji: {
+        fontSize: 36,
     },
     title: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#333',
-        marginBottom: 10,
-        textAlign: 'center'
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: 8,
+        textAlign: 'center',
     },
     message: {
-        fontSize: 16,
-        color: '#666',
+        fontSize: 14,
+        color: '#64748b',
         textAlign: 'center',
-        lineHeight: 24,
-        marginBottom: 30
+        lineHeight: 20,
+        marginBottom: 24,
     },
     button: {
-        backgroundColor: '#007BFF',
+        backgroundColor: '#7c3aed',
         paddingHorizontal: 24,
-        paddingVertical: 12,
-        borderRadius: 8,
+        paddingVertical: 14,
+        borderRadius: 12,
+        shadowColor: '#7c3aed',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
+        elevation: 3,
     },
     buttonText: {
-        color: '#FFF',
-        fontSize: 16,
-        fontWeight: '600'
+        color: '#ffffff',
+        fontSize: 15,
+        fontWeight: '600',
     }
 });
 

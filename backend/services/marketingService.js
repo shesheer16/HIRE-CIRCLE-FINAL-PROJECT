@@ -1,6 +1,7 @@
 const User = require('../models/userModel');
+const logger = require('../utils/logger');
 
-// A/B Testing weights (Mock implementation)
+// A/B testing weights for welcome subject line.
 const getEmailSubjectId = (userId) => {
     // 50/50 split based on even/odd last char of Mongo ID
     const lastChar = userId.toString().slice(-1);
@@ -12,7 +13,11 @@ const sendEmail = async (user, template, context) => {
 
     // Abstracted Mail Service Logic (SendGrid/AWS SES config would go here)
     if (!isProd) {
-        console.log(`[DEV MAIL] Would send template '${template}' to ${user.email}`);
+        logger.info({
+            event: 'dev_mail_preview',
+            template,
+            email: user.email,
+        });
         return true;
     }
 
@@ -22,7 +27,7 @@ const sendEmail = async (user, template, context) => {
         // ...
         return true;
     } catch (error) {
-        console.error("Email service error:", error);
+        console.warn("Email service error:", error);
         return false;
     }
 }
@@ -44,7 +49,7 @@ const checkInactivityTriggers = async () => {
     try {
         // Find users whose updatedAt is older than 7 days
         const inactiveUsers = await User.find({ updatedAt: { $lt: sevenDaysAgo } });
-        console.log(`[CRON] Found ${inactiveUsers.length} inactive users for re-engagement.`);
+        logger.info({ event: 'marketing_inactive_users_found', count: inactiveUsers.length });
 
         for (const user of inactiveUsers) {
             await sendEmail(user, 'we_miss_you', {
@@ -54,7 +59,7 @@ const checkInactivityTriggers = async () => {
             await User.updateOne({ _id: user._id }, { $set: { updatedAt: new Date() } });
         }
     } catch (e) {
-        console.error("Inactivity Trigger Error:", e);
+        console.warn("Inactivity Trigger Error:", e);
     }
 }
 

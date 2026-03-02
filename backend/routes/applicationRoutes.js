@@ -1,6 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
+const { validate } = require('../middleware/validate');
+const { applyJobLimiter } = require('../middleware/rateLimiters');
+const { validateApplicationTransition } = require('../middleware/applicationTransitionGuard');
+const { applicationCreateSchema, applicationStatusUpdateSchema } = require('../schemas/requestSchemas');
+const { trustGuard } = require('../middleware/trustGuardMiddleware');
+const { abuseDefenseGuard } = require('../middleware/abuseDefenseMiddleware');
 const { sendRequest, updateStatus, getApplications, getApplicationById } = require('../controllers/applicationController');
 
 /**
@@ -31,13 +37,18 @@ const { sendRequest, updateStatus, getApplications, getApplicationById } = requi
  *         description: Application not found
  */
 router.route('/')
-    .post(protect, sendRequest)
+    .post(protect, trustGuard('application_submit'), abuseDefenseGuard('application_submit'), applyJobLimiter, validate({ body: applicationCreateSchema }), sendRequest)
     .get(protect, getApplications);
 
 router.route('/:id')
     .get(protect, getApplicationById);
 
 router.route('/:id/status')
-    .put(protect, updateStatus);
+    .put(
+        protect,
+        validate({ body: applicationStatusUpdateSchema }),
+        validateApplicationTransition,
+        updateStatus
+    );
 
 module.exports = router;

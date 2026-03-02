@@ -179,6 +179,100 @@ const feedPostsAtScale = generateFeedPosts(SCALE.feedPosts);
 const circlesAtScale = generateCircles(SCALE.circles);
 const bountiesAtScale = generateBounties(SCALE.bounties, jobsAtScale);
 
+const DEFAULT_SETTINGS = {
+    accountInfo: {
+        name: demoUser.name || 'Demo User',
+        email: demoUser.email || 'demo@hirecircle.in',
+        emailReadOnly: false,
+        phoneNumber: '+919876543210',
+        city: demoProfile.city || 'Hyderabad',
+        role: demoUser.primaryRole || 'worker',
+        experienceLevel: demoProfile.totalExperience || 3,
+        skillTags: (demoProfile.roleProfiles?.[0]?.skills || ['Warehouse', 'Dispatch']),
+        profilePhoto: null,
+    },
+    notificationPreferences: {
+        pushEnabled: true,
+        smsEnabled: false,
+        emailEnabled: true,
+        notifyNewJobRecommendations: true,
+        notifyInterviewReady: true,
+        notifyApplicationStatus: true,
+        notifyPromotions: true,
+    },
+    privacyPreferences: {
+        profileVisibleToEmployers: true,
+        showSalaryExpectation: true,
+        showInterviewBadge: true,
+        showLastActive: true,
+        allowLocationSharing: true,
+        locationVisibilityRadiusKm: 25,
+    },
+    matchPreferences: {
+        maxCommuteDistanceKm: 25,
+        salaryExpectationMin: 25000,
+        salaryExpectationMax: 45000,
+        preferredShiftTimes: ['Flexible'],
+        roleClusters: ['Warehouse', 'Dispatch'],
+        minimumMatchTier: 'GOOD',
+    },
+    security: {
+        twoFactorEnabled: false,
+        twoFactorMethod: 'email',
+        linkedAccounts: {
+            google: false,
+            apple: false,
+            emailPassword: true,
+        },
+    },
+    featureToggles: {
+        FEATURE_MATCH_UI_V1: true,
+        FEATURE_PROBABILISTIC_MATCH: true,
+        FEATURE_COLD_START_BOOST_SUGGESTIONS: false,
+        FEATURE_MATCH_ALERTS: true,
+        FEATURE_SETTINGS_ADVANCED: true,
+        FEATURE_DETAILED_JOB_ANALYTICS: false,
+        FEATURE_SMART_PUSH_TIMING: false,
+    },
+    canViewAdvanced: true,
+};
+
+const DEFAULT_BILLING_OVERVIEW = {
+    planName: 'pro',
+    billingPeriod: 'monthly',
+    nextPaymentDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'active',
+    planUsageSummary: {
+        activeJobs: 4,
+        availableCredits: 12,
+        invoicesLast30d: 3,
+        spendLast30dInr: 1497,
+    },
+    planLimits: {
+        activeJobs: 25,
+        monthlyBoostCredits: 20,
+    },
+};
+
+const DEFAULT_INVOICES = [
+    {
+        invoiceId: 'demo-inv-1',
+        eventType: 'subscription_charge',
+        amountInr: 499,
+        currency: 'inr',
+        status: 'succeeded',
+        issuedAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+        invoiceId: 'demo-inv-2',
+        eventType: 'boost_purchase',
+        amountInr: 499,
+        currency: 'inr',
+        status: 'succeeded',
+        issuedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+];
+
 const state = {
     profile: DEEP_CLONE(demoProfile),
     jobs: DEEP_CLONE(jobsAtScale),
@@ -189,6 +283,9 @@ const state = {
     bounties: DEEP_CLONE(bountiesAtScale),
     enrolledCourses: DEEP_CLONE(mockEnrolledCourses),
     interviewProcessingJobs: {},
+    settings: DEEP_CLONE(DEFAULT_SETTINGS),
+    billingOverview: DEEP_CLONE(DEFAULT_BILLING_OVERVIEW),
+    invoices: DEEP_CLONE(DEFAULT_INVOICES),
 };
 
 let interviewDraftCounter = 1;
@@ -377,6 +474,119 @@ export const getMockApiResponse = (config = {}) => {
         return makeResponse(config, { success: true, profile: state.profile });
     }
 
+    if (method === 'get' && path === '/api/settings') {
+        return makeResponse(config, {
+            ...DEEP_CLONE(state.settings),
+            billingOverview: DEEP_CLONE(state.billingOverview),
+        });
+    }
+
+    if (method === 'put' && path === '/api/settings') {
+        state.settings = {
+            ...state.settings,
+            ...(body.accountInfo ? {
+                accountInfo: {
+                    ...state.settings.accountInfo,
+                    ...body.accountInfo,
+                },
+            } : {}),
+            ...(body.notificationPreferences ? {
+                notificationPreferences: {
+                    ...state.settings.notificationPreferences,
+                    ...body.notificationPreferences,
+                },
+            } : {}),
+            ...(body.privacyPreferences ? {
+                privacyPreferences: {
+                    ...state.settings.privacyPreferences,
+                    ...body.privacyPreferences,
+                },
+            } : {}),
+            ...(body.matchPreferences ? {
+                matchPreferences: {
+                    ...state.settings.matchPreferences,
+                    ...body.matchPreferences,
+                },
+            } : {}),
+            ...(body.featureToggles ? {
+                featureToggles: {
+                    ...state.settings.featureToggles,
+                    ...body.featureToggles,
+                },
+            } : {}),
+        };
+
+        return makeResponse(config, {
+            success: true,
+            changedFields: Object.keys(body || {}),
+            settings: DEEP_CLONE(state.settings),
+        });
+    }
+
+    if (method === 'post' && path === '/api/settings/notification-preferences') {
+        state.settings.notificationPreferences = {
+            ...state.settings.notificationPreferences,
+            ...body,
+        };
+        return makeResponse(config, {
+            success: true,
+            notificationPreferences: DEEP_CLONE(state.settings.notificationPreferences),
+        });
+    }
+
+    if (method === 'post' && path === '/api/settings/privacy') {
+        state.settings.privacyPreferences = {
+            ...state.settings.privacyPreferences,
+            ...body,
+        };
+        return makeResponse(config, {
+            success: true,
+            privacyPreferences: DEEP_CLONE(state.settings.privacyPreferences),
+        });
+    }
+
+    if (method === 'post' && path === '/api/settings/security') {
+        state.settings.security = {
+            ...state.settings.security,
+            ...body,
+            linkedAccounts: {
+                ...state.settings.security.linkedAccounts,
+                ...(body.linkedAccounts || {}),
+            },
+        };
+        return makeResponse(config, {
+            success: true,
+            security: DEEP_CLONE(state.settings.security),
+        });
+    }
+
+    if (method === 'post' && path === '/api/settings/data-download') {
+        return makeResponse(config, {
+            success: true,
+            requestId: `demo-export-${Date.now()}`,
+            status: 'ready',
+            downloadUrl: 'https://example.com/demo/settings-export.json',
+        }, 202);
+    }
+
+    if (method === 'delete' && path === '/api/settings/account') {
+        return makeResponse(config, { success: true, message: 'Account deleted (demo).' });
+    }
+
+    if (method === 'get' && path === '/api/settings/billing-overview') {
+        return makeResponse(config, {
+            success: true,
+            billingOverview: DEEP_CLONE(state.billingOverview),
+        });
+    }
+
+    if (method === 'get' && path === '/api/settings/invoices') {
+        return makeResponse(config, {
+            success: true,
+            invoices: DEEP_CLONE(state.invoices),
+        });
+    }
+
     if (method === 'delete' && path === '/api/users/delete') {
         return makeResponse(config, { success: true });
     }
@@ -390,18 +600,28 @@ export const getMockApiResponse = (config = {}) => {
     }
 
     if (method === 'get' && path === '/api/jobs/recommended') {
-        const recommendedJobs = buildRecommendedJobs({
+        let recommendedJobs = buildRecommendedJobs({
             city: params.city,
             roleCluster: params.roleCluster,
         });
 
+        const includePreferences = ['true', '1', 'yes', 'on'].includes(String(params.preferences || '').toLowerCase());
+        if (includePreferences) {
+            const minTier = String(state.settings?.matchPreferences?.minimumMatchTier || 'POSSIBLE').toUpperCase();
+            const tierRank = { STRONG: 3, GOOD: 2, POSSIBLE: 1, REJECT: 0 };
+            const minRank = tierRank[minTier] || 1;
+
+            recommendedJobs = recommendedJobs.filter((row) => (tierRank[String(row.tier || '').toUpperCase()] || 0) >= minRank);
+        }
+
         return makeResponse(config, {
             recommendedJobs,
             matchModelVersionUsed: 'demo-v1',
+            appliedPreferences: includePreferences ? DEEP_CLONE(state.settings?.matchPreferences || {}) : null,
         });
     }
 
-    if (method === 'get' && (path === '/api/matches/probability' || path === '/api/match/probability')) {
+    if (method === 'get' && path === '/api/matches/probability') {
         const jobId = String(params.jobId || '');
         const index = state.jobs.findIndex((job) => String(job?._id) === jobId);
         const probability = clamp(index >= 0 ? 0.91 - (index * 0.017) : 0.74, 0.45, 0.99);

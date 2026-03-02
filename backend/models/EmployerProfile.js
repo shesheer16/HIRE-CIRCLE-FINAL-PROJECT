@@ -14,9 +14,23 @@ const employerProfileSchema = mongoose.Schema(
         industry: {
             type: String
         },
+        description: {
+            type: String,
+            default: '',
+        },
         location: {
             type: String,
             required: true
+        },
+        contactPerson: {
+            type: String,
+            default: '',
+        },
+        country: {
+            type: String,
+            default: 'IN',
+            uppercase: true,
+            index: true,
         },
         logoUrl: {
             type: String
@@ -33,6 +47,8 @@ const employerProfileSchema = mongoose.Schema(
         timestamps: true,
     }
 );
+
+employerProfileSchema.index({ user: 1 });
 
 const EmployerProfile = mongoose.model('EmployerProfile', employerProfileSchema);
 

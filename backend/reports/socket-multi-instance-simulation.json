@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-03-02T04:41:31.506Z",
+  "instances": 2,
+  "adapter": {
+    "instanceA": {
+      "enabled": false,
+      "reason": "redis_url_missing"
+    },
+    "instanceB": {
+      "enabled": false,
+      "reason": "redis_url_missing"
+    }
+  },
+  "crossInstanceChecks": {
+    "dedupe": {
+      "firstWasDuplicate": false,
+      "secondWasDuplicate": true,
+      "passed": true
+    },
+    "rateLimit": {
+      "sequence": [
+        true,
+        true,
+        true,
+        false
+      ],
+      "passed": true
+    }
+  },
+  "passed": true
+}

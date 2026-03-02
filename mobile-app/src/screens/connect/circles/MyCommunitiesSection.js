@@ -2,7 +2,7 @@ import React, { memo, useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { IconCheck } from '../../../components/Icons';
 import CircleCard from './CircleCard';
-import { theme } from '../../../theme/theme';
+import { connectPalette } from '../connectPalette';
 
 function MyCommunitiesSectionComponent({ circles, onOpenCircle }) {
     const cards = useMemo(() => (
@@ -21,7 +21,7 @@ function MyCommunitiesSectionComponent({ circles, onOpenCircle }) {
     return (
         <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
-                <IconCheck size={16} color={theme.primary} />
+                <IconCheck size={16} color={connectPalette.accent} />
                 <Text style={styles.sectionTitle}>MY COMMUNITIES</Text>
             </View>
             {cards}
@@ -43,8 +43,8 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         letterSpacing: 1,
     },
 });

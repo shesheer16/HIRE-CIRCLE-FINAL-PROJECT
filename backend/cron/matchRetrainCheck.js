@@ -7,10 +7,13 @@ const MatchModelReport = require('../models/MatchModelReport');
 const Notification = require('../models/Notification');
 const User = require('../models/userModel');
 const { getMatchPerformanceAlerts } = require('../services/matchMetricsService');
+const { executeWithCircuitBreaker } = require('../services/circuitBreakerService');
 const { getMatchQualityTargets } = require('../config/matchQualityTargets');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ratio = (num, den) => (den > 0 ? num / den : 0);
+const ADMIN_BATCH_SIZE = 500;
+const ADMIN_HARD_CAP = 5000;
 
 const evaluateRetrainNeed = ({
     currentHireRate,
@@ -83,12 +86,41 @@ const computeWindowMetrics = async ({ from, to }) => {
 };
 
 const emitAdminAlert = async ({ title, message, payload }) => {
-    const admins = await User.find({ isAdmin: true }).select('_id').lean();
-    if (!admins.length) return 0;
+    const adminIds = [];
+    let lastSeenId = null;
+
+    while (adminIds.length < ADMIN_HARD_CAP) {
+        const remaining = ADMIN_HARD_CAP - adminIds.length;
+        const batch = await User.find({
+            isAdmin: true,
+            ...(lastSeenId ? { _id: { $gt: lastSeenId } } : {}),
+        })
+            .select('_id')
+            .sort({ _id: 1 })
+            .limit(Math.min(ADMIN_BATCH_SIZE, remaining))
+            .lean();
+
+        if (!batch.length) break;
+
+        adminIds.push(...batch.map((row) => row._id));
+        lastSeenId = batch[batch.length - 1]._id;
+    }
+
+    if (adminIds.length >= ADMIN_HARD_CAP && lastSeenId) {
+        const hasMoreAdmins = await User.findOne({
+            isAdmin: true,
+            _id: { $gt: lastSeenId },
+        }).select('_id').lean();
+        if (hasMoreAdmins) {
+            console.warn(`[match-retrain-check] admin alert hard cap reached at ${ADMIN_HARD_CAP}; additional admins skipped`);
+        }
+    }
+
+    if (!adminIds.length) return 0;
 
     await Notification.insertMany(
-        admins.map((adminUser) => ({
-            user: adminUser._id,
+        adminIds.map((adminUserId) => ({
+            user: adminUserId,
             type: 'status_update',
             title,
             message,
@@ -101,7 +133,7 @@ const emitAdminAlert = async ({ title, message, payload }) => {
         { ordered: false }
     );
 
-    return admins.length;
+    return adminIds.length;
 };
 
 const triggerRetrain = async ({ reason, context }) => {
@@ -118,14 +150,22 @@ const triggerRetrain = async ({ reason, context }) => {
         }
         : { 'Content-Type': 'application/json' };
 
-    await axios.post(
-        triggerUrl,
+    await executeWithCircuitBreaker(
+        'external_api',
+        async () => axios.post(
+            triggerUrl,
+            {
+                reason,
+                context,
+                triggeredAt: new Date().toISOString(),
+            },
+            { headers, timeout: 10000 }
+        ),
         {
-            reason,
-            context,
-            triggeredAt: new Date().toISOString(),
-        },
-        { headers, timeout: 10000 }
+            failureThreshold: Number.parseInt(process.env.EXTERNAL_API_CIRCUIT_FAILURE_THRESHOLD || '4', 10),
+            cooldownMs: Number.parseInt(process.env.EXTERNAL_API_CIRCUIT_COOLDOWN_MS || String(45 * 1000), 10),
+            timeoutMs: Number.parseInt(process.env.EXTERNAL_API_CIRCUIT_TIMEOUT_MS || '10000', 10),
+        }
     );
 
     return { triggered: true, mode: 'webhook', message: 'Retrain trigger dispatched' };
@@ -268,7 +308,7 @@ const main = async () => {
 
 if (require.main === module) {
     main().catch((error) => {
-        console.error('[match-retrain-check] failed:', error.message);
+        console.warn('[match-retrain-check] failed:', error.message);
         process.exit(1);
     });
 }

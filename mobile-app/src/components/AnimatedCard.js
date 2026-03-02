@@ -1,27 +1,46 @@
 import React, { useRef } from 'react';
-import { Animated, TouchableWithoutFeedback } from 'react-native';
+import { Animated, Easing, TouchableWithoutFeedback } from 'react-native';
 import { triggerHaptic } from '../utils/haptics';
+import { MOTION } from '../theme/motion';
 
 export const AnimatedCard = ({ children, onPress, onLongPress, style }) => {
     const scale = useRef(new Animated.Value(1)).current;
+    const translateY = useRef(new Animated.Value(0)).current;
 
     const handlePressIn = () => {
-        Animated.spring(scale, {
-            toValue: 0.96,
-            useNativeDriver: true,
-            tension: 150,
-            friction: 4
-        }).start();
+        Animated.parallel([
+            Animated.timing(scale, {
+                toValue: 0.98,
+                duration: MOTION.pressInMs,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: true,
+            }),
+            Animated.timing(translateY, {
+                toValue: 1,
+                duration: MOTION.pressInMs,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: true,
+            }),
+        ]).start();
         triggerHaptic.light();
     };
 
     const handlePressOut = () => {
-        Animated.spring(scale, {
-            toValue: 1,
-            useNativeDriver: true,
-            tension: 100,
-            friction: 5
-        }).start();
+        Animated.parallel([
+            Animated.spring(scale, {
+                toValue: 1,
+                stiffness: MOTION.modalSpring.stiffness,
+                damping: MOTION.modalSpring.damping,
+                mass: MOTION.modalSpring.mass,
+                useNativeDriver: true,
+            }),
+            Animated.timing(translateY, {
+                toValue: 0,
+                duration: MOTION.pressOutMs,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: true,
+            }),
+        ]).start();
     };
 
     return (
@@ -32,7 +51,7 @@ export const AnimatedCard = ({ children, onPress, onLongPress, style }) => {
             onLongPress={onLongPress}
             delayPressIn={10}
         >
-            <Animated.View style={[{ transform: [{ scale }] }, style]}>
+            <Animated.View style={[{ transform: [{ scale }, { translateY }] }, style]}>
                 {children}
             </Animated.View>
         </TouchableWithoutFeedback>

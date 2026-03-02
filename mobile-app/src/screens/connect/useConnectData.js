@@ -4,108 +4,11 @@ import client from '../../api/client';
 import { AuthContext } from '../../context/AuthContext';
 import { DEMO_MODE } from '../../config';
 
-const MOCK_POSTS = [
-    {
-        _id: 'p1',
-        type: 'text',
-        author: 'Amir Khan',
-        role: 'Construction Lead',
-        time: 'Just now',
-        karma: 450,
-        text: 'Any electricians available for a quick site inspection in Banjara Hills? Emergency fix needed.',
-        likes: 12,
-        comments: 3,
-        vouched: false,
-        avatar: 'https://i.pravatar.cc/150?u=amir',
-    },
-    {
-        _id: 'p2',
-        type: 'voice',
-        author: 'Sunil Driver',
-        role: 'Heavy Vehicle Expert',
-        time: '3h ago',
-        karma: 1200,
-        text: 'Completed the 800km run. Truck maintained perfectly. Maintenance is key!',
-        likes: 156,
-        comments: 24,
-        vouched: true,
-        duration: '0:15',
-        avatar: 'https://i.pravatar.cc/150?u=sunil',
-    },
-    {
-        _id: 'p3',
-        type: 'bounty',
-        author: 'LogiTech Corp',
-        role: 'Verified Employer',
-        time: '5h ago',
-        karma: 0,
-        text: 'Refer a Senior Warehouse Manager. Bonus paid upon successful 30-day onboarding.',
-        likes: 89,
-        comments: 45,
-        vouched: false,
-        reward: '₹2,000',
-        avatar: 'https://ui-avatars.com/api/?name=LogiTech&background=7c3aed&color=fff',
-    },
-];
-
-const MOCK_CIRCLES = [
-    {
-        _id: 'c1',
-        name: 'Heavy Haulers India',
-        category: 'Logistics',
-        members: '12.5k',
-        online: 142,
-        desc: 'Discuss routes, tolls, and vehicle maintenance tips for long-haul drivers.',
-        topics: ['Route Advice', 'Toll Updates', 'Mechanic Referrals'],
-        rates: [
-            { service: '10-Ton Truck (Per KM)', price: '₹35 - ₹40' },
-            { service: 'Waiting Charge (Per Hour)', price: '₹200' },
-            { service: 'Helper Daily Wage', price: '₹800' },
-        ],
-    },
-    {
-        _id: 'c2',
-        name: 'Hyderabad Electricians',
-        category: 'Trades',
-        members: '3.2k',
-        online: 45,
-        desc: 'Union news, rate cards, and helper availability for local electricians.',
-        topics: ['Daily Rates', 'Helper Needed', 'License Renewals'],
-        rates: [
-            { service: 'Fan Installation', price: '₹250' },
-            { service: 'Full House Wiring (2BHK)', price: '₹15,000' },
-            { service: 'Site Visit / Inspection', price: '₹300' },
-        ],
-    },
-    {
-        _id: 'c3',
-        name: 'Last-Mile Delivery',
-        category: 'Logistics',
-        members: '45k',
-        online: 1200,
-        desc: 'Community for Swiggy, Zomato, and Amazon delivery partners.',
-        topics: ['Incentive Hacks', 'Bike Repair', 'Traffic Alerts'],
-        rates: [],
-    },
-];
-
-const FALLBACK_BOUNTIES = [
-    { id: 1, company: 'Zomato', logoLetter: 'Z', logoBg: '#ef4444', role: 'Operations Lead', bonus: '₹5,000', bonusValue: 5000, expiresInDays: 2, totalPot: '₹50,000', referrals: 12, category: 'Operations' },
-    { id: 2, company: 'Delhivery', logoLetter: 'D', logoBg: '#2563eb', role: 'Senior HMV Driver', bonus: '₹3,500', bonusValue: 3500, expiresInDays: 5, totalPot: '₹35,000', referrals: 8, category: 'Driving' },
-    { id: 3, company: 'Amazon', logoLetter: 'A', logoBg: '#f59e0b', role: 'Warehouse Supervisor', bonus: '₹8,000', bonusValue: 8000, expiresInDays: 7, totalPot: '₹80,000', referrals: 22, category: 'Warehouse' },
-    { id: 4, company: 'Swiggy', logoLetter: 'S', logoBg: '#f97316', role: 'City Delivery Partner', bonus: '₹2,000', bonusValue: 2000, expiresInDays: 1, totalPot: '₹20,000', referrals: 45, category: 'Delivery' },
-    { id: 5, company: 'BigBasket', logoLetter: 'B', logoBg: '#16a34a', role: 'Store Inventory Staff', bonus: '₹4,000', bonusValue: 4000, expiresInDays: 10, totalPot: '₹40,000', referrals: 6, category: 'Operations' },
-    { id: 6, company: 'LogiTech Corp', logoLetter: 'L', logoBg: '#7c3aed', role: 'Fleet Coordinator', bonus: '₹6,500', bonusValue: 6500, expiresInDays: 3, totalPot: '₹65,000', referrals: 18, category: 'Logistics' },
-];
+const INITIAL_FEED_POSTS = [];
 
 export const CONNECT_TABS = ['Feed', 'Pulse', 'Academy', 'Circles', 'Bounties'];
-export const CURRENT_USER = { avatar: 'https://i.pravatar.cc/150?img=11', name: 'Lokesh' };
-export const ACADEMY_MENTORS = [
-    { id: 1, name: 'Suresh V.', exp: '20y', skill: 'Heavy Transport', rating: 4.9, sessions: 340, avatar: 'https://i.pravatar.cc/150?u=suresh' },
-    { id: 2, name: 'Kavya S.', exp: '12y', skill: 'Electrical Work', rating: 4.8, sessions: 215, avatar: 'https://i.pravatar.cc/150?u=kavya' },
-    { id: 3, name: 'Anand R.', exp: '8y', skill: 'Warehouse Ops', rating: 4.7, sessions: 180, avatar: 'https://i.pravatar.cc/150?u=anandrao' },
-    { id: 4, name: 'Meena J.', exp: '15y', skill: 'HR & Placement', rating: 5.0, sessions: 95, avatar: 'https://i.pravatar.cc/150?u=meena' },
-];
+export const CURRENT_USER = { avatar: 'https://ui-avatars.com/api/?name=You&background=8b3dff&color=fff&rounded=true', name: 'You' };
+export const ACADEMY_MENTORS = [];
 
 const timeAgo = (dateString) => {
     if (!dateString) return 'Just now';
@@ -120,23 +23,20 @@ const timeAgo = (dateString) => {
     return `${diffDays}d ago`;
 };
 
-const firstSalaryNumber = (value = '') => {
-    const match = String(value).replace(/,/g, '').match(/\d+/);
-    return match ? Number(match[0]) : 0;
-};
-
 export function useConnectData() {
     const { userInfo } = useContext(AuthContext);
+    const currentUserId = String(userInfo?._id || '');
 
     const [activeTab, setActiveTab] = useState('Feed');
     const [showMyProfile, setShowMyProfile] = useState(false);
 
-    const [joinedCircles, setJoinedCircles] = useState(new Set(['c1']));
+    const [joinedCircles, setJoinedCircles] = useState(new Set());
     const [selectedCircle, setSelectedCircle] = useState(null);
     const [circleDetailTab, setCircleDetailTab] = useState('DISCUSSION');
     const [chatText, setChatText] = useState('');
     const [circlesData, setCirclesData] = useState([]);
     const [circleMessages, setCircleMessages] = useState([]);
+    const [circleMembers, setCircleMembers] = useState([]);
     const [isCircleRecording, setIsCircleRecording] = useState(false);
     const [circleCustomRates, setCircleCustomRates] = useState([]);
     const [showCircleRateForm, setShowCircleRateForm] = useState(false);
@@ -157,6 +57,7 @@ export function useConnectData() {
     const [pulseToast, setPulseToast] = useState(null);
     const pulseAnim = useRef(new Animated.Value(0.3)).current;
     const pulseLoopRef = useRef(null);
+    const pulseFetchRequestIdRef = useRef(0);
     const pulseToastTimeoutRef = useRef(null);
 
     const [bountyItems, setBountyItems] = useState([]);
@@ -171,13 +72,13 @@ export function useConnectData() {
     const [composerOpen, setComposerOpen] = useState(false);
     const [composerMediaType, setComposerMediaType] = useState(null);
     const [composerText, setComposerText] = useState('');
-    const [feedPosts, setFeedPosts] = useState(MOCK_POSTS);
+    const [feedPosts, setFeedPosts] = useState(INITIAL_FEED_POSTS);
     const [feedPage, setFeedPage] = useState(1);
     const [hasMoreFeed, setHasMoreFeed] = useState(true);
     const [loadingFeed, setLoadingFeed] = useState(false);
     const [loadingMoreFeed, setLoadingMoreFeed] = useState(false);
     const [likedPostIds, setLikedPostIds] = useState(new Set());
-    const [likeCountMap, setLikeCountMap] = useState(Object.fromEntries(MOCK_POSTS.map((p) => [p._id, p.likes])));
+    const [likeCountMap, setLikeCountMap] = useState({});
     const [commentsByPostId, setCommentsByPostId] = useState({});
     const [activeCommentPostId, setActiveCommentPostId] = useState(null);
     const [commentInputMap, setCommentInputMap] = useState({});
@@ -202,9 +103,27 @@ export function useConnectData() {
         };
     }, [circleMessages.length]);
 
+    const mapCirclePostToMessage = useCallback((post) => {
+        const authorName = post?.user?.name || 'Member';
+        const role = post?.user?.activeRole || post?.user?.primaryRole || 'member';
+        return {
+            id: String(post?._id || Date.now()),
+            user: authorName,
+            role: role === 'employer' ? 'Employer' : role === 'worker' ? 'Worker' : String(role),
+            text: String(post?.text || ''),
+            time: timeAgo(post?.createdAt),
+            type: 'text',
+            isAdmin: Boolean(post?.user?.isAdmin),
+        };
+    }, []);
+
     const mapApiPost = useCallback((post) => {
         const authorName = post?.user?.name || 'Member';
         const mappedType = post?.type === 'photo' ? 'gallery' : (post?.type || 'text');
+        const vouchCount = Array.isArray(post?.vouches) ? post.vouches.length : 0;
+        const vouched = Array.isArray(post?.vouches)
+            ? post.vouches.some((id) => String(id) === currentUserId)
+            : false;
 
         return {
             _id: String(post?._id || `post-${Date.now()}`),
@@ -216,12 +135,13 @@ export function useConnectData() {
             text: post?.content || '',
             likes: Array.isArray(post?.likes) ? post.likes.length : 0,
             comments: Array.isArray(post?.comments) ? post.comments.length : 0,
-            vouched: false,
+            vouched,
+            vouchCount,
             avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(authorName)}&background=9333ea&color=fff`,
             duration: mappedType === 'voice' ? '0:15' : undefined,
             mediaUrl: post?.mediaUrl || '',
         };
-    }, []);
+    }, [currentUserId]);
 
     const fetchFeedPosts = useCallback(async (pageToLoad = 1, replace = false) => {
         if (!DEMO_MODE) {
@@ -238,7 +158,14 @@ export function useConnectData() {
             });
             const apiPosts = Array.isArray(data?.posts) ? data.posts : [];
             const mappedPosts = apiPosts.map(mapApiPost);
-            setFeedPosts((prev) => (replace ? mappedPosts : [...prev, ...mappedPosts]));
+            setFeedPosts((prev) => {
+                if (replace) {
+                    return mappedPosts;
+                }
+                const seen = new Set(prev.map((post) => String(post._id)));
+                const dedupedAppend = mappedPosts.filter((post) => !seen.has(String(post._id)));
+                return [...prev, ...dedupedAppend];
+            });
             setFeedPage(pageToLoad);
             setHasMoreFeed(Boolean(data?.hasMore));
 
@@ -381,10 +308,85 @@ export function useConnectData() {
         fetchFeedPosts(1, true);
     }, [fetchFeedPosts]);
 
-    const handleVouch = useCallback((postId) => {
+    const handleVouch = useCallback(async (postId) => {
+        const currentPost = feedPosts.find((post) => post._id === postId);
+        if (!currentPost) return;
+
+        const prevVouched = Boolean(currentPost.vouched);
+        const prevCount = Number(currentPost.vouchCount || 0);
+        const nextCount = Math.max(0, prevCount + (prevVouched ? -1 : 1));
+
         setFeedPosts((prev) => prev.map((post) => (
-            post._id === postId ? { ...post, vouched: !post.vouched } : post
+            post._id === postId
+                ? { ...post, vouched: !prevVouched, vouchCount: nextCount }
+                : post
         )));
+
+        try {
+            const { data } = await client.post(`/api/feed/posts/${postId}/vouch`);
+            setFeedPosts((prev) => prev.map((post) => (
+                post._id === postId
+                    ? {
+                        ...post,
+                        vouched: Boolean(data?.vouched),
+                        vouchCount: Number(data?.vouchCount || 0),
+                    }
+                    : post
+            )));
+        } catch (error) {
+            setFeedPosts((prev) => prev.map((post) => (
+                post._id === postId
+                    ? {
+                        ...post,
+                        vouched: prevVouched,
+                        vouchCount: prevCount,
+                    }
+                    : post
+            )));
+            Alert.alert('Vouch Failed', 'Could not update vouch right now.');
+        }
+    }, [feedPosts]);
+
+    const handleReportPost = useCallback((post) => {
+        const postId = post?._id;
+        if (!postId) return;
+
+        Alert.alert('Report post', 'Help us keep the community safe.', [
+            {
+                text: 'Spam',
+                onPress: async () => {
+                    try {
+                        await client.post('/api/reports', { targetId: postId, targetType: 'post', reason: 'spam' });
+                        Alert.alert('Thanks', 'Report received.');
+                    } catch (error) {
+                        Alert.alert('Report Failed', 'Could not submit report right now.');
+                    }
+                },
+            },
+            {
+                text: 'Harassment',
+                onPress: async () => {
+                    try {
+                        await client.post('/api/reports', { targetId: postId, targetType: 'post', reason: 'harassment' });
+                        Alert.alert('Thanks', 'Report received.');
+                    } catch (error) {
+                        Alert.alert('Report Failed', 'Could not submit report right now.');
+                    }
+                },
+            },
+            {
+                text: 'Misleading',
+                onPress: async () => {
+                    try {
+                        await client.post('/api/reports', { targetId: postId, targetType: 'post', reason: 'misleading' });
+                        Alert.alert('Thanks', 'Report received.');
+                    } catch (error) {
+                        Alert.alert('Report Failed', 'Could not submit report right now.');
+                    }
+                },
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
     }, []);
 
     const showPulseToast = useCallback((message) => {
@@ -396,24 +398,71 @@ export function useConnectData() {
     }, []);
 
     const fetchPulseItems = useCallback(async () => {
+        const requestId = pulseFetchRequestIdRef.current + 1;
+        pulseFetchRequestIdRef.current = requestId;
         try {
             const { data } = await client.get('/api/pulse');
+            if (requestId !== pulseFetchRequestIdRef.current) {
+                return;
+            }
             const items = Array.isArray(data?.items) ? data.items : [];
-            const mapped = items.map((item) => ({
-                id: item._id,
-                title: item.title || 'Urgent Requirement',
-                employer: item.companyName || 'Employer',
-                distance: 'Nearby',
-                pay: item.salaryRange || 'Negotiable',
-                urgent: true,
-                timePosted: timeAgo(item.createdAt),
-                category: item.requirements?.[0] || 'Pulse',
-                categoryBg: '#fef3c7',
-                categoryColor: '#b45309',
-            }));
+            const seen = new Set();
+            const mapped = items
+                .map((item) => ({
+                    id: item.id || item._id,
+                    createdAt: item.createdAt || item.timePosted || null,
+                    interactionCount: Number(item.interactionCount || 0),
+                    engagementScore: Number(item.engagementScore || 0),
+                    rawTimePosted: item.timePosted,
+                    rawCategory: item.category,
+                    rawEmployer: item.employer,
+                    rawCompanyName: item.companyName,
+                    rawTitle: item.title,
+                    rawContent: item.content,
+                    rawDistance: item.distance,
+                    rawLocation: item.location,
+                    rawPay: item.pay,
+                    rawSalaryRange: item.salaryRange,
+                    rawUrgent: item.urgent,
+                    rawIsPulse: item.isPulse,
+                    rawRequirements: item.requirements,
+                }))
+                .filter((item) => {
+                    const id = String(item.id || '').trim();
+                    if (!id || seen.has(id)) return false;
+                    seen.add(id);
+                    return true;
+                })
+                .sort((left, right) => {
+                    const leftScore = Number(left.engagementScore || 0);
+                    const rightScore = Number(right.engagementScore || 0);
+                    if (rightScore !== leftScore) return rightScore - leftScore;
+                    const leftTs = new Date(left.createdAt || 0).getTime();
+                    const rightTs = new Date(right.createdAt || 0).getTime();
+                    if (rightTs !== leftTs) return rightTs - leftTs;
+                    if (right.interactionCount !== left.interactionCount) {
+                        return right.interactionCount - left.interactionCount;
+                    }
+                    return String(left.id).localeCompare(String(right.id));
+                })
+                .map((item) => ({
+                    id: item.id,
+                    title: item.rawTitle || item.rawContent || 'Urgent Requirement',
+                    employer: item.rawEmployer || item.rawCompanyName || 'Employer',
+                    distance: item.rawDistance || item.rawLocation || 'Nearby',
+                    pay: item.rawPay || item.rawSalaryRange || 'Negotiable',
+                    urgent: Boolean(item.rawUrgent || item.rawIsPulse),
+                    timePosted: timeAgo(item.createdAt || item.rawTimePosted),
+                    category: item.rawCategory || item.rawRequirements?.[0] || 'Pulse',
+                    categoryBg: '#fef3c7',
+                    categoryColor: '#b45309',
+                }));
             setPulseItems(mapped);
         } catch (error) {
-            // Keep fallback data in module UI if API unavailable.
+            if (requestId !== pulseFetchRequestIdRef.current) {
+                return;
+            }
+            setPulseItems([]);
         }
     }, []);
 
@@ -455,7 +504,9 @@ export function useConnectData() {
             setEnrolledCourses(enrolled);
             setEnrolledCourseIds(new Set(enrolled.map((item) => item.courseId)));
         } catch (error) {
-            // Keep fallback academy cards.
+            setAcademyCourses([]);
+            setEnrolledCourses([]);
+            setEnrolledCourseIds(new Set());
         }
     }, []);
 
@@ -490,54 +541,51 @@ export function useConnectData() {
 
     const fetchBounties = useCallback(async () => {
         try {
-            const statsRes = await client.get('/api/growth/referrals');
-            setReferralStats(statsRes?.data || null);
-            const referralBounties = Array.isArray(statsRes?.data?.bounties) ? statsRes.data.bounties : [];
-            let mapped = [];
-            if (referralBounties.length > 0) {
-                mapped = referralBounties.map((bounty, index) => ({
-                    id: bounty.id || bounty.jobId || `bounty-${index}`,
-                    company: bounty.company || 'Employer',
-                    logoLetter: String(bounty.company || 'H')[0].toUpperCase(),
+            const [bountyRes, mineRes] = await Promise.all([
+                client.get('/api/bounties'),
+                client.get('/api/bounties/mine'),
+            ]);
+            const rows = Array.isArray(bountyRes?.data?.bounties) ? bountyRes.data.bounties : [];
+            const mine = Array.isArray(mineRes?.data?.bounties) ? mineRes.data.bounties : [];
+            const mineWinnerIds = new Set(
+                mine
+                    .filter((row) => row?.winnerId && String(row.winnerId) === String(userInfo?._id || ''))
+                    .map((row) => String(row._id))
+            );
+
+            const mapped = rows.map((bounty, index) => {
+                const reward = Number(bounty.reward || 0);
+                const deadlineMs = new Date(bounty.deadline || Date.now()).getTime();
+                const expiresInDays = Math.max(0, Math.ceil((deadlineMs - Date.now()) / (24 * 60 * 60 * 1000)));
+                const submissionCount = Array.isArray(bounty.submissions) ? bounty.submissions.length : 0;
+                const company = bounty.creatorName || `Creator ${index + 1}`;
+                return {
+                    id: String(bounty._id),
+                    company,
+                    logoLetter: String(company || 'H')[0].toUpperCase(),
                     logoBg: '#7c3aed',
-                    role: bounty.role || 'Open Role',
-                    bonus: bounty.bonus || `₹${Number(bounty.bonusValue || 2000).toLocaleString()}`,
-                    bonusValue: Number(bounty.bonusValue || 2000),
-                    expiresInDays: bounty.expiresInDays || 7,
-                    totalPot: bounty.totalPot || `₹${(Number(bounty.bonusValue || 2000) * 10).toLocaleString()}`,
-                    referrals: Number(bounty.referrals || 0),
-                    category: bounty.category || 'General',
-                }));
-            } else {
-                const sourceRes = await client.get('/api/matches/candidate');
-                const source = Array.isArray(sourceRes?.data) ? sourceRes.data : [];
-                mapped = source.map((matchItem, index) => {
-                    const job = matchItem?.job || {};
-                    const baseReward = firstSalaryNumber(job.salaryRange)
-                        ? Math.max(1500, Math.round(firstSalaryNumber(job.salaryRange) * 0.1))
-                        : 2000;
-                    return {
-                        id: job._id || `bounty-${index}`,
-                        company: job.companyName || 'Employer',
-                        logoLetter: String(job.companyName || 'H')[0].toUpperCase(),
-                        logoBg: '#7c3aed',
-                        role: job.title || 'Open Role',
-                        bonus: `₹${baseReward.toLocaleString()}`,
-                        bonusValue: baseReward,
-                        expiresInDays: 7,
-                        totalPot: `₹${(baseReward * 10).toLocaleString()}`,
-                        referrals: 0,
-                        category: job.requirements?.[0] || 'General',
-                    };
-                });
-            }
-            if (mapped.length > 0) {
-                setBountyItems(mapped);
-            }
+                    role: bounty.title || 'Open Bounty',
+                    bonus: `₹${Math.max(0, reward).toLocaleString()}`,
+                    bonusValue: Math.max(0, reward),
+                    expiresInDays,
+                    totalPot: `₹${(Math.max(0, reward) * Math.max(1, submissionCount || 1)).toLocaleString()}`,
+                    referrals: submissionCount,
+                    category: String(bounty.status || 'open').toUpperCase(),
+                };
+            });
+
+            setBountyItems(mapped);
+            setReferralStats({
+                totalEarnings: Array.from(mineWinnerIds).reduce((sum, bountyId) => {
+                    const found = rows.find((row) => String(row._id) === String(bountyId));
+                    return sum + Number(found?.reward || 0);
+                }, 0),
+            });
         } catch (error) {
-            // Keep fallback bounty cards.
+            setBountyItems([]);
+            setReferralStats({ totalEarnings: 0 });
         }
-    }, []);
+    }, [userInfo?._id]);
 
     const handleOpenReferModal = useCallback((bounty) => {
         setReferringBounty(bounty);
@@ -565,12 +613,11 @@ export function useConnectData() {
 
         try {
             await client.post('/api/growth/referrals', {
-                jobId: referringBounty.id,
+                bountyId: referringBounty.id,
                 candidateContact: referPhoneInput,
-                reward: referringBounty.bonusValue || 0,
             });
 
-            const linkRes = await client.get(`/api/growth/share-link/job/${referringBounty.id}`);
+            const linkRes = await client.get(`/api/growth/share-link/bounty/${referringBounty.id}`);
             const shareLink = linkRes?.data?.shareLink;
             if (shareLink) {
                 await Share.share({
@@ -598,7 +645,8 @@ export function useConnectData() {
             setCirclesData(allCircles);
             setJoinedCircles(new Set(myCircles.map((circle) => String(circle._id))));
         } catch (error) {
-            // Keep fallback circles.
+            setCirclesData([]);
+            setJoinedCircles(new Set());
         }
     }, []);
 
@@ -607,8 +655,15 @@ export function useConnectData() {
         if (alreadyJoined) return;
 
         try {
-            await client.post(`/api/circles/${id}/join`);
-            setJoinedCircles((prev) => new Set(prev).add(id));
+            const { data } = await client.post(`/api/circles/${id}/join`);
+            if (data?.joined) {
+                setJoinedCircles((prev) => new Set(prev).add(id));
+                return;
+            }
+            if (data?.pendingApproval) {
+                Alert.alert('Request sent', 'Your join request is pending admin approval.');
+                return;
+            }
         } catch (error) {
             Alert.alert('Join Failed', 'Could not join this circle right now.');
         }
@@ -619,20 +674,48 @@ export function useConnectData() {
             ? circlesData.map((circle) => ({
                 _id: String(circle._id),
                 name: circle.name,
-                category: circle.skill || 'Community',
-                members: `${Array.isArray(circle.members) ? circle.members.length : 0}`,
+                category: circle.category || circle.skill || 'Community',
+                members: `${Array.isArray(circle.memberIds) ? circle.memberIds.length : (Array.isArray(circle.members) ? circle.members.length : 0)}`,
                 online: 0,
                 desc: circle.description || 'Join this circle to connect with professionals nearby.',
-                topics: [circle.skill || 'Updates'],
+                topics: [circle.category || circle.skill || 'Updates'],
                 rates: [],
             }))
-            : MOCK_CIRCLES
+            : []
     ), [circlesData]);
 
-    const handleOpenCircle = useCallback((circle) => {
+    const handleOpenCircle = useCallback(async (circle) => {
         setSelectedCircle(circle);
         setCircleDetailTab('DISCUSSION');
-    }, []);
+        setCircleMessages([]);
+        setCircleMembers([]);
+        const circleId = String(circle?._id || '').trim();
+        if (!circleId) {
+            return;
+        }
+
+        try {
+            const [postsRes, membersRes] = await Promise.all([
+                client.get(`/api/circles/${circleId}/posts`),
+                client.get(`/api/circles/${circleId}/members`),
+            ]);
+            const posts = Array.isArray(postsRes?.data?.posts) ? postsRes.data.posts : [];
+            const members = Array.isArray(membersRes?.data?.members) ? membersRes.data.members : [];
+            setCircleMessages(posts.map(mapCirclePostToMessage).reverse());
+            setCircleMembers(members.map((member) => ({
+                id: String(member?._id || ''),
+                name: member?.name || 'Member',
+                role: member?.role || 'member',
+                joined: '',
+                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(member?.name || 'Member')}&background=8b3dff&color=fff&rounded=true`,
+                isAdmin: Boolean(member?.isAdmin),
+            })));
+        } catch (error) {
+            setCircleMessages([]);
+            setCircleMembers([]);
+            Alert.alert('Community Unavailable', 'Could not load community details right now.');
+        }
+    }, [mapCirclePostToMessage]);
 
     const handleCloseCircleDetail = useCallback(() => {
         setSelectedCircle(null);
@@ -642,27 +725,34 @@ export function useConnectData() {
         setCircleDetailTab(nextTab);
     }, []);
 
-    const handleCircleSendMessage = useCallback(() => {
-        if (!chatText.length) return;
+    const handleCircleSendMessage = useCallback(async () => {
+        const text = String(chatText || '').trim();
+        const circleId = String(selectedCircle?._id || '').trim();
+        if (!text || !circleId) return;
 
-        const nextMessages = [...circleMessages, {
-            id: Date.now(),
-            user: 'You',
-            role: 'Member',
-            text: chatText,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            type: 'text',
-        }];
-
-        setCircleMessages(nextMessages);
-        setChatText('');
-        if (circleScrollTimeoutRef.current) {
-            clearTimeout(circleScrollTimeoutRef.current);
+        try {
+            const { data } = await client.post(`/api/circles/${circleId}/posts`, { text });
+            const message = mapCirclePostToMessage(data?.post || {
+                _id: Date.now(),
+                text,
+                createdAt: new Date().toISOString(),
+                user: {
+                    name: userInfo?.name || 'You',
+                    activeRole: userInfo?.activeRole || userInfo?.primaryRole || 'member',
+                },
+            });
+            setCircleMessages((prev) => [...prev, message]);
+            setChatText('');
+            if (circleScrollTimeoutRef.current) {
+                clearTimeout(circleScrollTimeoutRef.current);
+            }
+            circleScrollTimeoutRef.current = setTimeout(() => {
+                circleChatRef.current?.scrollToEnd({ animated: true });
+            }, 50);
+        } catch (error) {
+            Alert.alert('Message Failed', 'Could not send message right now.');
         }
-        circleScrollTimeoutRef.current = setTimeout(() => {
-            circleChatRef.current?.scrollToEnd({ animated: true });
-        }, 50);
-    }, [chatText, circleMessages]);
+    }, [chatText, mapCirclePostToMessage, selectedCircle?._id, userInfo?.activeRole, userInfo?.name, userInfo?.primaryRole]);
 
     const handleCircleToggleVoice = useCallback(() => {
         if (isCircleRecording) {
@@ -750,9 +840,7 @@ export function useConnectData() {
         };
     }, [pulseAnim]);
 
-    const bountiesList = useMemo(() => (
-        bountyItems.length > 0 ? bountyItems : FALLBACK_BOUNTIES
-    ), [bountyItems]);
+    const bountiesList = useMemo(() => bountyItems, [bountyItems]);
 
     const bountyEarningsTotal = useMemo(() => {
         const localEarnings = [...referredBountyIds].reduce((sum, id) => {
@@ -762,6 +850,11 @@ export function useConnectData() {
 
         return Number(referralStats?.totalEarnings || 0) || localEarnings;
     }, [referredBountyIds, bountiesList, referralStats?.totalEarnings]);
+
+    const currentUserAvatar = useMemo(() => {
+        const displayName = String(userInfo?.name || CURRENT_USER.name || 'You').trim() || 'You';
+        return `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=8b3dff&color=fff&rounded=true`;
+    }, [userInfo?.name]);
 
     const feedTabProps = useMemo(() => ({
         feedPosts,
@@ -775,7 +868,7 @@ export function useConnectData() {
         commentsByPostId,
         activeCommentPostId,
         commentInputMap,
-        currentUserAvatar: CURRENT_USER.avatar,
+        currentUserAvatar,
         onRefreshFeed: handleRefreshFeed,
         onLoadMoreFeed: handleLoadMoreFeed,
         onMediaButtonClick: handleMediaButtonClick,
@@ -788,6 +881,7 @@ export function useConnectData() {
         onToggleVouch: handleVouch,
         onCommentInputChange: handleCommentInputChange,
         onSubmitComment: handleSubmitComment,
+        onReportPost: handleReportPost,
     }), [
         feedPosts,
         loadingFeed,
@@ -811,6 +905,8 @@ export function useConnectData() {
         handleVouch,
         handleCommentInputChange,
         handleSubmitComment,
+        handleReportPost,
+        currentUserAvatar,
     ]);
 
     const pulseTabProps = useMemo(() => ({
@@ -860,6 +956,7 @@ export function useConnectData() {
         isCircleRecording,
         onSendTextMessage: handleCircleSendMessage,
         onToggleVoiceRecording: handleCircleToggleVoice,
+        circleMembers,
         circleCustomRates,
         showCircleRateForm,
         circleRateService,
@@ -878,6 +975,7 @@ export function useConnectData() {
         isCircleRecording,
         handleCircleSendMessage,
         handleCircleToggleVoice,
+        circleMembers,
         circleCustomRates,
         showCircleRateForm,
         circleRateService,

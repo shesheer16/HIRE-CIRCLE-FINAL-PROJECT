@@ -17,7 +17,7 @@ async function listModels() {
         // Let's try a direct fetch if SDK doesn't help, or just try to generate with a known stable model.
         return;
     } catch (e) {
-        console.error(e);
+        console.warn(e);
     }
 }
 
@@ -26,7 +26,7 @@ async function listModels() {
 // `gemini-1.5-flash` might be `gemini-1.5-flash-001`
 console.log("Checking API Key availability...");
 if (!process.env.GEMINI_API_KEY) {
-    console.error("NO API KEY FOUND");
+    console.warn("NO API KEY FOUND");
 } else {
     console.log("API Key present (starts with):", process.env.GEMINI_API_KEY.substring(0, 5));
 }

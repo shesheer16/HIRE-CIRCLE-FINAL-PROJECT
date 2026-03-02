@@ -12,6 +12,9 @@ const workerProfileSchema = mongoose.Schema(
     firstName: { type: String, required: true },
     lastName: { type: String },
     city: { type: String, required: true },
+    avatar: { type: String, default: null },
+    country: { type: String, default: 'IN', uppercase: true, index: true },
+    language: { type: String, default: null },
     totalExperience: { type: Number, default: 0 },
     preferredShift: {
       type: String,
@@ -46,6 +49,19 @@ const workerProfileSchema = mongoose.Schema(
 
     // Global settings for matching
     isAvailable: { type: Boolean, default: true },
+    availabilityWindowDays: {
+      type: Number,
+      enum: [0, 15, 30],
+      default: 0,
+    },
+    openToRelocation: {
+      type: Boolean,
+      default: false,
+    },
+    openToNightShift: {
+      type: Boolean,
+      default: false,
+    },
     interviewVerified: {
       type: Boolean,
       default: false,
@@ -71,6 +87,76 @@ const workerProfileSchema = mongoose.Schema(
         },
       },
     },
+    reliabilityScore: {
+      type: Number,
+      default: 0.75,
+      min: 0,
+      max: 1,
+      index: true,
+    },
+    interviewIntelligence: {
+      profileQualityScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      communicationClarityScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      confidenceLanguageScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      ambiguityRate: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      slotCompletenessRatio: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      salaryOutlierFlag: {
+        type: Boolean,
+        default: false,
+      },
+      salaryMedianForRoleCity: {
+        type: Number,
+        default: null,
+      },
+      salaryRealismRatio: {
+        type: Number,
+        default: null,
+      },
+      salaryAlignmentStatus: {
+        type: String,
+        enum: ['ALIGNED', 'OUTLIER'],
+        default: 'ALIGNED',
+      },
+      profileStrengthLabel: {
+        type: String,
+        enum: ['Weak', 'Good', 'Strong'],
+        default: 'Weak',
+      },
+      communicationLabel: {
+        type: String,
+        enum: ['Clear', 'Good', 'Improving'],
+        default: 'Improving',
+      },
+      lastInterviewAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
@@ -79,6 +165,10 @@ const workerProfileSchema = mongoose.Schema(
 
 // Match Engine Optimization: Indexing for fast searches (Phase 5)
 workerProfileSchema.index({ city: 1, 'roleProfiles.roleName': 1 });
+workerProfileSchema.index({ user: 1 });
+workerProfileSchema.index({ 'interviewIntelligence.profileQualityScore': -1 });
+workerProfileSchema.index({ 'interviewIntelligence.communicationClarityScore': -1 });
+workerProfileSchema.index({ 'interviewIntelligence.salaryOutlierFlag': 1 });
 
 const WorkerProfile = mongoose.model('WorkerProfile', workerProfileSchema);
 

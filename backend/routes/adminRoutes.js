@@ -4,6 +4,13 @@ const {
     getPlatformStats,
     getAllUsers,
     getAllJobs,
+    getAllReports,
+    reviewReport,
+    dismissReport,
+    getPlatformMetrics,
+    banUser,
+    disableJob,
+    updateFeatureToggle,
     generateBetaCodes,
     createCityPipelineEntry,
     getCityPipelineEntries,
@@ -12,21 +19,50 @@ const {
     getMatchReport,
     getMatchCalibrationSuggestions,
     getMatchPerformanceAlertsController,
+    getCityLiquidity,
+    getCityExpansionSignalsController,
+    getMarketAlertsController,
+    getMarketControlOverview,
+    getMarketInsightsController,
+    getCompetitiveThreatSignalsController,
+    getHiringTrajectoryController,
 } = require('../controllers/adminController');
+const {
+    adminIntelligenceDashboard,
+    adminStressValidation,
+} = require('../controllers/aiOptimizationController');
 const { getFeedback } = require('../controllers/betaFeedbackController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { requireAdminControl } = require('../middleware/adminControlMiddleware');
 
-router.get('/stats', protect, admin, getPlatformStats);
-router.get('/users', protect, admin, getAllUsers);
-router.get('/jobs', protect, admin, getAllJobs);
-router.get('/feedback', protect, admin, getFeedback);
-router.post('/beta-codes', protect, admin, generateBetaCodes);
-router.post('/city-pipeline', protect, admin, createCityPipelineEntry);
-router.get('/city-pipeline', protect, admin, getCityPipelineEntries);
-router.get('/city-pipeline/summary', protect, admin, getCityPipelineSummary);
-router.put('/city-pipeline/:id', protect, admin, updateCityPipelineEntry);
-router.get('/match-report', protect, admin, getMatchReport);
-router.get('/match-calibration-suggestions', protect, admin, getMatchCalibrationSuggestions);
-router.get('/match-performance-alerts', protect, admin, getMatchPerformanceAlertsController);
+router.use(requireAdminControl);
+
+router.get('/stats', getPlatformStats);
+router.get('/users', getAllUsers);
+router.get('/jobs', getAllJobs);
+router.get('/reports', getAllReports);
+router.patch('/reports/:id', reviewReport);
+router.put('/reports/:id/dismiss', dismissReport);
+router.get('/metrics', getPlatformMetrics);
+router.patch('/ban-user', banUser);
+router.patch('/disable-job', disableJob);
+router.patch('/feature-toggle', updateFeatureToggle);
+router.get('/feedback', getFeedback);
+router.post('/beta-codes', generateBetaCodes);
+router.post('/city-pipeline', createCityPipelineEntry);
+router.get('/city-pipeline', getCityPipelineEntries);
+router.get('/city-pipeline/summary', getCityPipelineSummary);
+router.put('/city-pipeline/:id', updateCityPipelineEntry);
+router.get('/match-report', getMatchReport);
+router.get('/match-calibration-suggestions', getMatchCalibrationSuggestions);
+router.get('/match-performance-alerts', getMatchPerformanceAlertsController);
+router.get('/city-liquidity', getCityLiquidity);
+router.get('/city-expansion-signals', getCityExpansionSignalsController);
+router.get('/market-alerts', getMarketAlertsController);
+router.get('/market-control', getMarketControlOverview);
+router.get('/market-insights', getMarketInsightsController);
+router.get('/competitive-threat-signals', getCompetitiveThreatSignalsController);
+router.get('/hiring-trajectories', getHiringTrajectoryController);
+router.get('/intelligence-dashboard', adminIntelligenceDashboard);
+router.get('/intelligence-stress-validation', adminStressValidation);
 
 module.exports = router;

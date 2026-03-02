@@ -17,8 +17,10 @@ try {
 }
 
 const queueUrl = process.env.AWS_SQS_INTERVIEW_QUEUE_URL || '';
+const deadLetterQueueUrl = process.env.AWS_SQS_INTERVIEW_DLQ_URL || '';
 const region = process.env.AWS_SQS_REGION || process.env.AWS_REGION || 'ap-south-1';
 const depthCacheTtlMs = 10 * 1000;
+const maxReceiveCount = Number.parseInt(process.env.INTERVIEW_WORKER_MAX_RECEIVE_COUNT || '5', 10);
 
 let queueDepthCache = {
     value: 0,
@@ -36,6 +38,7 @@ const sqsClient = SQSClient ? new SQSClient({
 }) : null;
 
 const isQueueConfigured = () => Boolean(queueUrl && sqsClient);
+const isDeadLetterQueueConfigured = () => Boolean(deadLetterQueueUrl && sqsClient);
 
 const enqueueInterviewJob = async (payload) => {
     if (!isQueueConfigured()) {
@@ -49,6 +52,32 @@ const enqueueInterviewJob = async (payload) => {
 
     const result = await sqsClient.send(command);
     return {
+        messageId: result.MessageId,
+    };
+};
+
+const sendToInterviewDeadLetterQueue = async ({ payload, reason = 'unknown', originalMessage = null }) => {
+    if (!isDeadLetterQueueConfigured()) {
+        return {
+            enqueued: false,
+            reason: 'dlq_not_configured',
+        };
+    }
+
+    const command = new SendMessageCommand({
+        QueueUrl: deadLetterQueueUrl,
+        MessageBody: JSON.stringify({
+            payload,
+            reason,
+            originalMessageId: originalMessage?.MessageId || null,
+            originalReceiveCount: originalMessage?.Attributes?.ApproximateReceiveCount || null,
+            failedAt: new Date().toISOString(),
+        }),
+    });
+
+    const result = await sqsClient.send(command);
+    return {
+        enqueued: true,
         messageId: result.MessageId,
     };
 };
@@ -89,12 +118,16 @@ const getInterviewQueueDepth = async () => {
 
     const command = new GetQueueAttributesCommand({
         QueueUrl: queueUrl,
-        AttributeNames: ['ApproximateNumberOfMessages'],
+        AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     });
 
     const response = await sqsClient.send(command);
-    const rawCount = response?.Attributes?.ApproximateNumberOfMessages;
-    const depth = Number.parseInt(rawCount || '0', 10) || 0;
+    const rawVisible = response?.Attributes?.ApproximateNumberOfMessages;
+    const rawInflight = response?.Attributes?.ApproximateNumberOfMessagesNotVisible;
+
+    const visible = Number.parseInt(rawVisible || '0', 10) || 0;
+    const inflight = Number.parseInt(rawInflight || '0', 10) || 0;
+    const depth = visible + inflight;
 
     queueDepthCache = {
         value: depth,
@@ -104,10 +137,18 @@ const getInterviewQueueDepth = async () => {
     return depth;
 };
 
+const getQueueSelfRecoveryConfig = () => ({
+    maxReceiveCount,
+    deadLetterQueueConfigured: isDeadLetterQueueConfigured(),
+});
+
 module.exports = {
     enqueueInterviewJob,
+    sendToInterviewDeadLetterQueue,
     receiveInterviewMessages,
     deleteInterviewMessage,
     getInterviewQueueDepth,
+    getQueueSelfRecoveryConfig,
     isQueueConfigured,
+    isDeadLetterQueueConfigured,
 };

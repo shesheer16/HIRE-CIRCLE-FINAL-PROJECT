@@ -1,4 +1,5 @@
 const redisClient = require('../config/redis');
+const logger = require('../utils/logger');
 
 const memoryFlags = new Map();
 const FLAG_PREFIX = 'system_flag:';
@@ -12,7 +13,7 @@ const getSystemFlag = async (key, fallback = false) => {
             return value === 'true';
         }
     } catch (error) {
-        console.error(`System flag read failed for ${key}:`, error.message);
+        logger.warn(`System flag read failed for ${key}: ${error.message}`);
     }
 
     if (!memoryFlags.has(normalizedKey)) return fallback;
@@ -33,7 +34,7 @@ const setSystemFlag = async (key, value, ttlSeconds = null) => {
             return;
         }
     } catch (error) {
-        console.error(`System flag write failed for ${key}:`, error.message);
+        logger.warn(`System flag write failed for ${key}: ${error.message}`);
     }
 
     memoryFlags.set(normalizedKey, normalizedValue);

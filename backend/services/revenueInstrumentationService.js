@@ -12,6 +12,9 @@ const logWarning = (taskName, error, context = {}) => {
 };
 
 const fireAndForget = (taskName, fn, context = {}) => {
+    if (process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
+        return;
+    }
     setImmediate(async () => {
         try {
             await fn();

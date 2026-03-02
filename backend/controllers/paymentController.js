@@ -1,202 +1,181 @@
-const stripeKey = process.env.STRIPE_SECRET_KEY || 'sk_test_fake';
-const stripe = require('stripe')(stripeKey);
+const { processWebhook, createPaymentIntentRecord } = require('../services/financial/paymentOrchestrationService');
+const { createSubscriptionCheckoutSession } = require('../services/financial/subscriptionBillingService');
 const User = require('../models/userModel');
-const Job = require('../models/Job');
-const RevenueEvent = require('../models/RevenueEvent');
-const { fireAndForget } = require('../services/revenueInstrumentationService');
+const {
+    executeWithCircuitBreaker,
+    CircuitOpenError,
+} = require('../services/circuitBreakerService');
+const {
+    incrementPaymentFailureCounter,
+} = require('../services/systemMonitoringService');
+const {
+    isDegradationActive,
+    setDegradationFlag,
+} = require('../services/degradationService');
 
-// @desc Create a Checkout Session for Subscription or Credits
-// @route POST /api/payment/create-checkout-session
-// @access Private
+const resolveFrontendUrl = () => {
+    const frontendUrl = String(process.env.FRONTEND_URL || '').trim();
+    if (!frontendUrl) {
+        throw new Error('FRONTEND_URL is not configured');
+    }
+    return frontendUrl.replace(/\/$/, '');
+};
+
+const withPaymentCircuit = async (executor) => executeWithCircuitBreaker(
+    'payment_provider',
+    executor,
+    {
+        failureThreshold: Number.parseInt(process.env.PAYMENT_CIRCUIT_FAILURE_THRESHOLD || '4', 10),
+        cooldownMs: Number.parseInt(process.env.PAYMENT_CIRCUIT_COOLDOWN_MS || String(45 * 1000), 10),
+        timeoutMs: Number.parseInt(process.env.PAYMENT_PROVIDER_TIMEOUT_MS || '8000', 10),
+    }
+);
+
+const isPaymentWriteBlocked = () => isDegradationActive('paymentWriteBlocked');
+
+const guardPaymentWrites = (res) => {
+    if (!isPaymentWriteBlocked()) return false;
+    res.status(503).json({
+        message: 'Payment provider is temporarily degraded. New escrow/payment writes are paused.',
+        code: 'PAYMENT_WRITE_BLOCKED',
+    });
+    return true;
+};
+
+const markPaymentFailure = async (reason) => {
+    await incrementPaymentFailureCounter({ reason: reason || 'payment_provider_failure' });
+    setDegradationFlag('paymentWriteBlocked', true, reason || 'payment_provider_failure', 120000);
+};
+
+const clearPaymentBlock = () => {
+    setDegradationFlag('paymentWriteBlocked', false, null);
+};
+
+const toPaymentErrorResponse = (res, error, fallbackMessage) => {
+    if (error instanceof CircuitOpenError) {
+        return res.status(503).json({ message: 'Payment provider is temporarily unavailable. Please retry shortly.' });
+    }
+    return res.status(500).json({ message: error?.message || fallbackMessage });
+};
+
 const createCheckoutSession = async (req, res) => {
+    if (guardPaymentWrites(res)) return;
+
     try {
-        const { planId, successUrl, cancelUrl } = req.body;
-
-        let priceId;
-        if (planId === 'pro') priceId = process.env.STRIPE_PRICE_PRO;
-        // Map other plans here...
-
-        if (!priceId) {
-            return res.status(400).json({ message: "Invalid Plan ID" });
+        const user = await User.findById(req.user._id).select('email');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
         }
 
-        const session = await stripe.checkout.sessions.create({
-            mode: 'subscription',
-            payment_method_types: ['card'],
-            customer_email: req.user.email,
-            client_reference_id: req.user._id.toString(),
-            line_items: [
-                {
-                    price: priceId,
-                    quantity: 1,
-                },
-            ],
-            success_url: successUrl || 'http://localhost:8081/success',
-            cancel_url: cancelUrl || 'http://localhost:8081/cancel',
-        });
+        const frontendUrl = resolveFrontendUrl();
+        const successUrl = String(req.body?.successUrl || `${frontendUrl}/success`);
+        const cancelUrl = String(req.body?.cancelUrl || `${frontendUrl}/cancel`);
+        const planType = String(req.body?.planId || 'pro');
 
-        res.json({ sessionUrl: session.url });
+        const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
+            user,
+            planType,
+            successUrl,
+            cancelUrl,
+        }));
+
+        clearPaymentBlock();
+        return res.json({ sessionUrl: session.sessionUrl, sessionId: session.sessionId });
     } catch (error) {
-        console.error("Stripe Session Error:", error);
-        res.status(500).json({ message: "Payment setup failed" });
+        await markPaymentFailure(error?.message || 'checkout_session_failed');
+        return toPaymentErrorResponse(res, error, 'Payment setup failed');
     }
 };
 
-// @desc Stripe Webhook endpoint to receive asynchronous events
-// @route POST /api/payment/webhook
-// @access Public (Stripe only)
 const stripeWebhook = async (req, res) => {
-    const rawBody = req.body;
-    const signature = req.headers['stripe-signature'];
-    let event;
-
     try {
-        event = stripe.webhooks.constructEvent(rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET);
-    } catch (err) {
-        console.error(`Webhook Error: ${err.message}`);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
+        const result = await withPaymentCircuit(async () => processWebhook({
+            provider: 'stripe',
+            rawBody: req.body,
+            headers: req.headers,
+        }));
 
-    // Handle the event
-    try {
-        switch (event.type) {
-            case 'checkout.session.completed': {
-                const session = event.data.object;
-                const userId = session.client_reference_id;
-
-                await User.findByIdAndUpdate(userId, {
-                    'subscription.plan': 'pro', // Based on logic
-                    'subscription.stripeCustomerId': session.customer,
-                    'subscription.stripeSubscriptionId': session.subscription
-                });
-                console.log(`✅ Subscription activated for User ${userId}`);
-                if (session.mode === 'subscription') {
-                    await User.findByIdAndUpdate(userId, {
-                        'subscription.plan': 'pro', // Based on logic
-                        'subscription.stripeCustomerId': session.customer,
-                        'subscription.stripeSubscriptionId': session.subscription
-                    });
-                    console.log(`✅ Subscription activated for User ${userId}`);
-                    fireAndForget('recordSubscriptionRevenueEvent', async () => {
-                        const user = await User.findById(userId).select('acquisitionCity');
-                        await RevenueEvent.create({
-                            employerId: userId,
-                            eventType: 'subscription_charge',
-                            amountInr: 499,
-                            currency: 'inr',
-                            status: 'succeeded',
-                            city: user?.acquisitionCity || 'Hyderabad',
-                            stripeSessionId: session.id || null,
-                            stripeSubscriptionId: session.subscription || null,
-                            settledAt: new Date(),
-                            metadata: {
-                                source: 'stripe_webhook',
-                            },
-                        });
-                    }, { userId: String(userId || '') });
-                } else if (session.mode === 'payment') {
-                    // Check if this was a featured listing purchase
-                    if (session.metadata && session.metadata.type === 'featured_job') {
-                        await Job.findByIdAndUpdate(session.metadata.jobId, { isFeatured: true });
-                        console.log(`Job ${session.metadata.jobId} marked as featured.`);
-                        fireAndForget('recordBoostRevenueEvent', async () => {
-                            const job = await Job.findById(session.metadata.jobId).select('location');
-                            await RevenueEvent.create({
-                                employerId: userId,
-                                eventType: 'boost_purchase',
-                                amountInr: 499,
-                                currency: 'inr',
-                                status: 'succeeded',
-                                city: job?.location || 'Hyderabad',
-                                jobId: session.metadata.jobId,
-                                stripeSessionId: session.id || null,
-                                settledAt: new Date(),
-                                metadata: {
-                                    source: 'stripe_webhook',
-                                },
-                            });
-                        }, { userId: String(userId || ''), jobId: String(session.metadata.jobId || '') });
-                    }
-                    // Award credits or manage logic downstream
-                    const user = await User.findById(userId);
-                    if (user) {
-                        user.credits = (user.credits || 0) + 10; // Example: Award 10 credits for a one-time payment
-                        await user.save();
-                        console.log(`User ${userId} awarded 10 credits.`);
-                    }
-                }
-                break;
-            }
-            case 'invoice.payment_failed': {
-                const session = event.data.object;
-                const user = await User.findOne({ 'subscription.stripeCustomerId': session.customer });
-                if (user) {
-                    user.subscription.plan = 'free';
-                    await user.save();
-                    console.log(`❌ Subscription downgraded for User ${user._id}`);
-                }
-                break;
-            }
-            default:
-                console.log(`Unhandled event type ${event.type}`);
+        clearPaymentBlock();
+        return res.status(200).json({ received: true, duplicate: result.duplicate });
+    } catch (error) {
+        await markPaymentFailure(error?.message || 'webhook_failed');
+        if (error instanceof CircuitOpenError) {
+            return res.status(503).json({ received: false, message: 'Payment provider unavailable' });
         }
-        res.status(200).send();
-    } catch (err) {
-        console.error("Webhook processing error:", err);
-        res.status(400).send(`Webhook Error: ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 };
 
-// @desc Create Checkout Session for a Featured Job Listing
-// @route POST /api/payments/create-featured-listing
 const createFeaturedListingSession = async (req, res) => {
+    if (guardPaymentWrites(res)) return;
+
     try {
-        const { jobId } = req.body;
-        // Verify job belongs to user here normally
-
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
-            line_items: [
-                {
-                    price_data: {
-                        currency: 'usd',
-                        product_data: {
-                            name: 'Featured Job Listing',
-                            description: 'Highlight your job posting for 7 days.'
-                        },
-                        unit_amount: 19900, // $199.00
-                    },
-                    quantity: 1,
-                },
-            ],
-            mode: 'payment',
-            success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${process.env.FRONTEND_URL}/payment-cancel`,
-            customer: req.user.subscription.stripeCustomerId,
+        const featuredAmount = Number(process.env.FEATURED_LISTING_AMOUNT_INR || 499);
+        const payment = await withPaymentCircuit(async () => createPaymentIntentRecord({
+            userId: req.user._id,
+            provider: String(req.body?.provider || 'stripe').toLowerCase(),
+            intentType: 'featured_job',
+            amount: featuredAmount,
+            currency: String(req.body?.currency || 'INR').toUpperCase(),
+            referenceId: req.body?.jobId ? String(req.body.jobId) : null,
             metadata: {
-                userId: req.user._id.toString(),
-                type: 'featured_job',
-                jobId: jobId
-            }
-        });
+                jobId: req.body?.jobId ? String(req.body.jobId) : null,
+                source: 'featured_listing',
+            },
+            idempotencyKey: String(req.headers['idempotency-key'] || '').trim() || null,
+        }));
 
-        res.json({ id: session.id, url: session.url });
+        clearPaymentBlock();
+        return res.status(200).json({
+            paymentRecordId: payment.paymentRecord._id,
+            providerIntentId: payment.providerResponse.providerIntentId,
+            providerOrderId: payment.providerResponse.providerOrderId,
+            clientSecret: payment.providerResponse.clientSecret || null,
+        });
     } catch (error) {
-        console.error("Featured Listing Error:", error);
-        res.status(500).json({ message: "Failed to create checkout session for featured listing." });
+        await markPaymentFailure(error?.message || 'featured_checkout_failed');
+        return toPaymentErrorResponse(res, error, 'Failed to create checkout session for featured listing');
     }
 };
 
-// @desc Subscribe Partner to API Metered Billing Tier
-// @route POST /api/payments/subscribe-api-tier
 const subscribeApiTier = async (req, res) => {
-    try {
-        const { tierId } = req.body; // e.g. price_api_partner
-        // Stub for API subscription logic
-        res.json({ message: "API Enterprise Billing subscription initiated", url: "https://stripe.com/checkout/..." });
-    } catch (error) {
-        res.status(500).json({ message: "Failed logic" });
-    }
-}
+    if (guardPaymentWrites(res)) return;
 
-module.exports = { createCheckoutSession, stripeWebhook, createFeaturedListingSession, subscribeApiTier };
+    try {
+        const tierId = String(req.body?.tierId || '').trim();
+        if (!tierId) {
+            return res.status(400).json({ message: 'tierId is required' });
+        }
+
+        const user = await User.findById(req.user._id).select('email');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const frontendUrl = resolveFrontendUrl();
+        const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
+            user,
+            planType: tierId === 'enterprise' ? 'enterprise' : 'pro',
+            successUrl: `${frontendUrl}/billing/success`,
+            cancelUrl: `${frontendUrl}/billing/cancel`,
+        }));
+
+        clearPaymentBlock();
+        return res.json({
+            message: 'API Enterprise Billing subscription initiated',
+            tierId,
+            sessionUrl: session.sessionUrl,
+            sessionId: session.sessionId,
+        });
+    } catch (error) {
+        await markPaymentFailure(error?.message || 'api_tier_subscribe_failed');
+        return toPaymentErrorResponse(res, error, 'Failed to subscribe API tier');
+    }
+};
+
+module.exports = {
+    createCheckoutSession,
+    stripeWebhook,
+    createFeaturedListingSession,
+    subscribeApiTier,
+};

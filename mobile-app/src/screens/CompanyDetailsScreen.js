@@ -139,7 +139,13 @@ export default function CompanyDetailsScreen({ navigation, route }) {
                         website: details.employer?.website || '',
                     },
                 }}
-                onBack={() => navigation.goBack()}
+                onBack={() => {
+                    if (navigation.canGoBack()) {
+                        navigation.goBack();
+                        return;
+                    }
+                    navigation.navigate('MainTab');
+                }}
             />
         </View>
     );

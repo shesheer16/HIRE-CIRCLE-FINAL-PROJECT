@@ -1,33 +1,31 @@
 import { io } from 'socket.io-client';
 import * as SecureStore from 'expo-secure-store';
-import { BASE_URL, DEMO_MODE } from '../config';
+import { BASE_URL } from '../config';
 import { logger } from '../utils/logger';
+
+const MAX_PENDING_EMITS = 50;
 
 class SocketService {
     constructor() {
         this.socket = null;
         this.listeners = new Map();
+        this.pendingEmits = [];
     }
 
     async connect() {
-        if (DEMO_MODE) {
-            if (this.socket?.connected) return;
-            this.socket = { connected: true, id: 'demo-socket' };
-            const onConnect = this.listeners.get('connect');
-            if (onConnect) {
-                onConnect();
-            }
+        if (this.socket?.connected) return;
+
+        if (this.socket) {
+            this.socket.connect();
             return;
         }
-
-        if (this.socket?.connected) return;
 
         try {
             const userInfoStr = await SecureStore.getItemAsync('userInfo');
             let token = null;
             if (userInfoStr) {
                 const userInfo = JSON.parse(userInfoStr);
-                token = userInfo.token;
+                token = userInfo?.token || null;
             }
 
             this.socket = io(BASE_URL, {
@@ -39,91 +37,87 @@ class SocketService {
             });
 
             this.socket.on('connect', () => {
-                logger.log('✅ Socket connected:', this.socket.id);
+                logger.log('Socket connected:', this.socket?.id);
+                while (this.pendingEmits.length > 0 && this.socket?.connected) {
+                    const next = this.pendingEmits.shift();
+                    if (!next) break;
+                    this.socket.emit(next.event, next.data);
+                }
             });
 
             this.socket.on('connect_error', (error) => {
-                logger.error('❌ Socket connection error:', error.message);
+                logger.error('Socket connection error:', error?.message || error);
             });
 
             this.socket.on('disconnect', (reason) => {
                 logger.log('Socket disconnected:', reason);
                 if (reason === 'io server disconnect') {
-                    // Reconnect if server disconnected
-                    this.socket.connect();
+                    this.socket?.connect();
                 }
             });
 
-            // Set up event listeners from map
-            this.listeners.forEach((callback, event) => {
-                this.socket.on(event, callback);
+            this.listeners.forEach((callbacks, event) => {
+                callbacks.forEach((callback) => {
+                    this.socket.on(event, callback);
+                });
             });
-        } catch (e) {
-            logger.error('Socket secure store error:', e);
+        } catch (error) {
+            logger.error('Socket setup failed:', error);
         }
     }
 
     on(event, callback) {
-        this.listeners.set(event, callback);
+        if (!event || typeof callback !== 'function') return;
+        const callbacks = this.listeners.get(event) || new Set();
+        callbacks.add(callback);
+        this.listeners.set(event, callbacks);
         if (this.socket) {
             this.socket.on(event, callback);
         }
     }
 
-    off(event) {
-        this.listeners.delete(event);
-        if (this.socket) {
-            this.socket.off(event);
+    off(event, callback) {
+        if (!event) return;
+        if (callback && typeof callback === 'function') {
+            const callbacks = this.listeners.get(event);
+            if (callbacks) {
+                callbacks.delete(callback);
+                if (callbacks.size === 0) {
+                    this.listeners.delete(event);
+                } else {
+                    this.listeners.set(event, callbacks);
+                }
+            }
+            this.socket?.off(event, callback);
+            return;
         }
+
+        this.listeners.delete(event);
+        this.socket?.off(event);
     }
 
     emit(event, data) {
-        if (DEMO_MODE) {
-            if (event === 'sendMessage') {
-                const incomingMessage = {
-                    _id: `demo-msg-${Date.now()}`,
-                    sender: data?.senderId || 'demo-user-1',
-                    type: data?.type || 'text',
-                    text: data?.text || '',
-                    fileName: data?.fileName,
-                    fileUrl: data?.fileUrl,
-                    fileSize: data?.fileSize,
-                    createdAt: new Date().toISOString(),
-                };
-                const onReceiveMessage = this.listeners.get('receiveMessage');
-                if (onReceiveMessage) {
-                    setTimeout(() => onReceiveMessage(incomingMessage), 0);
-                }
-                const onReadAck = this.listeners.get('messages_read_ack');
-                if (onReadAck) {
-                    setTimeout(() => onReadAck({ userId: 'demo-peer-1', readAt: new Date().toISOString() }), 0);
-                }
-            }
+        if (!event) return;
+
+        if (this.socket?.connected) {
+            this.socket.emit(event, data);
             return;
         }
 
-        if (!this.socket?.connected) {
-            logger.warn('Socket not connected, reconnecting...');
-            this.connect();
-            // Wait a bit then emit
-            setTimeout(() => {
-                this.socket?.emit(event, data);
-            }, 500);
-        } else {
-            this.socket.emit(event, data);
+        if (this.pendingEmits.length >= MAX_PENDING_EMITS) {
+            this.pendingEmits.shift();
         }
+        this.pendingEmits.push({ event, data });
+        void this.connect();
     }
 
     disconnect() {
-        if (DEMO_MODE) {
-            this.socket = null;
-            return;
-        }
-
         if (this.socket) {
+            this.socket.removeAllListeners();
             this.socket.disconnect();
             this.socket = null;
         }
+        this.pendingEmits = [];
     }
 }
 

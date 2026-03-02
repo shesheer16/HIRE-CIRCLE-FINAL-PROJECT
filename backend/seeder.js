@@ -8,6 +8,11 @@ connectDB();
 
 const importData = async () => {
   try {
+    const seedPassword = String(process.env.SEED_USER_PASSWORD || '').trim();
+    if (seedPassword.length < 12) {
+      throw new Error('SEED_USER_PASSWORD must be set with at least 12 characters');
+    }
+
     // Clear existing users to avoid duplicates
     await User.deleteMany();
 
@@ -15,17 +20,17 @@ const importData = async () => {
     const user = await User.create({
       name: 'Admin User',
       email: 'user@example.com',
-      password: '123456', // This will be encrypted automatically by your model
+      password: seedPassword, // Encrypted automatically by the model pre-save hook
       role: 'recruiter',
       hasCompletedProfile: true,
     });
 
     console.log('User Imported!');
     console.log('Email: user@example.com');
-    console.log('Password: 123456');
+    console.log('Password: [from SEED_USER_PASSWORD]');
     process.exit();
   } catch (error) {
-    console.error(`${error}`);
+    console.warn(`${error}`);
     process.exit(1);
   }
 };

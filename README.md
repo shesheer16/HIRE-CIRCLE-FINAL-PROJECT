@@ -1,17 +1,5 @@
-# Hirepp (HireCircle Platform)
+# Welcome to HIRE-NEW-V1
 
 Hiring platform.
 
-## Building the App
-
-```bash
-# Development build (with dev client)
-eas build --platform ios --profile development
-eas build --platform android --profile development
-
-# Preview APK (internal testing)
-eas build --platform android --profile preview
-
-# Production build
-eas build --platform all --profile production
-```
+Please refer to the official [PROJECT_EXECUTION_MASTER.md](./PROJECT_EXECUTION_MASTER.md) for all documentation, architecture, features, and deployment checklists.

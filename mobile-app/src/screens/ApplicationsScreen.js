@@ -1,23 +1,27 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    View, Text, FlatList, StyleSheet, TouchableOpacity, Modal, Image,
-    Animated, PanResponder, Dimensions, Alert, Platform
+    View,
+    Text,
+    FlatList,
+    StyleSheet,
+    TouchableOpacity,
+    Image,
+    Alert,
+    Platform,
+    Modal,
+    TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
-import ContactInfoView from '../components/contact/ContactInfoView';
+import CelebrationConfetti from '../components/CelebrationConfetti';
 import client from '../api/client';
-import { useFocusEffect } from '@react-navigation/native';
 import { validateApplicationsResponse, logValidationError } from '../utils/apiValidator';
 import { useAppStore } from '../store/AppStore';
-import { trackEvent } from '../services/analytics';
 import { DEMO_MODE } from '../config';
 
-const { width } = Dimensions.get('window');
-
-const FILTERS = ['All', 'Applied', 'Shortlisted', 'Accepted', 'Rejected', 'Hired', 'Archived'];
 const STATUS_MAP = {
     requested: 'Applied',
     pending: 'Applied',
@@ -30,155 +34,111 @@ const STATUS_MAP = {
     interview: 'Interview',
     applied: 'Applied',
 };
-const STATUS_COLOR_MAP = {
-    Applied: '#94a3b8',
-    Shortlisted: '#f59e0b',
-    Accepted: '#9333ea',
-    Rejected: '#ef4444',
-    Hired: '#10b981',
-    Interview: '#9333ea',
-    'Offer Received': '#0ea5e9',
-    'Offer Accepted': '#10b981',
-};
 
-const PRODUCTS = [
-    { name: 'Express Last-Mile', icon: '🚚', desc: 'Tech-enabled delivery for e-commerce and retail.' },
-    { name: 'Cold Chain Pros', icon: '❄️', desc: 'Temperature-sensitive food and vaccine transport.' },
-    { name: 'Heavy Hauling', icon: '🏗️', desc: 'Industrial equipment and raw material infrastructure.' },
-    { name: 'Warehouse Smart', icon: '🏢', desc: 'AI-driven inventory and storage management.' }
-];
+const CHAT_READY_STATUSES = new Set(['accepted', 'hired', 'offer_accepted', 'interview']);
+const FILTER_OPTIONS = ['All', 'Applied', 'Shortlisted', 'Accepted', 'Rejected', 'Hired', 'Archived'];
 
-const SwipeableRow = ({ children, onArchive }) => {
-    const pan = useRef(new Animated.ValueXY()).current;
-    const panResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (evt, gestureState) => Math.abs(gestureState.dx) > 10,
-            onPanResponderMove: Animated.event([null, { dx: pan.x }], { useNativeDriver: false }),
-            onPanResponderRelease: (evt, gestureState) => {
-                if (gestureState.dx < -80) {
-                    Animated.timing(pan, { toValue: { x: -width, y: 0 }, duration: 250, useNativeDriver: false }).start(() => onArchive());
-                } else {
-                    Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
-                }
-            }
-        })
-    ).current;
+const mapStatus = (status) => STATUS_MAP[String(status || '').toLowerCase()] || 'Applied';
 
-    return (
-        <View style={styles.swipeContainer}>
-            <View style={styles.swipeBackground}>
-                <Text style={styles.swipeText}>Archive</Text>
-            </View>
-            <Animated.View style={[styles.swipeForeground, { transform: [{ translateX: pan.x }] }]} {...panResponder.panHandlers}>
-                {children}
-            </Animated.View>
-        </View>
-    );
+const formatTimeLabel = (value) => {
+    if (!value) return 'Now';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Now';
+
+    const now = new Date();
+    const isToday = now.toDateString() === date.toDateString();
+    if (isToday) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    return date.toLocaleDateString();
 };
 
 export default function ApplicationsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const { role } = useAppStore();
-    const isEmployer = role === 'employer';
-    const [applications, setApplications] = useState([]);
-    const [archivedApplications, setArchivedApplications] = useState([]);
-    const [selectedFilter, setSelectedFilter] = useState('All');
-    const [selectedContact, setSelectedContact] = useState(null);
-    const [showVideoCall, setShowVideoCall] = useState(false);
-    const [isLoading, setIsLoading] = useState(!DEMO_MODE);
-    const [error, setError] = useState(null);
-    const isEmployeeViewingEmployer = !isEmployer;
+    const normalizedRole = String(role || '').toLowerCase();
+    const isEmployer = normalizedRole === 'employer' || normalizedRole === 'recruiter';
 
-    const mapStatus = (status) => STATUS_MAP[String(status || '').toLowerCase()] || 'Applied';
+    const [applications, setApplications] = useState([]);
+    const [isLoading, setIsLoading] = useState(!DEMO_MODE);
+    const [error, setError] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedFilter, setSelectedFilter] = useState('All');
+    const [showFilterModal, setShowFilterModal] = useState(false);
+    const [showHireConfetti, setShowHireConfetti] = useState(false);
+    const mountedRef = useRef(true);
+    const hireCelebrationShownRef = useRef(false);
+
+    const mapApplicationItem = useCallback((item) => {
+        const job = item?.job || {};
+        const employer = item?.employer || {};
+        const worker = item?.worker || {};
+
+        const workerName = worker?.firstName
+            ? `${worker.firstName} ${worker.lastName || ''}`.trim()
+            : (worker?.name || 'Candidate');
+        const employerName = employer?.companyName || employer?.name || job?.companyName || 'Employer';
+
+        const statusRaw = String(item?.status || '').toLowerCase();
+        const statusLabel = mapStatus(statusRaw);
+        const counterpartyName = isEmployer ? workerName : employerName;
+        const fallbackPreview = CHAT_READY_STATUSES.has(statusRaw)
+            ? 'Tap to open chat'
+            : `Status: ${statusLabel}`;
+
+        return {
+            applicationId: String(item?._id || ''),
+            counterpartyName,
+            jobTitle: job?.title || item?.jobTitle || 'Untitled role',
+            preview: String(item?.lastMessage || fallbackPreview),
+            statusRaw,
+            statusLabel,
+            timeLabel: formatTimeLabel(item?.updatedAt),
+            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(counterpartyName)}&background=7c3aed&color=fff`,
+            isChatReady: CHAT_READY_STATUSES.has(statusRaw),
+        };
+    }, [isEmployer]);
 
     const fetchApplications = useCallback(async () => {
         try {
-            setError(null);
+            if (!mountedRef.current) return;
+            setError('');
             if (!DEMO_MODE) {
                 setIsLoading(true);
-            }
-            if (isEmployer) {
-                const [jobsRes, applicationsRes] = await Promise.all([
-                    client.get('/api/jobs/my-jobs'),
-                    client.get('/api/applications'),
-                ]);
-                const jobsData = jobsRes?.data;
-                const jobs = Array.isArray(jobsData) ? jobsData : (jobsData?.data || []);
-                const appList = validateApplicationsResponse(applicationsRes?.data);
-
-                const applicantsByJobId = appList.reduce((acc, application) => {
-                    const jobId = String(application?.job?._id || application?.job || '');
-                    if (!jobId) return acc;
-                    acc[jobId] = (acc[jobId] || 0) + 1;
-                    return acc;
-                }, {});
-
-                const formattedJobs = jobs.map((job) => {
-                    const jobId = String(job._id);
-                    const applicantCount = applicantsByJobId[jobId] || 0;
-                    return {
-                        _id: jobId,
-                        itemType: 'job',
-                        jobId,
-                        companyId: null,
-                        companyName: job.companyName || 'Your Company',
-                        applicantName: '',
-                        rawStatus: 'pending',
-                        jobTitle: job.title || 'Untitled Role',
-                        status: 'Applied',
-                        badgeText: `${applicantCount} Applicants`,
-                        lastMessage: applicantCount > 0 ? 'Tap to review candidates in Talent.' : 'No applicants yet.',
-                        time: job.updatedAt ? new Date(job.updatedAt).toLocaleDateString() : 'Now',
-                        logo: `https://ui-avatars.com/api/?name=${encodeURIComponent(job.companyName || 'Company')}&background=7c3aed&color=fff`,
-                        applicantCount,
-                        matchScore: 0,
-                    };
-                });
-                setApplications(formattedJobs);
-                return;
             }
 
             const { data } = await client.get('/api/applications');
             const list = validateApplicationsResponse(data);
-            const formatted = list.map((item) => {
-                const job = item.job || {};
-                const companyName = job.companyName || item.employer?.name || item.companyName || 'Looking for Someone';
-                const applicantName = item.worker?.firstName
-                    ? `${item.worker.firstName} ${item.worker.lastName || ''}`.trim()
-                    : 'Applicant';
-                return {
-                    _id: item._id,
-                    itemType: 'application',
-                    jobId: job?._id || null,
-                    companyId: item.employer?._id || null,
-                    companyName,
-                    applicantName,
-                    rawStatus: String(item.status || '').toLowerCase(),
-                    jobTitle: job.title || item.jobTitle || 'Untitled Role',
-                    status: mapStatus(item.status),
-                    badgeText: null,
-                    lastMessage: item.lastMessage || 'Application updated.',
-                    time: item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : 'Now',
-                    logo: `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=7c3aed&color=fff`,
-                    matchScore: item.matchScore || 0,
-                };
-            });
-            setApplications(formatted);
+            const mapped = list.map(mapApplicationItem).filter((item) => item.applicationId);
+            if (mountedRef.current) {
+                setApplications(mapped);
+                if (!hireCelebrationShownRef.current && mapped.some((item) => item.statusRaw === 'hired')) {
+                    hireCelebrationShownRef.current = true;
+                    setShowHireConfetti(true);
+                }
+            }
         } catch (e) {
             if (e?.name === 'ApiValidationError') {
                 logValidationError(e, '/api/applications');
             }
-            setError('Could not load applications');
+            if (mountedRef.current) {
+                setError('Could not load conversations');
+            }
         } finally {
             if (!DEMO_MODE) {
-                setIsLoading(false);
+                if (mountedRef.current) {
+                    setIsLoading(false);
+                }
             }
         }
-    }, [isEmployer]);
+    }, [mapApplicationItem]);
 
     useEffect(() => {
-        fetchApplications();
-    }, [fetchApplications]);
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     useFocusEffect(
         useCallback(() => {
@@ -186,305 +146,376 @@ export default function ApplicationsScreen({ navigation }) {
         }, [fetchApplications])
     );
 
-    const filteredApps = selectedFilter === 'Archived'
-        ? archivedApplications
-        : isEmployer
-            ? applications
-            : applications.filter(app => selectedFilter === 'All' || app.status === selectedFilter);
+    const visibleApplications = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        return applications.filter((item) => {
+            const statusPass = selectedFilter === 'All' || item.statusLabel === selectedFilter;
+            if (!statusPass) return false;
 
-    const openContactInfo = (contact) => {
-        const profilePayload = {
-            source: 'applications_screen',
-            targetType: isEmployeeViewingEmployer ? 'employer' : 'candidate',
-            targetId: String(contact?.companyId || contact?._id || ''),
-        };
-        trackEvent('PROFILE_VIEWED', profilePayload);
-        setSelectedContact(contact);
-    };
+            if (!query) return true;
+            const haystack = `${item.counterpartyName} ${item.jobTitle} ${item.preview} ${item.statusLabel}`.toLowerCase();
+            return haystack.includes(query);
+        });
+    }, [applications, searchQuery, selectedFilter]);
 
-    const handleArchive = (id) => {
-        const item = applications.find(a => a._id === id);
-        if (item) {
-            setArchivedApplications(prev => [...prev, { ...item, archived: true }]);
-        }
-        setApplications(prev => prev.filter(a => a._id !== id));
-    };
-
-    const handleWithdraw = () => {
-        Alert.alert(
-            'Withdraw Application',
-            'Are you sure? This cannot be undone.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Withdraw', style: 'destructive', onPress: () => {
-                        setApplications(prev => prev.filter(a => a._id !== selectedContact._id));
-                        setSelectedContact(null);
-                    }
-                }
-            ]
-        );
-    };
-
-    const handleOpenApplication = (item) => {
-        if (isEmployer) {
-            navigation.navigate('Talent', {
-                jobId: item.jobId || item._id,
-                jobTitle: item.jobTitle,
-            });
+    const openChat = useCallback((item) => {
+        if (!item?.applicationId) {
+            Alert.alert('Chat unavailable', 'Missing conversation reference. Please refresh and try again.');
             return;
         }
-        const appliedPayload = {
-            source: 'applications_screen',
-            applicationId: String(item?._id || ''),
-            jobId: String(item?.jobId || ''),
-        };
-        trackEvent('JOB_APPLIED', appliedPayload);
-        navigation.navigate('Chat', { applicationId: item._id });
-    };
-
-    const handleOpenChat = (item) => {
-        navigation.navigate('Chat', { applicationId: item._id });
-    };
+        navigation.navigate('Chat', { applicationId: item.applicationId });
+    }, [navigation]);
 
     const renderItem = ({ item }) => (
-        <SwipeableRow onArchive={() => handleArchive(item._id)}>
-            <View style={styles.row}>
-                <TouchableOpacity style={styles.avatarWrap} onPress={() => openContactInfo(item)} activeOpacity={0.7}>
-                    <Image source={{ uri: item.logo }} style={styles.avatarImage} />
-                    <View style={styles.purpleDot} />
-                </TouchableOpacity>
+        <TouchableOpacity style={styles.row} activeOpacity={0.72} onPress={() => openChat(item)}>
+            <View style={styles.avatarWrap}>
+                <Image source={{ uri: item.avatar }} style={styles.avatar} />
+                <View style={styles.avatarStatusDot} />
+            </View>
 
-                <View style={styles.rowContent}>
-                    <View style={styles.rowTop}>
-                        <TouchableOpacity onPress={() => openContactInfo(item)} activeOpacity={0.7}>
-                            <Text style={styles.companyName} numberOfLines={1}>{item.companyName}</Text>
-                        </TouchableOpacity>
-                        <Text style={styles.timeText}>{item.time}</Text>
-                    </View>
-                    <TouchableOpacity activeOpacity={0.7} onPress={() => handleOpenApplication(item)}>
-                        <View style={styles.titleRow}>
-                            <Text style={styles.jobTitle} numberOfLines={1}>{item.jobTitle}</Text>
-                            <View style={[styles.statusBadge, { backgroundColor: `${STATUS_COLOR_MAP[item.status] || '#f1f5f9'}22` }]}>
-                                <Text style={[styles.statusBadgeText, { color: STATUS_COLOR_MAP[item.status] || '#64748b' }]}>{item.badgeText || item.status}</Text>
-                            </View>
-                        </View>
-                        <Text style={styles.lastMessage} numberOfLines={1}>{item.lastMessage}</Text>
-                    </TouchableOpacity>
-                    {item.itemType === 'application' && item.rawStatus === 'accepted' && (
-                        <TouchableOpacity style={styles.openChatBtn} onPress={() => handleOpenChat(item)}>
-                            <Text style={styles.openChatBtnText}>Open Chat</Text>
-                        </TouchableOpacity>
+            <View style={styles.rowBody}>
+                <View style={styles.rowTop}>
+                    <Text style={styles.nameText} numberOfLines={1}>{item.counterpartyName}</Text>
+                    <Text style={styles.timeText}>{item.timeLabel}</Text>
+                </View>
+
+                <Text style={styles.jobTitleText} numberOfLines={1}>{item.jobTitle}</Text>
+
+                <View style={styles.rowBottom}>
+                    <Text style={styles.previewText} numberOfLines={1}>{item.preview}</Text>
+                    {item.isChatReady ? (
+                        <View style={styles.readyBadge} />
+                    ) : (
+                        <Text style={styles.statusText}>{item.statusLabel}</Text>
                     )}
                 </View>
             </View>
-        </SwipeableRow>
+        </TouchableOpacity>
     );
 
     return (
         <View style={styles.container}>
-            {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-                <Text style={styles.headerTitle}>Applications</Text>
-                <Text style={styles.headerSubtitle}>Active conversations with employers</Text>
-
-                {/* Horizontal Filters */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-                    {FILTERS.map(f => (
-                        <TouchableOpacity key={f} onPress={() => setSelectedFilter(f)} style={[styles.filterPill, selectedFilter === f && styles.filterPillActive]}>
-                            <Text style={[styles.filterText, selectedFilter === f && styles.filterTextActive]}>{f}</Text>
+            <CelebrationConfetti visible={showHireConfetti} onEnd={() => setShowHireConfetti(false)} />
+            <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+                <View style={styles.headerTopRow}>
+                    <Text style={styles.headerTitle}>Applications</Text>
+                    <View style={styles.headerControls}>
+                        <View style={styles.searchWrap}>
+                            <Ionicons name="search" size={18} style={styles.searchIcon} />
+                            <TextInput
+                                style={styles.searchInput}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                placeholder="Search chats"
+                                placeholderTextColor="rgba(255,255,255,0.78)"
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                            />
+                        </View>
+                        <TouchableOpacity
+                            style={[styles.filterBtn, selectedFilter !== 'All' && styles.filterBtnActive]}
+                            onPress={() => setShowFilterModal(true)}
+                            activeOpacity={0.8}
+                        >
+                            <Ionicons
+                                name="options-outline"
+                                size={18}
+                                color={selectedFilter !== 'All' ? '#ede9fe' : 'rgba(255,255,255,0.92)'}
+                            />
                         </TouchableOpacity>
-                    ))}
-                </ScrollView>
+                    </View>
+                </View>
+                <Text style={styles.headerSubtitle}>
+                    {selectedFilter === 'All' ? 'Active conversations with employers' : `Filter: ${selectedFilter}`}
+                </Text>
             </View>
 
             {isLoading ? (
-                <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
-                    <SkeletonLoader height={72} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={72} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={72} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={72} style={{ borderRadius: 12, marginBottom: 12 }} />
+                <View style={styles.loaderWrap}>
+                    <SkeletonLoader height={72} style={styles.skeleton} />
+                    <SkeletonLoader height={72} style={styles.skeleton} />
+                    <SkeletonLoader height={72} style={styles.skeleton} />
+                    <SkeletonLoader height={72} style={styles.skeleton} />
                 </View>
             ) : error ? (
                 <EmptyState
-                    icon={<View style={styles.emptyIconCircle}><Text style={styles.emptyEmoji}>⚠️</Text></View>}
-                    title="Could Not Load Applications"
-                    message={error}
+                    icon="⚠️"
+                    title="Couldn’t load data"
+                    subtitle="Pull down to refresh."
                     actionLabel="Retry"
                     onAction={fetchApplications}
                 />
             ) : (
                 <FlatList
-                    data={filteredApps}
-                    keyExtractor={item => item._id}
+                    data={visibleApplications}
+                    keyExtractor={(item) => item.applicationId}
                     renderItem={renderItem}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
                     removeClippedSubviews={Platform.OS === 'android'}
-                    maxToRenderPerBatch={10}
+                    maxToRenderPerBatch={12}
                     windowSize={10}
                     initialNumToRender={12}
                     ListEmptyComponent={
                         <EmptyState
-                            icon={<View style={styles.emptyIconCircle}><Text style={styles.emptyEmoji}>📬</Text></View>}
-                            title="No Applications Found"
-                            message="Try changing your filter or apply to new jobs."
-                            actionLabel={selectedFilter !== 'All' ? "Clear Filters" : "Find Jobs"}
+                            icon={applications.length > 0 ? '🔎' : (isEmployer ? '📥' : '📋')}
+                            title={applications.length > 0 ? 'No results' : (isEmployer ? 'No candidates yet' : 'No applications yet')}
+                            subtitle={applications.length > 0
+                                ? 'Try clearing search or filters.'
+                                : (isEmployer
+                                    ? 'Your job posts will surface matches here'
+                                    : 'Apply to jobs to start conversations')}
+                            actionLabel={applications.length > 0 ? 'Clear Filters' : (isEmployer ? 'Post a Need' : 'Browse Jobs')}
                             onAction={() => {
-                                if (selectedFilter !== 'All') {
+                                if (applications.length > 0) {
+                                    setSearchQuery('');
                                     setSelectedFilter('All');
-                                } else {
-                                    navigation.navigate(isEmployer ? 'My Jobs' : 'Jobs');
+                                    return;
                                 }
+                                navigation.navigate(isEmployer ? 'My Jobs' : 'Jobs');
                             }}
                         />
                     }
                 />
             )}
 
-            {/* Contact Info Modal */}
-            <Modal visible={!!selectedContact} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSelectedContact(null)}>
-                {selectedContact && (
-                    <ContactInfoView
-                        presentation="modal"
-                        mode={isEmployeeViewingEmployer ? 'employer' : 'candidate'}
-                        title={isEmployeeViewingEmployer ? 'Enterprise Hub' : 'Candidate Details'}
-                        data={{
-                            name: selectedContact.companyName,
-                            avatar: selectedContact.logo,
-                            headline: isEmployeeViewingEmployer ? 'Moving the world, one delivery at a time.' : selectedContact.jobTitle,
-                            industryTag: isEmployeeViewingEmployer ? 'LOGISTICS & SUPPLY CHAIN' : 'CANDIDATE PROFILE',
-                            products: PRODUCTS,
-                            mission: 'We are building the backbone of modern commerce. By integrating AI with a massive fleet network, we ensure fair pay for partners and lightning-fast logistics for businesses.',
-                            industry: 'Logistics & Supply Chain',
-                            hq: 'Hyderabad, IN',
-                            timeline: [
-                                { year: '2023', event: 'Reached 10M successful deliveries nationwide' },
-                                { year: '2021', event: 'Expanded cross-border logistics to SEA regions' },
-                                { year: '2015', event: 'Founded in Hyderabad as a small bike-fleet' },
-                            ],
-                            contactInfo: {
-                                partnership: 'partners@logitech.in',
-                                support: '+91 1800 200 1234',
-                                website: 'www.logitech.in',
-                            },
-                            summary: 'Experienced candidate with strong operational background and consistent delivery record.',
-                            experienceYears: 3,
-                            skills: ['React', 'Node', 'Ops', 'Logistics'],
-                        }}
-                        onBack={() => setSelectedContact(null)}
-                        onVideoPress={() => setShowVideoCall(true)}
-                        onPrimaryAction={isEmployeeViewingEmployer ? handleWithdraw : undefined}
-                        primaryActionLabel={isEmployeeViewingEmployer ? 'Withdraw Application' : undefined}
-                    />
-                )}
-            </Modal>
-
-            <Modal visible={showVideoCall} transparent animationType="fade" onRequestClose={() => setShowVideoCall(false)}>
-                <View style={styles.videoOverlay}>
-                    <View style={styles.videoRemote}>
-                        <Text style={styles.videoRemoteInitial}>
-                            {(selectedContact?.companyName || 'U').charAt(0).toUpperCase()}
-                        </Text>
-                        <Text style={styles.videoConnecting}>Connecting...</Text>
+            <Modal
+                visible={showFilterModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowFilterModal(false)}
+            >
+                <TouchableOpacity
+                    activeOpacity={1}
+                    style={styles.filterOverlay}
+                    onPress={() => setShowFilterModal(false)}
+                >
+                    <View style={styles.filterSheet}>
+                        <Text style={styles.filterSheetTitle}>Filter Applications</Text>
+                        {FILTER_OPTIONS.map((option) => (
+                            <TouchableOpacity
+                                key={option}
+                                style={styles.filterOption}
+                                onPress={() => {
+                                    setSelectedFilter(option);
+                                    setShowFilterModal(false);
+                                }}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={[styles.filterOptionText, selectedFilter === option && styles.filterOptionTextActive]}>
+                                    {option}
+                                </Text>
+                                {selectedFilter === option ? (
+                                    <Ionicons name="checkmark-circle" size={18} color="#7c3aed" />
+                                ) : null}
+                            </TouchableOpacity>
+                        ))}
                     </View>
-                    <View style={styles.videoPip}>
-                        <Image source={{ uri: selectedContact?.logo }} style={styles.videoPipImg} />
-                    </View>
-                    <View style={styles.videoTitleWrap}>
-                        <Text style={styles.videoTitle}>{selectedContact?.companyName || 'Contact'}</Text>
-                        <View style={styles.videoSecureChip}>
-                            <Text style={styles.videoSecureText}>Secure Video Link</Text>
-                        </View>
-                    </View>
-                    <View style={styles.videoControls}>
-                        <TouchableOpacity style={styles.videoControlBtn}>
-                            <Ionicons name="mic-off-outline" size={22} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.videoEndBtn} onPress={() => setShowVideoCall(false)}>
-                            <Ionicons name="call-outline" size={26} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.videoControlBtn}>
-                            <Ionicons name="videocam-outline" size={22} color="#fff" />
-                        </TouchableOpacity>
-                    </View>
-                </View>
+                </TouchableOpacity>
             </Modal>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f8fafc' },
-    header: { backgroundColor: '#7c3aed', paddingHorizontal: 20, paddingBottom: 16, zIndex: 10 },
-    headerTitle: { fontSize: 24, fontWeight: '900', color: '#fff', marginBottom: 4 },
-    headerSubtitle: { fontSize: 13, color: 'rgba(255,255,255,0.8)', fontWeight: '500', marginBottom: 16 },
-
-    filterScroll: { paddingRight: 20, gap: 8 },
-    filterPill: { backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    filterPillActive: { backgroundColor: '#fff', borderColor: '#fff' },
-    filterText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
-    filterTextActive: { color: '#7c3aed' },
-
-    listContent: { paddingBottom: 40, paddingTop: 8 },
-    swipeContainer: { backgroundColor: '#fee2e2' },
-    swipeBackground: { position: 'absolute', right: 24, top: 0, bottom: 0, justifyContent: 'center' },
-    swipeText: { color: '#ef4444', fontWeight: '900', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1 },
-    swipeForeground: { backgroundColor: '#fff' },
-
-    row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingHorizontal: 16, paddingVertical: 16 },
-    avatarWrap: { position: 'relative', marginRight: 16 },
-    avatarImage: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#f1f5f9' },
-    purpleDot: { position: 'absolute', bottom: -2, right: -2, width: 14, height: 14, backgroundColor: '#7c3aed', borderRadius: 7, borderWidth: 2, borderColor: '#fff' },
-
-    rowContent: { flex: 1, justifyContent: 'center' },
-    rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
-    companyName: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-    timeText: { fontSize: 10, color: '#94a3b8', fontWeight: '500' },
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-    jobTitle: { fontSize: 12, fontWeight: '700', color: '#7c3aed', flexShrink: 1 },
-    statusBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-    statusBadgeText: { fontSize: 9, fontWeight: '900', color: '#64748b', textTransform: 'uppercase' },
-    lastMessage: { fontSize: 11, color: '#64748b', fontWeight: '500' },
-    openChatBtn: {
-        alignSelf: 'flex-start',
-        marginTop: 8,
-        backgroundColor: '#faf5ff',
+    container: {
+        flex: 1,
+        backgroundColor: '#f7f9ff',
+    },
+    header: {
+        backgroundColor: '#7c3aed',
+        paddingHorizontal: 16,
+        paddingBottom: 12,
+    },
+    headerTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    headerTitle: {
+        fontSize: 24,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    headerControls: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 8,
+    },
+    searchWrap: {
+        maxWidth: 190,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 0,
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
+        borderRadius: 10,
+        paddingHorizontal: 4,
+        height: 34,
+    },
+    searchIcon: {
+        color: '#f8fafc',
+        opacity: 0.9,
+    },
+    searchInput: {
+        flex: 1,
+        marginLeft: 5,
+        fontSize: 13,
+        color: '#ffffff',
+        paddingVertical: 0,
+    },
+    filterBtn: {
+        width: 36,
+        height: 36,
         borderWidth: 1,
-        borderColor: '#e9d5ff',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+        borderColor: 'rgba(255,255,255,0.35)',
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    openChatBtnText: {
-        fontSize: 11,
-        fontWeight: '800',
+    filterBtnActive: {
+        borderColor: '#ede9fe',
+        backgroundColor: '#8b5cf6',
+    },
+    headerSubtitle: {
+        marginTop: 6,
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.88)',
+        fontWeight: '500',
+    },
+    loaderWrap: {
+        paddingHorizontal: 16,
+        paddingTop: 10,
+    },
+    skeleton: {
+        borderRadius: 12,
+        marginBottom: 10,
+    },
+    listContent: {
+        paddingTop: 4,
+        paddingBottom: 24,
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#ecf1f7',
+        backgroundColor: 'rgba(255,255,255,0.98)',
+    },
+    avatarWrap: {
+        marginRight: 12,
+        position: 'relative',
+    },
+    avatar: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        borderWidth: 1,
+        borderColor: '#d9e2ec',
+    },
+    avatarStatusDot: {
+        position: 'absolute',
+        right: -1,
+        bottom: -1,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        borderWidth: 2,
+        borderColor: '#ffffff',
+        backgroundColor: '#9333ea',
+    },
+    rowBody: {
+        flex: 1,
+        minHeight: 50,
+        justifyContent: 'center',
+    },
+    rowTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    nameText: {
+        flex: 1,
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#111827',
+        marginRight: 8,
+    },
+    timeText: {
+        fontSize: 12,
+        color: '#94a3b8',
+        fontWeight: '500',
+    },
+    jobTitleText: {
+        marginTop: 2,
+        fontSize: 13,
         color: '#7c3aed',
+        fontWeight: '600',
     },
-
-    emptyIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-    emptyEmoji: { fontSize: 40 },
-
-    // Modal
-
-
-    // Details Section
-
-
-
-
-
-    videoOverlay: { flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center' },
-    videoRemote: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111827' },
-    videoRemoteInitial: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#1f2937', textAlign: 'center', textAlignVertical: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 52, fontWeight: '900', lineHeight: 120 },
-    videoConnecting: { color: '#94a3b8', fontSize: 12, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1, marginTop: 14 },
-    videoPip: { position: 'absolute', top: 56, right: 16, width: 128, height: 176, borderRadius: 16, overflow: 'hidden', borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)' },
-    videoPipImg: { width: '100%', height: '100%', opacity: 0.9 },
-    videoTitleWrap: { position: 'absolute', top: 62, alignItems: 'center' },
-    videoTitle: { color: '#fff', fontSize: 22, fontWeight: '900' },
-    videoSecureChip: { backgroundColor: 'rgba(124,58,237,0.35)', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(124,58,237,0.65)', paddingHorizontal: 12, paddingVertical: 5, marginTop: 6 },
-    videoSecureText: { color: '#ddd6fe', fontSize: 10, fontWeight: '900' },
-    videoControls: { position: 'absolute', bottom: 48, flexDirection: 'row', alignItems: 'center', gap: 20 },
-    videoControlBtn: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' },
-    videoEndBtn: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#ef4444', justifyContent: 'center', alignItems: 'center' },
+    rowBottom: {
+        marginTop: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    previewText: {
+        flex: 1,
+        fontSize: 13,
+        color: '#64748b',
+        marginRight: 8,
+    },
+    statusText: {
+        fontSize: 11,
+        color: '#94a3b8',
+        fontWeight: '600',
+    },
+    readyBadge: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#9333ea',
+    },
+    filterOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(15,23,42,0.28)',
+        justifyContent: 'flex-end',
+    },
+    filterSheet: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 18,
+        borderTopRightRadius: 18,
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 24,
+    },
+    filterSheetTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: 10,
+    },
+    filterOption: {
+        minHeight: 44,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    filterOptionText: {
+        fontSize: 14,
+        color: '#334155',
+        fontWeight: '500',
+    },
+    filterOptionTextActive: {
+        color: '#7c3aed',
+        fontWeight: '700',
+    },
 });

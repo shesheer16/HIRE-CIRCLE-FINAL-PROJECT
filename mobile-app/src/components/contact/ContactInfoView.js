@@ -11,17 +11,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 const DEFAULT_BANNER = 'https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=800&auto=format&fit=crop';
-const DEFAULT_PRODUCTS = [
-    { name: 'Express Last-Mile', icon: '🚚', desc: 'Tech-enabled delivery for e-commerce and retail.' },
-    { name: 'Cold Chain Pros', icon: '❄️', desc: 'Temperature-sensitive food and vaccine transport.' },
-    { name: 'Heavy Hauling', icon: '🏗️', desc: 'Industrial equipment and raw material infrastructure.' },
-    { name: 'Warehouse Smart', icon: '🏢', desc: 'AI-driven inventory and storage management.' }
-];
-const DEFAULT_TIMELINE = [
-    { year: '2023', event: 'Reached 10M successful deliveries nationwide' },
-    { year: '2021', event: 'Expanded cross-border logistics to SEA regions' },
-    { year: '2015', event: 'Founded in Hyderabad as a small bike-fleet' },
-];
+const DEFAULT_PRODUCTS = [];
+const DEFAULT_TIMELINE = [];
 
 export default function ContactInfoView({
     mode = 'employer',
@@ -49,13 +40,15 @@ export default function ContactInfoView({
         products = DEFAULT_PRODUCTS,
         timeline = DEFAULT_TIMELINE,
         contactInfo = {
-            partnership: 'partners@logitech.in',
-            support: '+91 1800 200 1234',
-            website: 'www.logitech.in',
+            partnership: '',
+            support: '',
+            website: '',
         },
         summary = 'Experienced candidate with strong operational background and consistent delivery record.',
         experienceYears = 3,
         skills = ['React', 'Node', 'Ops', 'Logistics'],
+        highlights = [],
+        workHistory = [],
     } = data;
 
     return (
@@ -132,22 +125,41 @@ export default function ContactInfoView({
                             </View>
                         </View>
 
+                        {Array.isArray(highlights) && highlights.length ? (
+                            <View style={styles.card}>
+                                <View style={styles.sectionHeaderRow}>
+                                    <Ionicons name="stats-chart-outline" size={18} color="#9333ea" style={{ marginRight: 6 }} />
+                                    <Text style={styles.sectionTitle}>ROLE SNAPSHOT</Text>
+                                </View>
+                                {highlights.map((row, idx) => (
+                                    <View key={`${row?.label || 'row'}-${idx}`} style={styles.snapshotRow}>
+                                        <Text style={styles.snapshotLabel}>{row?.label || 'Metric'}</Text>
+                                        <Text style={styles.snapshotValue}>{row?.value || 'N/A'}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
+
                         <View style={styles.card}>
                             <View style={styles.sectionHeaderRow}>
                                 <Ionicons name="briefcase-outline" size={18} color="#9333ea" style={{ marginRight: 6 }} />
                                 <Text style={styles.sectionTitle}>PRODUCTS & SERVICES</Text>
                             </View>
-                            {(products || []).map((product, index) => (
-                                <View key={`${product.name}-${index}`} style={styles.productRow}>
-                                    <View style={styles.productIconBox}>
-                                        <Text style={styles.productIconExt}>{product.icon || '📦'}</Text>
+                            {(products || []).length > 0 ? (
+                                (products || []).map((product, index) => (
+                                    <View key={`${product.name}-${index}`} style={styles.productRow}>
+                                        <View style={styles.productIconBox}>
+                                            <Text style={styles.productIconExt}>{product.icon || '📦'}</Text>
+                                        </View>
+                                        <View style={styles.productInfo}>
+                                            <Text style={styles.productName}>{product.name}</Text>
+                                            <Text style={styles.productDesc}>{product.desc}</Text>
+                                        </View>
                                     </View>
-                                    <View style={styles.productInfo}>
-                                        <Text style={styles.productName}>{product.name}</Text>
-                                        <Text style={styles.productDesc}>{product.desc}</Text>
-                                    </View>
-                                </View>
-                            ))}
+                                ))
+                            ) : (
+                                <Text style={styles.emptyDataText}>No product overview shared yet.</Text>
+                            )}
                         </View>
 
                         <View style={styles.card}>
@@ -155,32 +167,36 @@ export default function ContactInfoView({
                                 <Ionicons name="globe-outline" size={18} color="#9333ea" style={{ marginRight: 6 }} />
                                 <Text style={styles.sectionTitle}>TIMELINE</Text>
                             </View>
-                            {(timeline || []).map((item) => (
-                                <View key={`${item.year}-${item.event}`} style={styles.timelineItem}>
-                                    <View style={styles.timelineDot} />
-                                    <View style={styles.timelineInfo}>
-                                        <View style={styles.timelineYearBadge}>
-                                            <Text style={styles.timelineYearText}>{item.year}</Text>
+                            {(timeline || []).length > 0 ? (
+                                (timeline || []).map((item) => (
+                                    <View key={`${item.year}-${item.event}`} style={styles.timelineItem}>
+                                        <View style={styles.timelineDot} />
+                                        <View style={styles.timelineInfo}>
+                                            <View style={styles.timelineYearBadge}>
+                                                <Text style={styles.timelineYearText}>{item.year}</Text>
+                                            </View>
+                                            <Text style={styles.timelineEventText}>{item.event}</Text>
                                         </View>
-                                        <Text style={styles.timelineEventText}>{item.event}</Text>
                                     </View>
-                                </View>
-                            ))}
+                                ))
+                            ) : (
+                                <Text style={styles.emptyDataText}>No company timeline shared yet.</Text>
+                            )}
                         </View>
 
                         <View style={styles.darkContactCard}>
                             <Text style={styles.darkContactTitle}>CONTACT INFORMATION</Text>
                             <View style={styles.darkContactRow}>
                                 <Text style={styles.darkContactLabel}>PARTNERSHIP</Text>
-                                <Text style={styles.darkContactValue}>{contactInfo?.partnership || ''}</Text>
+                                <Text style={styles.darkContactValue}>{contactInfo?.partnership || 'Not shared'}</Text>
                             </View>
                             <View style={styles.darkContactRow}>
                                 <Text style={styles.darkContactLabel}>SUPPORT</Text>
-                                <Text style={styles.darkContactValue}>{contactInfo?.support || ''}</Text>
+                                <Text style={styles.darkContactValue}>{contactInfo?.support || 'Not shared'}</Text>
                             </View>
                             <View style={styles.darkContactRow}>
                                 <Text style={styles.darkContactLabel}>OFFICIAL WEB</Text>
-                                <Text style={styles.darkContactValue}>{contactInfo?.website || ''}</Text>
+                                <Text style={styles.darkContactValue}>{contactInfo?.website || 'Not shared'}</Text>
                             </View>
                         </View>
                     </View>
@@ -189,12 +205,23 @@ export default function ContactInfoView({
                         <View style={styles.card}>
                             <View style={styles.summaryHeader}>
                                 <Text style={styles.summaryTitle}>⚡ Smart Summary</Text>
-                                <TouchableOpacity style={styles.resumeBtn}>
+                                <View style={styles.resumeBtn}>
                                     <Text style={styles.resumeBtnText}>VIEW RESUME</Text>
-                                </TouchableOpacity>
+                                </View>
                             </View>
                             <Text style={styles.summaryText}>{summary}</Text>
                         </View>
+                        {Array.isArray(highlights) && highlights.length ? (
+                            <View style={styles.card}>
+                                <Text style={styles.sectionTitle}>PROFILE METRICS</Text>
+                                {highlights.map((row, idx) => (
+                                    <View key={`${row?.label || 'row'}-${idx}`} style={styles.snapshotRow}>
+                                        <Text style={styles.snapshotLabel}>{row?.label || 'Metric'}</Text>
+                                        <Text style={styles.snapshotValue}>{row?.value || 'N/A'}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
                         <View style={styles.card}>
                             <Text style={styles.sectionTitle}>EXPERIENCE & SKILLS</Text>
                             <View style={styles.expSkillRow}>
@@ -211,6 +238,19 @@ export default function ContactInfoView({
                                 </View>
                             </View>
                         </View>
+                        {Array.isArray(workHistory) && workHistory.length ? (
+                            <View style={styles.card}>
+                                <Text style={styles.sectionTitle}>WORK HISTORY</Text>
+                                {workHistory.map((row, idx) => (
+                                    <View key={`${row?.roleName || 'work'}-${idx}`} style={styles.snapshotRow}>
+                                        <Text style={styles.snapshotLabel}>{row?.roleName || 'Role'}</Text>
+                                        <Text style={styles.snapshotValue}>
+                                            {Number(row?.experienceInRole || 0)} yrs
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
                     </View>
                 )}
 
@@ -265,6 +305,7 @@ const styles = StyleSheet.create({
     productInfo: { flex: 1 },
     productName: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
     productDesc: { fontSize: 12, color: '#64748b', marginTop: 2 },
+    emptyDataText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
     timelineItem: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
     timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#7c3aed', marginTop: 10, marginRight: 8 },
     timelineInfo: { flex: 1 },
@@ -288,6 +329,26 @@ const styles = StyleSheet.create({
     skillWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, flex: 1 },
     skillPill: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 },
     skillPillText: { fontSize: 10, fontWeight: '900', color: '#475569', textTransform: 'uppercase' },
+    snapshotRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eef2ff',
+    },
+    snapshotLabel: {
+        color: '#64748b',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    snapshotValue: {
+        color: '#0f172a',
+        fontSize: 12,
+        fontWeight: '800',
+        maxWidth: '55%',
+        textAlign: 'right',
+    },
     primaryActionButton: { marginHorizontal: 16, marginTop: 8, borderWidth: 1, borderColor: '#dc2626', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
     primaryActionText: { color: '#dc2626', fontWeight: '900', fontSize: 13 },
 });

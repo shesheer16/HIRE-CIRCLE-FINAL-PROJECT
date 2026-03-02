@@ -2,16 +2,16 @@
   "expo": {
     "name": "HireCircle",
     "slug": "hirecircle",
-    "version": "1.0.1",
+    "version": "1.0.0",
     "jsEngine": "hermes",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0f172a"
     },
     "ios": {
       "supportsTablet": true,
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "com.lokesh.hirecircle",
-      "versionCode": 2,
+      "versionCode": 10,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -32,23 +32,33 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0f172a"
       },
       "edgeToEdgeEnabled": false
     },
     "androidStatusBar": {
-      "backgroundColor": "#5b21b6",
+      "backgroundColor": "#0f172a",
       "barStyle": "light-content",
       "translucent": false
     },
     "androidNavigationBar": {
-      "backgroundColor": "#ffffff",
-      "barStyle": "dark-content"
+      "backgroundColor": "#0f172a",
+      "barStyle": "light-content"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
+          }
+        }
+      ],
       "expo-secure-store",
       "expo-localization",
       [
@@ -68,9 +78,11 @@
       "expo-document-picker"
     ],
     "extra": {
+      "privacyPolicyUrl": "https://hirecircle.in/privacy",
       "eas": {
-        "projectId": "your-project-id"
+        "projectId": "0feb4698-0350-474c-ad6e-521ae3337adb"
       }
-    }
+    },
+    "owner": "lokesh888"
   }
 }

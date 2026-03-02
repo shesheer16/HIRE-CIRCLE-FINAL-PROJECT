@@ -54,24 +54,6 @@ export default function PostJobScreen({ navigation, route }) {
 
         setAiLoading(true);
         try {
-            // Using the manual Gemini endpoint we created earlier?
-            // Or a specific suggestive endpoint.
-            // Let's use the generic 'generate' endpoint if available or create a specific one.
-            // Assuming we reuse the gemini service via a new route or just hardcode a prompt here to a generic completions endpoint.
-            // Ideally backend should handle this: POST /api/jobs/suggest-requirements
-            // Since that doesn't exist yet, I'll mock the call or use the existing 'generate' if accessible.
-            // For Phase 4.1, let's simulate or try to hit a generic endpoint. 
-            // Better: Add the endpoint to backend in next step (or parallel).
-            // I'll assume we can call `POST /api/jobs/suggest` (I should create this route).
-
-            // Temporary: Mock response for UI testing if backend route isn't ready
-            // const mockSuggestions = "Valid Driver's License, 2+ Years Experience, Clean Driving Record";
-            // setRequirements(mockSuggestions);
-
-            // Real attempt (will fail if route not exists, but I will add it)
-            const prompt = `Suggest 3-5 short, bulleted requirements for a "${title}" job. Return only the text.`;
-            // Actually, let's look for a generic AI route.
-            // I'll create a dedicated route for this in the backend plan.
             const { data } = await client.post('/api/jobs/suggest', { title });
             setRequirements(data.suggestions);
 
@@ -117,7 +99,16 @@ export default function PostJobScreen({ navigation, route }) {
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity
+                    onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                            return;
+                        }
+                        navigation.navigate('MainTab', { screen: 'My Jobs' });
+                    }}
+                    style={styles.backButton}
+                >
                     <Ionicons name="arrow-back" size={24} color="#374151" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Create New Job</Text>

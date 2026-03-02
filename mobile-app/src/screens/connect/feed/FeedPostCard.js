@@ -6,7 +6,8 @@ import FeedActionsBar from './FeedActionsBar';
 import VoicePost from './VoicePost';
 import GalleryPost from './GalleryPost';
 import BountyPost from './BountyPost';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS, SHADOWS, SPACING } from '../../../theme/theme';
+import { connectPalette } from '../connectPalette';
 
 function FeedPostCardComponent({
     post,
@@ -21,9 +22,13 @@ function FeedPostCardComponent({
     onToggleVouch,
     onCommentInputChange,
     onSubmitComment,
+    onReport,
 }) {
     const isBounty = post?.type === 'bounty';
     const commentsCount = (Array.isArray(commentList) ? commentList.length : 0) + Number(post?.comments || 0);
+    const vouchCount = Number(post?.vouchCount || 0);
+    const totalEngagement = Number(likeCount || 0) + commentsCount + vouchCount;
+    const isTrending = Boolean(post?.trending) || totalEngagement >= 12;
 
     const handleCommentChange = useCallback((text) => {
         onCommentInputChange(post._id, text);
@@ -51,7 +56,7 @@ function FeedPostCardComponent({
             {isBounty ? (
                 <>
                     <LinearGradient
-                        colors={[theme.primary, theme.indigo]}
+                        colors={[connectPalette.accent, connectPalette.accentDark]}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                         style={StyleSheet.absoluteFillObject}
@@ -68,7 +73,12 @@ function FeedPostCardComponent({
                     <View style={styles.authorRow}>
                         <Text style={[styles.author, isBounty && styles.authorBounty]}>{post.author}</Text>
                         {(post.karma > 1000 || isBounty) ? (
-                            <IconCheck size={14} color={isBounty ? theme.surface : theme.indigo} />
+                            <IconCheck size={14} color={isBounty ? connectPalette.surface : connectPalette.accent} />
+                        ) : null}
+                        {isTrending ? (
+                            <View style={styles.trendingBadge}>
+                                <Text style={styles.trendingBadgeText}>Trending</Text>
+                            </View>
                         ) : null}
                     </View>
                     <Text style={[styles.meta, isBounty && styles.metaBounty]}>
@@ -77,12 +87,29 @@ function FeedPostCardComponent({
                         {String(post.time || 'Just now').toUpperCase()}
                     </Text>
                 </View>
+                <TouchableOpacity
+                    style={styles.reportPostBtn}
+                    activeOpacity={0.8}
+                    onPress={() => onReport?.(post)}
+                >
+                    <Text style={styles.reportPostBtnText}>Report</Text>
+                </TouchableOpacity>
                 <View style={styles.karmaBadge}>
                     <Text style={styles.karmaBadgeText}>+{post.karma || 0} KARMA</Text>
                 </View>
             </View>
 
             <Text style={[styles.bodyText, isBounty && styles.bodyTextBounty]}>{post.text}</Text>
+
+            <View style={[styles.engagementRow, isBounty && styles.engagementRowBounty]}>
+                <Text style={[styles.engagementText, isBounty && styles.engagementTextBounty]}>
+                    {totalEngagement} live interactions
+                </Text>
+                <Text style={[styles.engagementDot, isBounty && styles.engagementDotBounty]}>•</Text>
+                <Text style={[styles.engagementText, isBounty && styles.engagementTextBounty]}>
+                    {vouchCount} vouches
+                </Text>
+            </View>
 
             {postTypeBody}
 
@@ -117,11 +144,11 @@ function FeedPostCardComponent({
                             onChangeText={handleCommentChange}
                             onSubmitEditing={handleSubmitComment}
                             placeholder="Add a comment..."
-                            placeholderTextColor={theme.textMuted}
+                            placeholderTextColor={connectPalette.subtle}
                             returnKeyType="send"
                         />
                         <TouchableOpacity style={styles.commentSendButton} onPress={handleSubmitComment} activeOpacity={0.85}>
-                            <IconSend size={14} color={theme.surface} />
+                            <IconSend size={14} color={connectPalette.surface} />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -136,20 +163,16 @@ const styles = StyleSheet.create({
     card: {
         borderRadius: RADIUS.xl,
         borderWidth: 1,
-        borderColor: theme.border,
-        backgroundColor: theme.surface,
-        padding: 16,
-        marginBottom: 12,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderColor: connectPalette.line,
+        backgroundColor: connectPalette.surface,
+        padding: SPACING.md,
+        marginBottom: SPACING.smd,
+        ...SHADOWS.md,
         overflow: 'hidden',
     },
     bountyCard: {
-        backgroundColor: theme.primary,
-        borderColor: theme.primaryDark,
+        backgroundColor: connectPalette.accent,
+        borderColor: connectPalette.accentDark,
     },
     bountyAwardBg: {
         position: 'absolute',
@@ -162,11 +185,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     avatar: {
-        width: 42,
-        height: 42,
+        width: 44,
+        height: 44,
         borderRadius: RADIUS.full,
         borderWidth: 1,
-        borderColor: theme.border,
+        borderColor: '#dbe7ff',
         marginRight: 10,
     },
     headerTextBlock: {
@@ -178,16 +201,30 @@ const styles = StyleSheet.create({
         gap: 4,
         marginBottom: 2,
     },
-    author: {
-        color: theme.textPrimary,
-        fontSize: 14,
+    trendingBadge: {
+        borderRadius: RADIUS.full,
+        backgroundColor: '#fee2e2',
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    trendingBadgeText: {
+        color: '#b91c1c',
+        fontSize: 9,
         fontWeight: '900',
+        letterSpacing: 0.2,
+    },
+    author: {
+        color: connectPalette.text,
+        fontSize: 14,
+        fontWeight: '800',
     },
     authorBounty: {
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     meta: {
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         fontSize: 10,
         fontWeight: '700',
         letterSpacing: 0.2,
@@ -197,19 +234,35 @@ const styles = StyleSheet.create({
     },
     karmaBadge: {
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: '#f1f6ff',
+        borderWidth: 1,
+        borderColor: '#dce9ff',
         paddingHorizontal: 8,
         paddingVertical: 4,
+        marginLeft: 8,
+    },
+    reportPostBtn: {
+        borderRadius: RADIUS.full,
+        borderWidth: 1,
+        borderColor: '#e6ecf7',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        backgroundColor: '#fbfcff',
+    },
+    reportPostBtnText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: connectPalette.subtle,
     },
     karmaBadgeText: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
         fontSize: 10,
         fontWeight: '900',
         letterSpacing: 0.2,
     },
     bodyText: {
         marginTop: 12,
-        color: theme.textSecondary,
+        color: connectPalette.text,
         fontSize: 14,
         lineHeight: 20,
         fontWeight: '500',
@@ -217,12 +270,38 @@ const styles = StyleSheet.create({
     bodyTextBounty: {
         color: 'rgba(255,255,255,0.92)',
     },
+    engagementRow: {
+        marginTop: 8,
+        marginBottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    engagementRowBounty: {
+        opacity: 0.9,
+    },
+    engagementText: {
+        color: '#475569',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    engagementTextBounty: {
+        color: 'rgba(255,255,255,0.86)',
+    },
+    engagementDot: {
+        color: '#94a3b8',
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    engagementDotBounty: {
+        color: 'rgba(255,255,255,0.6)',
+    },
     commentSection: {
-        marginTop: 10,
+        marginTop: SPACING.smd,
         borderTopWidth: 1,
-        borderTopColor: theme.border,
-        paddingTop: 10,
-        gap: 8,
+        borderTopColor: connectPalette.line,
+        paddingTop: SPACING.smd,
+        gap: SPACING.sm,
     },
     commentRow: {
         flexDirection: 'row',
@@ -237,12 +316,14 @@ const styles = StyleSheet.create({
     commentBubble: {
         flex: 1,
         borderRadius: RADIUS.md,
-        backgroundColor: theme.background,
+        backgroundColor: '#f8fbff',
+        borderWidth: 1,
+        borderColor: '#e8eef8',
         paddingHorizontal: 10,
         paddingVertical: 8,
     },
     commentBubbleText: {
-        color: theme.textPrimary,
+        color: connectPalette.text,
         fontSize: 12,
         lineHeight: 16,
     },
@@ -255,16 +336,18 @@ const styles = StyleSheet.create({
         flex: 1,
         minHeight: 36,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.border,
+        backgroundColor: '#f5f8ff',
+        borderWidth: 1,
+        borderColor: '#dce8ff',
         paddingHorizontal: 12,
-        color: theme.textPrimary,
+        color: connectPalette.text,
         fontSize: 12,
     },
     commentSendButton: {
         width: 32,
         height: 32,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         justifyContent: 'center',
         alignItems: 'center',
     },

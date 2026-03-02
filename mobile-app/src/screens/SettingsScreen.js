@@ -1,23 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthContext } from '../context/AuthContext';
 import client from '../api/client';
 import { logger } from '../utils/logger';
-import { getLegacyRoleForPrimaryRole, getModeCopy, getPrimaryRoleFromUser } from '../utils/roleMode';
+import { getPrimaryRoleFromUser } from '../utils/roleMode';
 import { useAppStore } from '../store/AppStore';
-import { trackEvent } from '../services/analytics';
+import FeedbackModal from '../components/FeedbackModal';
+import SkeletonLoader from '../components/SkeletonLoader';
+import { useTheme } from '../theme/ThemeProvider';
+import { RADIUS, SHADOWS, SPACING } from '../theme/theme';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 
 export default function SettingsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const { logout, userInfo, updateUserInfo } = React.useContext(AuthContext);
     const { role: appRole, setRole } = useAppStore();
+    const { mode, toggleTheme, palette } = useTheme();
+    const { t } = useTranslation();
 
-    const [notificationsOn, setNotificationsOn] = useState(true);
-    const [darkModeOn, setDarkModeOn] = useState(false);
-    const [dataSaverOn, setDataSaverOn] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
 
     // Notification preferences
@@ -25,12 +29,14 @@ export default function SettingsScreen({ navigation }) {
     const [notifMessages, setNotifMessages] = useState(true);
     const [notifJobAlerts, setNotifJobAlerts] = useState(true);
     const [notifAppUpdates, setNotifAppUpdates] = useState(false);
+    const [pushPermissionStatus, setPushPermissionStatus] = useState('unknown');
+    const [testingNotification, setTestingNotification] = useState(false);
 
     // Delete Account State
     const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
     const [deleteInput, setDeleteInput] = useState('');
+    const [deletePassword, setDeletePassword] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
-    const [isSwitchingMode, setIsSwitchingMode] = useState(false);
     const [profileHeader, setProfileHeader] = useState({
         name: 'User',
         role: 'candidate',
@@ -38,6 +44,15 @@ export default function SettingsScreen({ navigation }) {
         avatar: null,
     });
     const [primaryRole, setPrimaryRole] = useState(appRole || getPrimaryRoleFromUser(userInfo));
+    const [isFeedbackModalVisible, setFeedbackModalVisible] = useState(false);
+    const [isSwitchingRole, setIsSwitchingRole] = useState(false);
+    const [roleSwitchMessage, setRoleSwitchMessage] = useState('');
+    const roleSwitchAnim = React.useRef(new Animated.Value(0)).current;
+    const [referralDashboard, setReferralDashboard] = useState(null);
+    const [upgradePrompt, setUpgradePrompt] = useState(null);
+    const [subscriptionPlan, setSubscriptionPlan] = useState('free');
+    const [languagePref, setLanguagePref] = useState('en');
+    const [accountPhoneNumber, setAccountPhoneNumber] = useState('Not set');
 
     useEffect(() => {
         const loadUserHeader = async () => {
@@ -52,22 +67,33 @@ export default function SettingsScreen({ navigation }) {
             const resolvedPrimaryRole = appRole || getPrimaryRoleFromUser(user);
             setPrimaryRole(resolvedPrimaryRole);
 
-            setIsAdmin(String(user.role || '').toLowerCase() === 'admin');
+            setIsAdmin(Boolean(user?.isAdmin) || String(user.role || '').toLowerCase() === 'admin');
 
             try {
                 const { data } = await client.get('/api/users/profile');
                 const profile = data?.profile || {};
+                setReferralDashboard(data?.referralDashboard || null);
+                const settingsResponse = await client.get('/api/settings').catch(() => null);
+                setAccountPhoneNumber(String(
+                    settingsResponse?.data?.accountInfo?.phoneNumber
+                    || user?.phoneNumber
+                    || 'Not set'
+                ));
                 const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
                 setProfileHeader({
                     name: fullName || user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'I Need Someone (Demand)' : 'Helping Others (Supply)',
+                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
                     email: user.email || '',
                     avatar: profile.avatar || profile.logoUrl || null,
                 });
+
+                const growthRes = await client.get('/api/growth/monetization-intelligence').catch(() => null);
+                setUpgradePrompt(growthRes?.data?.intelligence?.upgradePrompt || null);
             } catch (e) {
+                setAccountPhoneNumber(String(user?.phoneNumber || 'Not set'));
                 setProfileHeader({
                     name: user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'I Need Someone (Demand)' : 'Helping Others (Supply)',
+                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
                     email: user.email || '',
                     avatar: null,
                 });
@@ -80,14 +106,35 @@ export default function SettingsScreen({ navigation }) {
             '@notif_new_matches',
             '@notif_messages',
             '@notif_job_alerts',
-            '@notif_app_updates'
+            '@notif_app_updates',
+            '@hc_subscription_plan',
+            '@language_pref',
         ]).then(pairs => {
             const vals = Object.fromEntries(pairs.map(([k, v]) => [k, v === 'true']));
             setNotifNewMatches(vals['@notif_new_matches'] ?? true);
             setNotifMessages(vals['@notif_messages'] ?? true);
             setNotifJobAlerts(vals['@notif_job_alerts'] ?? true);
             setNotifAppUpdates(vals['@notif_app_updates'] ?? false);
+            const planEntry = pairs.find(([key]) => key === '@hc_subscription_plan');
+            if (planEntry?.[1]) {
+                setSubscriptionPlan(planEntry[1]);
+            }
+            const languageEntry = pairs.find(([key]) => key === '@language_pref');
+            const safeLanguage = languageEntry?.[1] === 'hi' ? 'hi' : 'en';
+            setLanguagePref(safeLanguage);
+            i18n.changeLanguage(safeLanguage).catch(() => {});
         });
+
+        const loadNotificationPermission = async () => {
+            try {
+                const Notifications = await import('expo-notifications');
+                const status = await Notifications.getPermissionsAsync();
+                setPushPermissionStatus(String(status?.status || 'unknown'));
+            } catch (error) {
+                setPushPermissionStatus('unknown');
+            }
+        };
+        loadNotificationPermission();
     }, [userInfo, appRole]);
 
     const handleToggle = async (key, setter, value) => {
@@ -95,34 +142,21 @@ export default function SettingsScreen({ navigation }) {
         await AsyncStorage.setItem(key, String(value));
     };
 
-    const handleSwitchMode = async () => {
-        if (isSwitchingMode) return;
-        const nextPrimaryRole = primaryRole === 'employer' ? 'worker' : 'employer';
-        const modeCopy = getModeCopy(primaryRole);
+    const animateRoleSwitchToast = React.useCallback((message) => {
+        setRoleSwitchMessage(message);
+        roleSwitchAnim.setValue(0);
+        Animated.sequence([
+            Animated.timing(roleSwitchAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+            Animated.delay(1300),
+            Animated.timing(roleSwitchAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start(() => setRoleSwitchMessage(''));
+    }, [roleSwitchAnim]);
 
-        setIsSwitchingMode(true);
-        try {
-            await client.put('/api/users/profile', { primaryRole: nextPrimaryRole });
-            await SecureStore.setItemAsync('selectedRole', getLegacyRoleForPrimaryRole(nextPrimaryRole));
-            await updateUserInfo({ primaryRole: nextPrimaryRole });
-            setRole(nextPrimaryRole);
-            setPrimaryRole(nextPrimaryRole);
-            setProfileHeader((prev) => ({
-                ...prev,
-                role: nextPrimaryRole === 'employer' ? 'I Need Someone (Demand)' : 'Helping Others (Supply)',
-            }));
-            const rolePayload = {
-                source: 'settings_screen',
-                role: nextPrimaryRole,
-            };
-            trackEvent('ROLE_SELECTED', rolePayload);
-            Alert.alert('Mode Switched', modeCopy.switchedMessage);
-        } catch (error) {
-            logger.error('Switch mode error:', error);
-            Alert.alert('Switch Failed', 'Could not switch mode. Please try again.');
-        } finally {
-            setIsSwitchingMode(false);
-        }
+    const toggleLanguagePreference = async () => {
+        const nextLanguage = languagePref === 'hi' ? 'en' : 'hi';
+        setLanguagePref(nextLanguage);
+        await AsyncStorage.setItem('@language_pref', nextLanguage);
+        await i18n.changeLanguage(nextLanguage).catch(() => {});
     };
 
     const performLocalSignOut = async () => {
@@ -151,6 +185,59 @@ export default function SettingsScreen({ navigation }) {
         );
     };
 
+    const handleRoleToggle = async () => {
+        if (isSwitchingRole) return;
+        const previousRole = primaryRole === 'employer' ? 'employer' : 'worker';
+        const nextRole = previousRole === 'employer' ? 'worker' : 'employer';
+
+        setIsSwitchingRole(true);
+        setPrimaryRole(nextRole);
+        setProfileHeader((prev) => ({
+            ...prev,
+            role: nextRole === 'employer' ? 'Recruiter' : 'Candidate',
+        }));
+
+        try {
+            const { data } = await client.put('/api/settings', {
+                accountInfo: {
+                    role: nextRole,
+                },
+            });
+
+            const roleContract = data?.settings?.roleContract || {};
+            const resolvedRole = String(roleContract.activeRole || nextRole).toLowerCase() === 'employer'
+                ? 'employer'
+                : 'worker';
+
+            setPrimaryRole(resolvedRole);
+            setRole(resolvedRole);
+            await updateUserInfo({
+                role: resolvedRole === 'employer' ? 'recruiter' : 'candidate',
+                activeRole: resolvedRole,
+                primaryRole: resolvedRole,
+                roles: Array.isArray(roleContract.roles) && roleContract.roles.length > 0
+                    ? roleContract.roles
+                    : ['worker', 'employer'],
+                capabilities: roleContract.capabilities || undefined,
+                hasSelectedRole: true,
+            });
+            animateRoleSwitchToast(
+                resolvedRole === 'employer'
+                    ? 'Recruiter mode enabled'
+                    : 'Candidate mode enabled'
+            );
+        } catch (error) {
+            setPrimaryRole(previousRole);
+            setProfileHeader((prev) => ({
+                ...prev,
+                role: previousRole === 'employer' ? 'Recruiter' : 'Candidate',
+            }));
+            Alert.alert('Role switch failed', error?.response?.data?.message || 'Unable to switch role right now.');
+        } finally {
+            setIsSwitchingRole(false);
+        }
+    };
+
     const confirmDeleteAccount = () => {
         Alert.alert(
             'Delete Account',
@@ -163,18 +250,71 @@ export default function SettingsScreen({ navigation }) {
     };
 
     const executeDeleteAccount = async () => {
-        if (deleteInput !== 'DELETE') return;
+        if (deleteInput !== 'DELETE' || !String(deletePassword || '').trim()) return;
         setIsDeleting(true);
         try {
-            await client.delete('/api/users/delete');
+            await client.delete('/api/users/delete', {
+                data: {
+                    password: deletePassword,
+                },
+            });
             setDeleteModalVisible(false);
             setDeleteInput('');
+            setDeletePassword('');
             await performLocalSignOut();
         } catch (error) {
             logger.error('Delete account error:', error);
             Alert.alert('Error', 'Could not delete your account. Please try again or contact support.');
         } finally {
             setIsDeleting(false);
+        }
+    };
+
+    const handleSubmitFeedback = async ({ type, message }) => {
+        try {
+            await client.post('/api/feedback', { type, message, source: 'mobile-settings' });
+            Alert.alert('Thanks for the feedback', 'We review every submission and prioritize product quality.');
+        } catch (error) {
+            try {
+                await client.post('/api/reports', {
+                    targetType: 'feedback',
+                    reason: type || 'general_feedback',
+                    details: message,
+                });
+                Alert.alert('Feedback queued', 'Your feedback was received and will be reviewed.');
+            } catch (secondaryError) {
+                Alert.alert('Could not submit', 'Please try again in a moment.');
+            }
+        }
+    };
+
+    const readablePushPermission = pushPermissionStatus === 'granted'
+        ? 'Granted'
+        : (pushPermissionStatus === 'denied' ? 'Denied' : 'Not set');
+
+    const handleRequestPushPermission = async () => {
+        try {
+            const { requestNotificationPermission } = await import('../services/NotificationService');
+            const result = await requestNotificationPermission();
+            const status = String(result?.status || (result?.granted ? 'granted' : 'unknown'));
+            setPushPermissionStatus(status);
+            Alert.alert('Permission updated', status === 'granted' ? 'Push notifications enabled.' : 'Push permission not granted.');
+        } catch (error) {
+            Alert.alert('Could not update permission', 'Please try again.');
+        }
+    };
+
+    const handleTestNotification = async () => {
+        if (testingNotification) return;
+        setTestingNotification(true);
+        try {
+            const { scheduleLocalNotificationTest } = await import('../services/NotificationService');
+            await scheduleLocalNotificationTest();
+            Alert.alert('Test sent', 'A local notification test has been scheduled.');
+        } catch (error) {
+            Alert.alert('Test failed', 'Could not schedule test notification.');
+        } finally {
+            setTestingNotification(false);
         }
     };
 
@@ -190,6 +330,11 @@ export default function SettingsScreen({ navigation }) {
             <View>
                 <Text style={styles.userName}>{profileHeader.name}</Text>
                 <Text style={styles.userRole}>{profileHeader.role}{profileHeader.email ? ` • ${profileHeader.email}` : ''}</Text>
+                {subscriptionPlan !== 'free' ? (
+                    <View style={styles.premiumBadge}>
+                        <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+                    </View>
+                ) : null}
             </View>
         </View>
     );
@@ -225,75 +370,93 @@ export default function SettingsScreen({ navigation }) {
     );
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: palette.background }]}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                 {renderHeader()}
 
+                {roleSwitchMessage ? (
+                    <Animated.View
+                        style={[
+                            styles.roleSwitchToast,
+                            {
+                                opacity: roleSwitchAnim,
+                                transform: [{
+                                    translateY: roleSwitchAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [-8, 0],
+                                    }),
+                                }],
+                            },
+                        ]}
+                    >
+                        <Text style={styles.roleSwitchToastText}>{roleSwitchMessage}</Text>
+                    </Animated.View>
+                ) : null}
+
                 <View style={styles.sectionsContainer}>
-                    {/* Account Section */}
                     <View style={styles.sectionCard}>
                         {renderSectionTextHeader('Account')}
-                        {renderRow('Current Mode', getModeCopy(primaryRole).modeLabel)}
                         {renderRow(
-                            getModeCopy(primaryRole).switchLabel,
-                            isSwitchingMode ? 'Switching...' : null,
-                            !isSwitchingMode,
+                            'Recruiter Mode',
+                            isSwitchingRole ? 'Switching…' : (primaryRole === 'employer' ? 'On' : 'Off'),
                             false,
-                            null,
-                            null,
-                            false,
-                            handleSwitchMode
+                            true,
+                            primaryRole === 'employer',
+                            handleRoleToggle
                         )}
-                        {renderRow('Phone Number', '+91 98765 43210')}
-                        {renderRow('Change Password', null, true, false, null, null, false, () => navigation.navigate('ForgotPassword'))}
+                        {renderRow('Current Role', primaryRole === 'employer' ? 'Recruiter' : 'Candidate')}
                         {renderRow('Go Pro', 'Upgrade', true, false, null, null, false, () => navigation.navigate('Subscription'))}
-                        {renderRow('Language', 'English (India)', false, false, null, null, !isAdmin)}
+                        {renderRow('Change Password', null, true, false, null, null, !isAdmin, () => navigation.navigate('ForgotPassword'))}
+                        {renderRow(
+                            t('settings.language', 'Language'),
+                            languagePref === 'hi'
+                                ? t('settings.hindi', 'Hindi')
+                                : t('settings.english', 'English'),
+                            true,
+                            false,
+                            null,
+                            null,
+                            !isAdmin,
+                            toggleLanguagePreference
+                        )}
                         {isAdmin && renderRow('Admin Dashboard', null, true, false, null, null, true, () => navigation.navigate('AdminDashboard'))}
                     </View>
 
-                    {/* Notification Preferences Section */}
+                    <View style={styles.sectionCard}>
+                        {renderSectionTextHeader('Privacy')}
+                        {renderRow('Profile Visibility', 'Public')}
+                        {renderRow('Blocked Contacts', '0')}
+                        {renderRow('Delete Account', null, true, false, null, null, true, confirmDeleteAccount)}
+                    </View>
+
                     <View style={styles.sectionCard}>
                         {renderSectionTextHeader('Notifications')}
                         {renderRow('New Job Matches', null, false, true, notifNewMatches, (v) => handleToggle('@notif_new_matches', setNotifNewMatches, v))}
                         {renderRow('Messages & Replies', null, false, true, notifMessages, (v) => handleToggle('@notif_messages', setNotifMessages, v))}
                         {renderRow('Job Alerts & Deadlines', null, false, true, notifJobAlerts, (v) => handleToggle('@notif_job_alerts', setNotifJobAlerts, v))}
-                        {renderRow('App Updates', null, false, true, notifAppUpdates, (v) => handleToggle('@notif_app_updates', setNotifAppUpdates, v), true)}
+                        {renderRow('App Updates', null, false, true, notifAppUpdates, (v) => handleToggle('@notif_app_updates', setNotifAppUpdates, v))}
+                        {renderRow('Push Permission', readablePushPermission, true, false, null, null, false, handleRequestPushPermission)}
+                        {renderRow('Send Test Notification', testingNotification ? 'Sending...' : null, true, false, null, null, true, handleTestNotification)}
                     </View>
 
-                    {/* Preferences Section */}
                     <View style={styles.sectionCard}>
-                        {renderSectionTextHeader('Preferences')}
-                        {renderRow('Dark Mode', null, false, true, darkModeOn, setDarkModeOn)}
-                        {renderRow('Data Saver', null, false, true, dataSaverOn, setDataSaverOn, true)}
+                        {renderSectionTextHeader('Role & Preferences')}
+                        {renderRow('Phone Number', accountPhoneNumber)}
+                        {renderRow('Dark Mode (Beta)', null, false, true, mode === 'dark', () => toggleTheme())}
+                        {upgradePrompt && renderRow(upgradePrompt.title || 'Suggested Upgrade', 'Contextual', false, false, null, null, true)}
                     </View>
 
-                    {/* Privacy & Security Section */}
                     <View style={styles.sectionCard}>
-                        {renderSectionTextHeader('Privacy & Security')}
-                        {renderRow('Profile Visibility', 'Public')}
-                        {renderRow('Blocked Contacts', '0', false, false, null, null, true)}
+                        {renderSectionTextHeader('Support')}
+                        {renderRow('Referral Code', referralDashboard?.referralCode || 'Not available')}
+                        {renderRow('Completed Referrals', String(referralDashboard?.completedReferrals || 0))}
+                        {renderRow('Rewards Granted', String(referralDashboard?.rewardsGranted || 0))}
+                        {renderRow('Send Product Feedback', null, true, false, null, null, true, () => setFeedbackModalVisible(true))}
                     </View>
 
-                    {/* About Section */}
-                    <View style={styles.sectionCard}>
-                        {renderSectionTextHeader('About')}
-                        {renderRow('Version', '1.0.0 (MVP)')}
-                        {renderRow('Terms of Service', null, true)}
-                        {renderRow('Privacy Policy', null, true, false, null, null, true)}
-                    </View>
-
-                    {/* Sign Out Button */}
                     <TouchableOpacity style={styles.signOutButton} activeOpacity={0.8} onPress={handleSignOut}>
                         <Text style={styles.signOutText}>Sign Out</Text>
                     </TouchableOpacity>
-
-                    {/* Delete Account Button */}
-                    <View style={styles.deleteAccountContainer}>
-                        <View style={styles.divider} />
-                        <TouchableOpacity style={styles.deleteButton} activeOpacity={0.8} onPress={confirmDeleteAccount}>
-                            <Text style={styles.deleteText}>Delete Account</Text>
-                        </TouchableOpacity>
-                    </View>
                 </View>
             </ScrollView>
 
@@ -303,7 +466,7 @@ export default function SettingsScreen({ navigation }) {
                     <View style={styles.modalContent}>
                         <Text style={styles.modalTitle}>Are You Absolutely Sure?</Text>
                         <Text style={styles.modalSubtitle}>
-                            Type <Text style={{ fontWeight: 'bold' }}>DELETE</Text> to confirm you want to permanently delete your account.
+                            Type <Text style={{ fontWeight: 'bold' }}>DELETE</Text> and enter your password to permanently delete your account.
                         </Text>
 
                         <TextInput
@@ -315,26 +478,45 @@ export default function SettingsScreen({ navigation }) {
                             autoCapitalize="characters"
                             autoCorrect={false}
                         />
+                        <TextInput
+                            style={styles.deleteInput}
+                            placeholder="Current password"
+                            placeholderTextColor="#94a3b8"
+                            value={deletePassword}
+                            onChangeText={setDeletePassword}
+                            secureTextEntry
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
 
                         <View style={styles.modalActions}>
                             <TouchableOpacity
                                 style={styles.modalCancelBtn}
-                                onPress={() => { setDeleteModalVisible(false); setDeleteInput(''); }}
+                                onPress={() => { setDeleteModalVisible(false); setDeleteInput(''); setDeletePassword(''); }}
                                 disabled={isDeleting}
                             >
                                 <Text style={styles.modalCancelText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.modalDeleteBtn, deleteInput !== 'DELETE' && styles.modalDeleteBtnDisabled]}
+                                style={[styles.modalDeleteBtn, (deleteInput !== 'DELETE' || !String(deletePassword || '').trim()) && styles.modalDeleteBtnDisabled]}
                                 onPress={executeDeleteAccount}
-                                disabled={deleteInput !== 'DELETE' || isDeleting}
+                                disabled={deleteInput !== 'DELETE' || !String(deletePassword || '').trim() || isDeleting}
                             >
-                                {isDeleting ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalDeleteText}>Delete Forever</Text>}
+                                {isDeleting ? <SkeletonLoader width={18} height={18} borderRadius={9} tone="tint" /> : <Text style={styles.modalDeleteText}>Delete Forever</Text>}
                             </TouchableOpacity>
                         </View>
                     </View>
                 </View>
             </Modal>
+
+            <FeedbackModal
+                visible={isFeedbackModalVisible}
+                title="Feedback & Safety"
+                subtitle="Report issues, suggest improvements, or share concerns."
+                submitLabel="Submit"
+                onClose={() => setFeedbackModalVisible(false)}
+                onSubmit={handleSubmitFeedback}
+            />
         </View>
     );
 }
@@ -342,23 +524,36 @@ export default function SettingsScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     scrollContent: {
         paddingBottom: 40,
     },
+    roleSwitchToast: {
+        marginHorizontal: SPACING.md,
+        marginTop: SPACING.sm,
+        marginBottom: SPACING.xs,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        backgroundColor: '#eff6ff',
+        paddingHorizontal: SPACING.smd,
+        paddingVertical: SPACING.sm,
+        ...SHADOWS.sm,
+    },
+    roleSwitchToastText: {
+        color: '#1e40af',
+        fontSize: 13,
+        fontWeight: '700',
+        textAlign: 'center',
+    },
     profileHeader: {
         backgroundColor: '#ffffff',
-        paddingHorizontal: 24,
-        paddingBottom: 24,
+        paddingHorizontal: SPACING.lg,
+        paddingBottom: SPACING.lg,
         flexDirection: 'row',
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-        elevation: 2,
-        marginBottom: 16,
+        ...SHADOWS.md,
+        marginBottom: SPACING.md,
     },
     avatar: {
         width: 64,
@@ -377,26 +572,38 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '500',
     },
+    premiumBadge: {
+        marginTop: 6,
+        alignSelf: 'flex-start',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#c7d2fe',
+        backgroundColor: '#eef2ff',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    premiumBadgeText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#4338ca',
+        letterSpacing: 0.4,
+    },
     sectionsContainer: {
-        paddingHorizontal: 16,
-        gap: 16,
+        paddingHorizontal: SPACING.md,
+        gap: SPACING.md,
     },
     sectionCard: {
         backgroundColor: '#ffffff',
-        borderRadius: 12,
+        borderRadius: RADIUS.md,
         borderWidth: 1,
         borderColor: '#f1f5f9',
         overflow: 'hidden',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.02,
-        shadowRadius: 2,
-        elevation: 1,
+        ...SHADOWS.sm,
     },
     sectionHeaderBg: {
         backgroundColor: '#f8fafc',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingHorizontal: SPACING.md,
+        paddingVertical: SPACING.smd,
         borderBottomWidth: 1,
         borderBottomColor: '#f1f5f9',
     },
@@ -411,8 +618,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingVertical: 16,
-        paddingHorizontal: 16,
+        paddingVertical: SPACING.md,
+        paddingHorizontal: SPACING.md,
     },
     rowBorder: {
         borderBottomWidth: 1,
@@ -439,7 +646,7 @@ const styles = StyleSheet.create({
     },
     signOutButton: {
         backgroundColor: '#fef2f2',
-        borderRadius: 12,
+        borderRadius: RADIUS.md,
         paddingVertical: 14,
         alignItems: 'center',
         marginTop: 8,
@@ -450,23 +657,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 16,
     },
-    deleteAccountContainer: {
-        marginTop: 16,
-        paddingBottom: 24,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#e2e8f0', // slate-200
-        marginBottom: 24,
-    },
-    deleteButton: {
-        alignItems: 'center',
-    },
-    deleteText: {
-        color: '#ef4444', // theme.error
-        fontSize: 13,
-        fontWeight: '500',
-    },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
@@ -476,15 +666,11 @@ const styles = StyleSheet.create({
     },
     modalContent: {
         backgroundColor: '#ffffff',
-        borderRadius: 16,
-        padding: 24,
+        borderRadius: RADIUS.lg,
+        padding: SPACING.lg,
         width: '100%',
         maxWidth: 400,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-        elevation: 4,
+        ...SHADOWS.lg,
     },
     modalTitle: {
         fontSize: 18,
@@ -504,7 +690,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#f8fafc',
         borderWidth: 1,
         borderColor: '#e2e8f0',
-        borderRadius: 8,
+        borderRadius: RADIUS.sm,
         paddingHorizontal: 16,
         paddingVertical: 12,
         fontSize: 16,
@@ -520,7 +706,7 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#f1f5f9',
         paddingVertical: 14,
-        borderRadius: 8,
+        borderRadius: RADIUS.sm,
         alignItems: 'center',
     },
     modalCancelText: {
@@ -532,7 +718,7 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#ef4444',
         paddingVertical: 14,
-        borderRadius: 8,
+        borderRadius: RADIUS.sm,
         alignItems: 'center',
         justifyContent: 'center',
     },

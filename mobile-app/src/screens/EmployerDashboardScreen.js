@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
     View,
     Text,
@@ -10,22 +10,13 @@ import {
     TextInput,
     KeyboardAvoidingView,
     Platform,
-    Alert,
-    Linking,
 } from 'react-native';
 import { logger } from '../utils/logger';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
 
 import client from '../api/client';
-
-const ANALYTICS_DATA = [
-    { name: 'Applied', value: 45, color: '#94a3b8' },
-    { name: 'Shortlisted', value: 12, color: '#8b5cf6' },
-    { name: 'Interview', value: 5, color: '#a855f7' },
-    { name: 'Offer', value: 2, color: '#7c3aed' },
-];
+import NudgeToast from '../components/NudgeToast';
 
 export default function EmployerDashboardScreen({ navigation }) {
     const [jobs, setJobs] = useState([]);
@@ -33,41 +24,23 @@ export default function EmployerDashboardScreen({ navigation }) {
     const [errorMsg, setErrorMsg] = useState('');
     const [selectedJob, setSelectedJob] = useState(null);
     const [activeFilter, setActiveFilter] = useState('All');
-    const [employerId, setEmployerId] = useState(null);
-    const [fillRateMeter, setFillRateMeter] = useState(null);
-    const [loadingFillRate, setLoadingFillRate] = useState(false);
+    const [showResponseReminder, setShowResponseReminder] = useState(false);
+    const [toastVisible, setToastVisible] = useState(false);
     const insets = useSafeAreaInsets();
 
     React.useEffect(() => {
         fetchMyJobs();
-        hydrateEmployerId();
     }, []);
 
-    const hydrateEmployerId = async () => {
-        try {
-            const raw = await SecureStore.getItemAsync('userInfo');
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            if (parsed?._id) {
-                setEmployerId(parsed._id);
-            }
-        } catch (error) {
-            logger.warn('Failed to read employer id:', error?.message || error);
-        }
-    };
-
     React.useEffect(() => {
-        if (!employerId) return;
-        fetchFillRateMeter(employerId);
-    }, [employerId]);
+        navigation.setParams({ hideFab: Boolean(selectedJob) });
+    }, [navigation, selectedJob]);
 
     const fetchMyJobs = async () => {
         setIsLoading(true);
         setErrorMsg('');
         try {
-            logger.log('🔍 Fetching employer jobs...');
             const { data } = await client.get('/api/jobs/my-jobs');
-            logger.log('✅ API Response Data:', data);
 
             const jobsArray = Array.isArray(data) ? data : (data.data || []);
 
@@ -81,51 +54,39 @@ export default function EmployerDashboardScreen({ navigation }) {
                 postedAt: new Date(j.createdAt).toLocaleDateString(),
                 description: j.requirements ? j.requirements.join(', ') : 'No description provided.',
                 skills: j.requirements || [],
-                matchScore: 0 // Mock score placeholder
+                applicantCount: Number(j.applicantCount || 0),
+                shortlistedCount: Number(j.shortlistedCount || j.stats?.shortlisted || 0),
+                hiredCount: Number(j.hiredCount || j.stats?.hired || 0),
+                status: String(j.status || 'open'),
             }));
-            logger.log('📊 Jobs count:', formattedJobs.length);
             setJobs(formattedJobs);
+            const shouldRemind = jobsArray.some((job) => Number(job?.applicantCount || 0) > 0);
+            setShowResponseReminder(shouldRemind);
+            if (shouldRemind) {
+                setToastVisible(true);
+            }
         } catch (error) {
-            logger.error('❌ Failed to load jobs:', error);
-            logger.error('❌ Error response:', error.response?.data);
-            logger.error('❌ Error status:', error.response?.status);
+            logger.error('Failed to load jobs:', error);
             setErrorMsg('Failed to load jobs. Please try again.');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const fetchFillRateMeter = async (id) => {
-        setLoadingFillRate(true);
-        try {
-            const { data } = await client.get(`/api/analytics/employer/${id}/fill-rate-meter`);
-            setFillRateMeter(data?.metrics || null);
-        } catch (error) {
-            logger.warn('Fill-rate meter unavailable:', error?.message || error);
-            setFillRateMeter(null);
-        } finally {
-            setLoadingFillRate(false);
-        }
-    };
-
-    const handleBoostTopJob = async () => {
-        const topJob = jobs[0];
-        if (!topJob?.id) {
-            Alert.alert('No jobs yet', 'Create a job first to run a boost.');
+    const openAnalytics = useCallback(() => {
+        const parentNav = navigation?.getParent?.();
+        if (parentNav?.navigate) {
+            parentNav.navigate('EmployerAnalytics');
             return;
         }
+        navigation.navigate('EmployerAnalytics');
+    }, [navigation]);
 
-        try {
-            const { data } = await client.post('/api/payment/create-featured-listing', { jobId: topJob.id });
-            if (data?.url) {
-                Linking.openURL(data.url);
-            } else {
-                Alert.alert('Boost unavailable', 'Could not start checkout right now.');
-            }
-        } catch (error) {
-            Alert.alert('Boost unavailable', 'Could not start checkout right now.');
-        }
-    };
+    const handleViewApplicants = useCallback(() => {
+        if (!selectedJob?.id) return;
+        setSelectedJob(null);
+        navigation.navigate('Talent', { jobId: selectedJob.id });
+    }, [navigation, selectedJob]);
 
     const [isEditModalVisible, setIsEditModalVisible] = useState(false);
     const [editForm, setEditForm] = useState({
@@ -169,10 +130,23 @@ export default function EmployerDashboardScreen({ navigation }) {
         setIsEditModalVisible(false);
     };
 
-    if (selectedJob) {
-        // Find max value for bar chart
-        const maxValue = Math.max(...ANALYTICS_DATA.map(d => d.value));
+    const handleDuplicateJob = useCallback((jobToDuplicate) => {
+        if (!jobToDuplicate) return;
+        const duplicated = {
+            ...jobToDuplicate,
+            id: `${jobToDuplicate.id}-dup-${Date.now()}`,
+            title: `${jobToDuplicate.title} (Copy)`,
+            postedAt: new Date().toLocaleDateString(),
+            applicantCount: 0,
+            shortlistedCount: 0,
+            hiredCount: 0,
+            status: 'draft',
+        };
+        setJobs((prev) => [duplicated, ...prev]);
+        setToastVisible(true);
+    }, []);
 
+    if (selectedJob) {
         return (
             <View style={styles.container}>
                 <View style={styles.bannerContainer}>
@@ -209,6 +183,21 @@ export default function EmployerDashboardScreen({ navigation }) {
                             </View>
                         </View>
 
+                        <View style={styles.pipelineRow}>
+                            <View style={styles.pipelineCard}>
+                                <Text style={styles.pipelineValue}>{selectedJob.applicantCount || 0}</Text>
+                                <Text style={styles.pipelineLabel}>Applicants</Text>
+                            </View>
+                            <View style={styles.pipelineCard}>
+                                <Text style={styles.pipelineValue}>{selectedJob.shortlistedCount || 0}</Text>
+                                <Text style={styles.pipelineLabel}>Shortlisted</Text>
+                            </View>
+                            <View style={styles.pipelineCard}>
+                                <Text style={styles.pipelineValue}>{selectedJob.hiredCount || 0}</Text>
+                                <Text style={styles.pipelineLabel}>Hired</Text>
+                            </View>
+                        </View>
+
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Description</Text>
                             <Text style={styles.descriptionText}>{selectedJob.description}</Text>
@@ -225,33 +214,17 @@ export default function EmployerDashboardScreen({ navigation }) {
                             </View>
                         </View>
 
-                        <View style={styles.analyticsSection}>
-                            <Text style={styles.sectionTitle}>Hiring Funnel Analytics</Text>
-                            <View style={styles.chartContainer}>
-                                {ANALYTICS_DATA.map((item, index) => {
-                                    const heightPercent = Math.max((item.value / maxValue) * 100, 5);
-                                    return (
-                                        <View key={index} style={styles.barColumn}>
-                                            <View style={styles.barWrapper}>
-                                                <View
-                                                    style={[
-                                                        styles.barFill,
-                                                        { height: `${heightPercent}%`, backgroundColor: item.color }
-                                                    ]}
-                                                />
-                                            </View>
-                                            <Text style={styles.barLabel}>{item.name}</Text>
-                                            <Text style={styles.barValue}>{item.value}</Text>
-                                        </View>
-                                    );
-                                })}
-                            </View>
-                        </View>
                     </ScrollView>
 
                     <View style={[styles.bottomActionContainer, { paddingBottom: insets.bottom || 16 }]}>
+                        <TouchableOpacity style={styles.viewApplicantsButton} onPress={handleViewApplicants}>
+                            <Text style={styles.viewApplicantsButtonText}>View Applicants</Text>
+                        </TouchableOpacity>
                         <TouchableOpacity style={styles.editButton} onPress={openEditModal}>
                             <Text style={styles.editButtonText}>Edit Job Posting</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.duplicateButton} onPress={() => handleDuplicateJob(selectedJob)}>
+                            <Text style={styles.duplicateButtonText}>Duplicate Job</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -316,51 +289,24 @@ export default function EmployerDashboardScreen({ navigation }) {
             <View style={styles.header}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={styles.headerTitle}>Your Job Postings</Text>
-                    <TouchableOpacity
-                        style={styles.analyticsBtn}
-                        onPress={() => navigation.navigate('EmployerAnalytics')}
-                    >
-                        <Ionicons name="bar-chart" size={16} color="#7c3aed" />
-                        <Text style={styles.analyticsBtnText}>Analytics</Text>
-                    </TouchableOpacity>
+                    <View style={styles.headerActions}>
+                        <TouchableOpacity
+                            style={styles.iconActionBtn}
+                            onPress={openAnalytics}
+                            activeOpacity={0.8}
+                        >
+                            <Ionicons name="bar-chart-outline" size={18} color="#7c3aed" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {isLoading && <Text style={{ color: '#64748b', marginTop: 8 }}>Loading jobs...</Text>}
                 {errorMsg ? <Text style={{ color: 'red', marginTop: 8 }}>{errorMsg}</Text> : null}
-
-                <View style={styles.fillRateCard}>
-                    <View style={styles.fillRateHeader}>
-                        <Text style={styles.fillRateTitle}>Fill Rate Meter</Text>
-                        {loadingFillRate ? <Text style={styles.fillRateSubtle}>Refreshing...</Text> : null}
+                {showResponseReminder ? (
+                    <View style={styles.responseReminder}>
+                        <Text style={styles.responseReminderText}>Respond faster to improve hire rate and candidate trust.</Text>
                     </View>
-                    <View style={styles.fillRateGrid}>
-                        <View style={styles.fillRateItem}>
-                            <Text style={styles.fillRateLabel}>Applications</Text>
-                            <Text style={styles.fillRateValue}>{fillRateMeter?.applicationsCount ?? '--'}</Text>
-                        </View>
-                        <View style={styles.fillRateItem}>
-                            <Text style={styles.fillRateLabel}>Shortlist Rate</Text>
-                            <Text style={styles.fillRateValue}>
-                                {fillRateMeter ? `${Math.round((fillRateMeter.shortlistRate || 0) * 100)}%` : '--'}
-                            </Text>
-                        </View>
-                        <View style={styles.fillRateItem}>
-                            <Text style={styles.fillRateLabel}>ETA to Fill</Text>
-                            <Text style={styles.fillRateValue}>
-                                {fillRateMeter ? `${fillRateMeter.estimatedTimeToFillDays}d` : '--'}
-                            </Text>
-                        </View>
-                        <View style={styles.fillRateItem}>
-                            <Text style={styles.fillRateLabel}>City Benchmark</Text>
-                            <Text style={styles.fillRateValue}>
-                                {fillRateMeter ? `${Math.round((fillRateMeter.cityAverageFillRate || 0) * 100)}%` : '--'}
-                            </Text>
-                        </View>
-                    </View>
-                    <TouchableOpacity style={styles.fillRateBoostButton} onPress={handleBoostTopJob}>
-                        <Text style={styles.fillRateBoostText}>Boost Top Job</Text>
-                    </TouchableOpacity>
-                </View>
+                ) : null}
 
                 <ScrollView
                     horizontal
@@ -385,7 +331,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                     <TouchableOpacity
                         key={job.id}
                         style={styles.jobCard}
-                        onPress={() => navigation.navigate('Talent', { jobId: job.id, jobTitle: job.title })}
+                        onPress={() => setSelectedJob(job)}
                         activeOpacity={0.9}
                     >
                         <View style={styles.jobCardHeaderRow}>
@@ -410,10 +356,33 @@ export default function EmployerDashboardScreen({ navigation }) {
                             <Text style={styles.cardSalary}>{job.salary}</Text>
                         </View>
 
+                        <View style={styles.pipelineBadgeRow}>
+                            <View style={styles.pipelineBadge}>
+                                <Text style={styles.pipelineBadgeText}>{job.applicantCount || 0} applicants</Text>
+                            </View>
+                            <View style={styles.pipelineBadge}>
+                                <Text style={styles.pipelineBadgeText}>{job.shortlistedCount || 0} shortlisted</Text>
+                            </View>
+                            <View style={styles.pipelineBadge}>
+                                <Text style={styles.pipelineBadgeText}>{job.hiredCount || 0} hired</Text>
+                            </View>
+                        </View>
+
                         <Text style={styles.postedAtText}>Posted {job.postedAt}</Text>
                     </TouchableOpacity>
                 ))}
             </ScrollView>
+
+            <NudgeToast
+                visible={toastVisible}
+                text="Respond faster to improve hire rate."
+                actionLabel="Review"
+                onAction={() => {
+                    setToastVisible(false);
+                    setActiveFilter('High Match');
+                }}
+                onDismiss={() => setToastVisible(false)}
+            />
         </View>
     );
 }
@@ -435,85 +404,39 @@ const styles = StyleSheet.create({
         elevation: 2,
         zIndex: 10,
     },
-    fillRateCard: {
-        marginTop: 12,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
-        padding: 12,
-    },
-    fillRateHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    fillRateTitle: {
-        color: '#0f172a',
-        fontSize: 14,
-        fontWeight: '800',
-    },
-    fillRateSubtle: {
-        color: '#64748b',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    fillRateGrid: {
-        marginTop: 10,
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    fillRateItem: {
-        width: '48%',
-        borderRadius: 10,
-        backgroundColor: '#f8fafc',
-        padding: 8,
-    },
-    fillRateLabel: {
-        color: '#64748b',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    fillRateValue: {
-        marginTop: 4,
-        color: '#111827',
-        fontSize: 14,
-        fontWeight: '800',
-    },
-    fillRateBoostButton: {
-        marginTop: 10,
-        alignSelf: 'flex-start',
-        borderRadius: 10,
-        backgroundColor: '#4f46e5',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-    },
-    fillRateBoostText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: '700',
-    },
     headerTitle: {
         fontSize: 20,
         fontWeight: 'bold',
         color: '#1e293b',
     },
-    analyticsBtn: {
+    headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#faf5ff',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
+        gap: 8,
+    },
+    responseReminder: {
+        marginTop: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#fde68a',
+        backgroundColor: '#fffbeb',
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    responseReminderText: {
+        color: '#854d0e',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    iconActionBtn: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         borderWidth: 1,
         borderColor: '#e9d5ff',
-        gap: 4
-    },
-    analyticsBtnText: {
-        color: '#7c3aed',
-        fontSize: 12,
-        fontWeight: 'bold'
+        backgroundColor: '#faf5ff',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     filtersContainer: {
         marginTop: 12,
@@ -613,6 +536,25 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#334155',
     },
+    pipelineBadgeRow: {
+        marginTop: 10,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    pipelineBadge: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    pipelineBadgeText: {
+        color: '#334155',
+        fontSize: 10,
+        fontWeight: '700',
+    },
     postedAtText: {
         fontSize: 12,
         color: '#94a3b8',
@@ -676,6 +618,31 @@ const styles = StyleSheet.create({
         gap: 16,
         marginBottom: 24,
     },
+    pipelineRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 20,
+    },
+    pipelineCard: {
+        flex: 1,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#ede9fe',
+        backgroundColor: '#faf5ff',
+        paddingVertical: 10,
+        alignItems: 'center',
+    },
+    pipelineValue: {
+        color: '#6d28d9',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    pipelineLabel: {
+        marginTop: 2,
+        color: '#7c3aed',
+        fontSize: 10,
+        fontWeight: '700',
+    },
     statBox: {
         flex: 1,
         backgroundColor: '#f8fafc',
@@ -728,53 +695,25 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '500',
     },
-    analyticsSection: {
-        backgroundColor: '#f8fafc',
-        padding: 16,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#f1f5f9',
-        marginBottom: 8,
-    },
-    chartContainer: {
-        flexDirection: 'row',
-        height: 160,
-        alignItems: 'flex-end',
-        justifyContent: 'space-around',
-        paddingTop: 20,
-    },
-    barColumn: {
-        alignItems: 'center',
-        flex: 1,
-    },
-    barWrapper: {
-        height: 100,
-        width: '100%',
-        justifyContent: 'flex-end',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    barFill: {
-        width: 30,
-        borderTopLeftRadius: 4,
-        borderTopRightRadius: 4,
-    },
-    barLabel: {
-        fontSize: 10,
-        color: '#64748b',
-        textAlign: 'center',
-    },
-    barValue: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: '#1e293b',
-        marginTop: 2,
-    },
     bottomActionContainer: {
         padding: 16,
         backgroundColor: '#fff',
         borderTopWidth: 1,
         borderTopColor: '#f1f5f9',
+        gap: 10,
+    },
+    viewApplicantsButton: {
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#d8b4fe',
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    viewApplicantsButtonText: {
+        color: '#7c3aed',
+        fontSize: 15,
+        fontWeight: '700',
     },
     editButton: {
         backgroundColor: '#0f172a',
@@ -791,6 +730,19 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    duplicateButton: {
+        backgroundColor: '#eef2ff',
+        borderWidth: 1,
+        borderColor: '#c7d2fe',
+        paddingVertical: 12,
+        borderRadius: 12,
+        alignItems: 'center',
+    },
+    duplicateButtonText: {
+        color: '#3730a3',
+        fontSize: 14,
+        fontWeight: '700',
     },
 
     // Modal Styles

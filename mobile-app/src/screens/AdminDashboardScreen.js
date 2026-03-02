@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, FlatList, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, FlatList, Alert, Platform, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import client from '../api/client';
 import { logger } from '../utils/logger';
 
@@ -20,36 +21,108 @@ const MOCK_REPORTS = [
 
 export default function AdminDashboardScreen({ navigation }) {
     const [stats, setStats] = useState(null);
+    const [metrics, setMetrics] = useState(null);
     const [users, setUsers] = useState([]);
     const [jobs, setJobs] = useState([]);
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [authLoading, setAuthLoading] = useState(false);
+    const [adminEmail, setAdminEmail] = useState('');
+    const [adminPassword, setAdminPassword] = useState('');
+    const [adminToken, setAdminToken] = useState('');
+    const [requiresAdminAuth, setRequiresAdminAuth] = useState(false);
     const [activeTab, setActiveTab] = useState('Overview');
 
     useEffect(() => {
-        fetchAdminData();
+        const bootstrap = async () => {
+            const storedAdminToken = await SecureStore.getItemAsync('adminAuthToken');
+            if (storedAdminToken) {
+                setAdminToken(storedAdminToken);
+                setRequiresAdminAuth(false);
+                await fetchAdminData(storedAdminToken);
+            } else {
+                setRequiresAdminAuth(true);
+                setLoading(false);
+            }
+        };
+        bootstrap();
     }, []);
 
-    const fetchAdminData = async () => {
+    const fetchAdminData = async (tokenOverride = null) => {
+        const resolvedToken = tokenOverride || adminToken;
+        if (!resolvedToken) {
+            setRequiresAdminAuth(true);
+            setLoading(false);
+            return;
+        }
+
         try {
             setLoading(true);
-            const [statsRes, usersRes, jobsRes, reportsRes] = await Promise.allSettled([
+            const [statsRes, usersRes, jobsRes, reportsRes, metricsRes] = await Promise.allSettled([
                 client.get('/api/admin/stats'),
                 client.get('/api/admin/users?limit=5'), // Just recent 5 for overview
                 client.get('/api/admin/jobs?limit=5'),
                 client.get('/api/admin/reports?limit=5'),
+                client.get('/api/admin/metrics'),
             ]);
+            const allRejected = [statsRes, usersRes, jobsRes, reportsRes, metricsRes].every((row) => row.status === 'rejected');
+            if (allRejected) {
+                const unauthorized = [statsRes, usersRes, jobsRes, reportsRes, metricsRes].some(
+                    (row) => row.reason?.response?.status === 401 || row.reason?.response?.status === 403
+                );
+                if (unauthorized) {
+                    await SecureStore.deleteItemAsync('adminAuthToken');
+                    setAdminToken('');
+                    setRequiresAdminAuth(true);
+                    setStats(null);
+                    setUsers([]);
+                    setJobs([]);
+                    setReports([]);
+                    setMetrics(null);
+                    return;
+                }
+            }
 
             setStats(statsRes.status === 'fulfilled' ? statsRes.value.data : MOCK_STATS);
             setUsers(usersRes.status === 'fulfilled' ? usersRes.value.data.users : []);
             setJobs(jobsRes.status === 'fulfilled' ? jobsRes.value.data.jobs : []);
             setReports(reportsRes.status === 'fulfilled' ? reportsRes.value.data.reports : MOCK_REPORTS);
+            setMetrics(metricsRes.status === 'fulfilled' ? metricsRes.value.data.metrics : null);
+            setRequiresAdminAuth(false);
         } catch (error) {
             logger.error("Failed to load admin data:", error);
             setStats(MOCK_STATS);
             setReports(MOCK_REPORTS);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleAdminLogin = async () => {
+        const email = String(adminEmail || '').trim().toLowerCase();
+        const password = String(adminPassword || '');
+        if (!email || !password) {
+            Alert.alert('Admin Login', 'Email and password are required.');
+            return;
+        }
+
+        try {
+            setAuthLoading(true);
+            const { data } = await client.post('/api/admin/auth/login', { email, password });
+            const token = String(data?.token || '');
+            if (!token) {
+                throw new Error('Missing admin token');
+            }
+
+            await SecureStore.setItemAsync('adminAuthToken', token);
+            setAdminToken(token);
+            setRequiresAdminAuth(false);
+            setAdminPassword('');
+            await fetchAdminData(token);
+        } catch (error) {
+            Alert.alert('Admin Login Failed', error?.response?.data?.message || 'Invalid admin credentials.');
+        } finally {
+            setAuthLoading(false);
         }
     };
 
@@ -100,6 +173,13 @@ export default function AdminDashboardScreen({ navigation }) {
                     <Text style={styles.statValue}>{stats?.reports?.pending || 0}</Text>
                     <Text style={styles.statLabel}>Reports Pending</Text>
                 </View>
+            </View>
+            <View style={styles.systemCard}>
+                <Text style={styles.sectionTitle}>System Intelligence</Text>
+                <Text style={styles.systemText}>Flagged users: {metrics?.moderation?.flaggedUsers ?? 0}</Text>
+                <Text style={styles.systemText}>Pending reports: {metrics?.moderation?.pendingReports ?? 0}</Text>
+                <Text style={styles.systemText}>OTP spikes: {metrics?.monitoring?.otpFailures ?? 0}</Text>
+                <Text style={styles.systemText}>AI failure spikes: {metrics?.monitoring?.aiFailures ?? 0}</Text>
             </View>
 
             <View style={styles.sectionHeader}>
@@ -250,10 +330,46 @@ export default function AdminDashboardScreen({ navigation }) {
         />
     );
 
+    const renderAdminAuth = () => (
+        <View style={styles.authContainer}>
+            <Text style={styles.authTitle}>Admin Authentication Required</Text>
+            <Text style={styles.authSubtitle}>Use your admin credentials to access control endpoints.</Text>
+            <TextInput
+                value={adminEmail}
+                onChangeText={setAdminEmail}
+                placeholder="admin@company.com"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                style={styles.authInput}
+            />
+            <TextInput
+                value={adminPassword}
+                onChangeText={setAdminPassword}
+                placeholder="Password"
+                secureTextEntry
+                style={styles.authInput}
+            />
+            <TouchableOpacity style={styles.authButton} onPress={handleAdminLogin} disabled={authLoading}>
+                {authLoading
+                    ? <ActivityIndicator size="small" color="#ffffff" />
+                    : <Text style={styles.authButtonText}>Sign In</Text>}
+            </TouchableOpacity>
+        </View>
+    );
+
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity
+                    onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                            return;
+                        }
+                        navigation.navigate('MainTab', { screen: 'Settings' });
+                    }}
+                    style={styles.backButton}
+                >
                     <Ionicons name="arrow-back" size={24} color="#f8fafc" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Admin Control Center</Text>
@@ -272,10 +388,16 @@ export default function AdminDashboardScreen({ navigation }) {
                 ))}
             </View>
 
-            {activeTab === 'Overview' && renderOverview()}
-            {activeTab === 'Users' && renderUsersTab()}
-            {activeTab === 'Jobs' && renderJobsTab()}
-            {activeTab === 'Reports' && renderReportsTab()}
+            {requiresAdminAuth
+                ? renderAdminAuth()
+                : (
+                    <>
+                        {activeTab === 'Overview' && renderOverview()}
+                        {activeTab === 'Users' && renderUsersTab()}
+                        {activeTab === 'Jobs' && renderJobsTab()}
+                        {activeTab === 'Reports' && renderReportsTab()}
+                    </>
+                )}
 
         </SafeAreaView>
     );
@@ -363,6 +485,19 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#64748b',
         marginTop: 4,
+    },
+    systemCard: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        marginBottom: 20,
+    },
+    systemText: {
+        fontSize: 13,
+        color: '#334155',
+        marginTop: 6,
     },
     sectionHeader: {
         flexDirection: 'row',
@@ -480,5 +615,48 @@ const styles = StyleSheet.create({
     },
     reportBtnDismissText: {
         color: '#dc2626',
+    },
+    authContainer: {
+        margin: 16,
+        padding: 16,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    authTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    authSubtitle: {
+        marginTop: 6,
+        marginBottom: 14,
+        fontSize: 13,
+        color: '#64748b',
+    },
+    authInput: {
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 10,
+        fontSize: 14,
+        color: '#0f172a',
+        backgroundColor: '#ffffff',
+    },
+    authButton: {
+        backgroundColor: '#2563eb',
+        borderRadius: 10,
+        paddingVertical: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 2,
+    },
+    authButtonText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '700',
     },
 });

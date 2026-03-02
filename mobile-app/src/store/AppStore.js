@@ -5,6 +5,17 @@ import { getPrimaryRoleFromUser } from '../utils/roleMode';
 
 const AppStoreContext = createContext(null);
 
+const normalizePrimaryRole = (roleValue) => {
+    const normalized = String(roleValue || '').toLowerCase();
+    if (normalized === 'employer' || normalized === 'recruiter' || normalized === 'admin') {
+        return 'employer';
+    }
+    if (normalized === 'worker' || normalized === 'candidate') {
+        return 'worker';
+    }
+    return null;
+};
+
 export function AppStoreProvider({ children }) {
     const { userInfo } = useContext(AuthContext);
 
@@ -34,7 +45,7 @@ export function AppStoreProvider({ children }) {
     }, []);
 
     const setRole = useCallback((nextRole) => {
-        setRoleState(nextRole === 'employer' ? 'employer' : 'worker');
+        setRoleState(normalizePrimaryRole(nextRole));
     }, []);
 
     const setSocketStatus = useCallback((nextStatus) => {

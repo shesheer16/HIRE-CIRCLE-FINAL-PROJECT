@@ -20,12 +20,12 @@ async function test() {
         console.log("DATA:", res.data);
         process.exit(0);
     } catch (err) {
-        console.error("Request Failed!");
+        console.warn("Request Failed!");
         if (err.response) {
-            console.error("STATUS:", err.response.status);
-            console.error("DATA:", err.response.data);
+            console.warn("STATUS:", err.response.status);
+            console.warn("DATA:", err.response.data);
         } else {
-            console.error(err.message);
+            console.warn(err.message);
         }
         process.exit(1);
     }

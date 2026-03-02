@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QuestionOverlay from './QuestionOverlay';
 import Controls from './Controls';
+import { buildApiUrl } from '../config/api';
 
 // Use a standard function declaration with a clear default export at the bottom
 function VideoRecorder({ onUploadSuccess }) {
@@ -22,7 +23,7 @@ function VideoRecorder({ onUploadSuccess }) {
             streamRef.current = s;
             if (videoRef.current) {
                 videoRef.current.srcObject = s;
-                try { await videoRef.current.play() } catch (e) { console.error(e) }
+                try { await videoRef.current.play() } catch (_error) {}
             }
             setError(null);
             return true;
@@ -68,7 +69,7 @@ function VideoRecorder({ onUploadSuccess }) {
         const token = userInfo ? userInfo.token : '';
 
         try {
-            const res = await fetch('http://localhost:5001/api/upload/video', { // UPDATED TO OUR NEW PORT
+            const res = await fetch(buildApiUrl('/api/upload/video'), {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}` // LINKED TO PHASE 1 AUTH
@@ -86,7 +87,6 @@ function VideoRecorder({ onUploadSuccess }) {
                 throw new Error(errorMsg);
             }
         } catch (err) {
-            console.error("Upload error:", err);
             setUploadStatus('error');
             setError(err.message || 'Upload failed. See console for details.');
         }

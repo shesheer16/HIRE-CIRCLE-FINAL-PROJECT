@@ -32,5 +32,7 @@ const matchFeedbackSchema = mongoose.Schema(
     }
 );
 
+matchFeedbackSchema.index({ jobId: 1, createdAt: -1 });
+
 const MatchFeedback = mongoose.model('MatchFeedback', matchFeedbackSchema);
 module.exports = MatchFeedback;

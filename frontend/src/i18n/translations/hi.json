@@ -1,0 +1,18 @@
+{
+  "nav": {
+    "connect": "कनेक्ट",
+    "profiles": "प्रोफाइल",
+    "applications": "आवेदन",
+    "jobs": "नौकरियां",
+    "settings": "सेटिंग्स"
+  },
+  "settings": {
+    "title": "सेटिंग्स",
+    "language": "भाषा",
+    "languageEnglish": "अंग्रेज़ी",
+    "languageHindi": "हिंदी",
+    "candidateTitle": "उम्मीदवार सेटिंग्स",
+    "recruiterTitle": "रिक्रूटर सेटिंग्स",
+    "description": "भाषा और वैश्विक वरीयताएं प्रबंधित करें।"
+  }
+}

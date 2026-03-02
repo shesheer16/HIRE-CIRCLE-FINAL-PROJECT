@@ -2,7 +2,8 @@ import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import BountyCard from './BountyCard';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function BountiesTabComponent({
     bounties,
@@ -27,7 +28,7 @@ function BountiesTabComponent({
 
     const listHeader = useMemo(() => (
         <LinearGradient
-            colors={[theme.primary, theme.indigo]}
+            colors={[connectPalette.accent, connectPalette.accentDark]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={styles.hero}
@@ -73,33 +74,29 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.xl,
         padding: 24,
         marginBottom: 16,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        ...connectShadow,
     },
     heroLabel: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.primaryLight,
+        color: '#e9ddff',
         letterSpacing: 1,
         marginBottom: 4,
     },
     heroTitle: {
         fontSize: 22,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
         marginBottom: 4,
     },
     heroSub: {
         fontSize: 12,
-        color: theme.primaryLight,
+        color: '#ece3ff',
         fontWeight: '600',
         marginBottom: 14,
     },
     earningsBox: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.lg,
         paddingHorizontal: 16,
         paddingVertical: 12,
@@ -110,12 +107,12 @@ const styles = StyleSheet.create({
     earningsLabel: {
         fontSize: 10,
         fontWeight: '700',
-        color: theme.textSecondary,
+        color: connectPalette.muted,
     },
     earningsValue: {
         fontSize: 24,
         fontWeight: '900',
-        color: theme.textPrimary,
+        color: connectPalette.text,
     },
     earningsIcon: {
         fontSize: 28,

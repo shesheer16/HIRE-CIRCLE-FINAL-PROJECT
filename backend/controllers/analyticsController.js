@@ -2,6 +2,8 @@ const Job = require('../models/Job');
 const Application = require('../models/Application');
 const MatchFeedback = require('../models/MatchFeedback');
 const User = require('../models/userModel');
+const WorkerProfile = require('../models/WorkerProfile');
+const InterviewProcessingJob = require('../models/InterviewProcessingJob');
 const AnalyticsEvent = require('../models/AnalyticsEvent');
 const ConversionMilestone = require('../models/ConversionMilestone');
 const HiringLifecycleEvent = require('../models/HiringLifecycleEvent');
@@ -9,6 +11,11 @@ const RevenueEvent = require('../models/RevenueEvent');
 const CityHiringDailySnapshot = require('../models/CityHiringDailySnapshot');
 const { getMatchQualityAnalytics } = require('../services/matchMetricsService');
 const { getMatchQualityTargets } = require('../config/matchQualityTargets');
+const { isRecruiter } = require('../utils/roleGuards');
+const { dispatchAsyncTask, TASK_TYPES } = require('../services/asyncTaskDispatcher');
+const { listRegionMetrics } = require('../services/regionMetricsService');
+const { DEFAULT_BASE_CURRENCY } = require('../services/currencyConversionService');
+const mongoose = require('mongoose');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -38,6 +45,7 @@ const toObjectIdArray = (values = []) => {
 };
 
 const ratio = (num, den) => (den > 0 ? num / den : 0);
+const toObjectIdOrNull = (value) => (mongoose.Types.ObjectId.isValid(value) ? new mongoose.Types.ObjectId(value) : null);
 
 // @desc Get aggregated hiring funnel for all jobs posted by employer
 // @route GET /api/analytics/employer/:employerId/hiring-funnel
@@ -50,35 +58,68 @@ const getEmployerHiringFunnel = async (req, res) => {
             return res.status(403).json({ message: "Not authorized" });
         }
 
-        const jobs = await Job.find({ employerId });
-        const jobIds = jobs.map(j => j._id);
+        const employerObjectId = toObjectIdOrNull(employerId);
+        if (!employerObjectId) {
+            return res.status(400).json({ message: 'Invalid employerId' });
+        }
 
-        const totalJobs = jobs.length;
-        const applications = await Application.find({ jobId: { $in: jobIds } });
+        const [totalJobs, stageRows] = await Promise.all([
+            Job.countDocuments({ employerId: employerObjectId }),
+            Application.aggregate([
+                { $match: { employer: employerObjectId } },
+                {
+                    $project: {
+                        applied: { $literal: 1 },
+                        shortlisted: { $literal: 0 },
+                        interviewed: { $literal: 0 },
+                        offered: {
+                            $cond: [{
+                                $in: [
+                                    '$status',
+                                    ['offer_sent', 'offer_accepted', 'accepted', 'offer_proposed'],
+                                ],
+                            }, 1, 0],
+                        },
+                        hired: { $cond: [{ $eq: ['$status', 'hired'] }, 1, 0] },
+                    },
+                },
+                {
+                    $unionWith: {
+                        coll: MatchFeedback.collection.name,
+                        pipeline: [
+                            { $match: { employerId: employerObjectId } },
+                            {
+                                $project: {
+                                    applied: { $literal: 0 },
+                                    shortlisted: { $cond: [{ $eq: ['$userAction', 'shortlisted'] }, 1, 0] },
+                                    interviewed: { $cond: [{ $eq: ['$userAction', 'interviewed'] }, 1, 0] },
+                                    offered: { $literal: 0 },
+                                    hired: { $cond: [{ $eq: ['$userAction', 'hired'] }, 1, 0] },
+                                },
+                            },
+                        ],
+                    },
+                },
+                {
+                    $group: {
+                        _id: null,
+                        applied: { $sum: '$applied' },
+                        shortlisted: { $sum: '$shortlisted' },
+                        interviewed: { $sum: '$interviewed' },
+                        offered: { $sum: '$offered' },
+                        hired: { $sum: '$hired' },
+                    },
+                },
+            ]),
+        ]);
 
-        // Calculate funnel stages
         const funnel = {
-            applied: applications.length,
-            shortlisted: 0,
-            interviewed: 0,
-            offered: 0,
-            hired: 0
+            applied: Number(stageRows[0]?.applied || 0),
+            shortlisted: Number(stageRows[0]?.shortlisted || 0),
+            interviewed: Number(stageRows[0]?.interviewed || 0),
+            offered: Number(stageRows[0]?.offered || 0),
+            hired: Number(stageRows[0]?.hired || 0),
         };
-
-        // We use MatchFeedback collection to track advanced states
-        const feedback = await MatchFeedback.find({ jobId: { $in: jobIds } });
-
-        // Also look at application standard status (pending, accepted, rejected)
-        applications.forEach(app => {
-            if (app.status === 'accepted') funnel.offered++;
-            if (app.status === 'hired') funnel.hired++; // assuming hired is a future state
-        });
-
-        feedback.forEach(fb => {
-            if (fb.userAction === 'shortlisted') funnel.shortlisted++;
-            if (fb.userAction === 'interviewed') funnel.interviewed++;
-            if (fb.userAction === 'hired') funnel.hired++;
-        });
 
         res.json({
             totalJobs,
@@ -87,7 +128,7 @@ const getEmployerHiringFunnel = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Analytics Funnel Error:", error);
+        console.warn("Analytics Funnel Error:", error);
         res.status(500).json({ message: "Failed to load funnel analytics" });
     }
 };
@@ -101,40 +142,87 @@ const getEmployerJobPerformance = async (req, res) => {
         if (req.user._id.toString() !== employerId && !req.user.isAdmin) {
             return res.status(403).json({ message: "Not authorized" });
         }
+        void dispatchAsyncTask({
+            type: TASK_TYPES.METRICS_AGGREGATION,
+            payload: { source: 'analytics_employer_job_performance' },
+            label: 'analytics_metrics_job_performance',
+        });
+        void dispatchAsyncTask({
+            type: TASK_TYPES.HEAVY_ANALYTICS_QUERY,
+            payload: { employerId: String(employerId) },
+            label: 'analytics_warm_employer_summary',
+        });
 
-        const jobs = await Job.find({ employerId }).sort({ createdAt: -1 });
+        const employerObjectId = toObjectIdOrNull(employerId);
+        if (!employerObjectId) {
+            return res.status(400).json({ message: 'Invalid employerId' });
+        }
 
-        const performanceData = await Promise.all(jobs.map(async (job) => {
-            const apps = await Application.find({ jobId: job._id });
-            const feedback = await MatchFeedback.find({ jobId: job._id });
+        const rows = await Job.aggregate([
+            { $match: { employerId: employerObjectId } },
+            { $sort: { createdAt: -1 } },
+            {
+                $lookup: {
+                    from: Application.collection.name,
+                    let: { jobId: '$_id' },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$job', '$$jobId'] } } },
+                        { $count: 'count' },
+                    ],
+                    as: 'applicationStats',
+                },
+            },
+            {
+                $lookup: {
+                    from: MatchFeedback.collection.name,
+                    let: { jobId: '$_id' },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$jobId', '$$jobId'] } } },
+                        {
+                            $group: {
+                                _id: null,
+                                avgMatchScore: { $avg: '$matchScoreAtTime' },
+                            },
+                        },
+                    ],
+                    as: 'feedbackStats',
+                },
+            },
+            {
+                $project: {
+                    _id: 1,
+                    title: 1,
+                    isOpen: 1,
+                    createdAt: 1,
+                    applications: {
+                        $ifNull: [{ $arrayElemAt: ['$applicationStats.count', 0] }, 0],
+                    },
+                    avgMatchScore: {
+                        $ifNull: [{ $arrayElemAt: ['$feedbackStats.avgMatchScore', 0] }, 0],
+                    },
+                },
+            },
+        ]);
 
-            // Calculate mock views (we don't track views natively yet)
-            const views = apps.length * 4 + Math.floor(Math.random() * 20);
-
-            let avgMatchScore = 0;
-            if (feedback.length > 0) {
-                const totalScore = feedback.reduce((acc, curr) => acc + (curr.matchScoreAtTime || 0), 0);
-                avgMatchScore = Math.round(totalScore / feedback.length);
-            }
-
-            // Time to fill (mock if not closed)
+        const performanceData = rows.map((job) => {
+            const appsCount = Number(job.applications || 0);
+            const views = appsCount * 4 + Math.floor(Math.random() * 20);
             const daysOpen = Math.floor((Date.now() - new Date(job.createdAt)) / (1000 * 60 * 60 * 24));
-
             return {
                 jobId: job._id,
                 title: job.title,
                 status: job.isOpen ? 'Active' : 'Closed',
                 views,
-                applications: apps.length,
-                avgMatchScore,
-                daysOpen
+                applications: appsCount,
+                avgMatchScore: Math.round(Number(job.avgMatchScore || 0)),
+                daysOpen,
             };
-        }));
+        });
 
         res.json(performanceData);
 
     } catch (error) {
-        console.error("Analytics Performance Error:", error);
+        console.warn("Analytics Performance Error:", error);
         res.status(500).json({ message: "Failed to load job performance data" });
     }
 };
@@ -193,7 +281,7 @@ const getCohorts = async (req, res) => {
 
         res.json(cohortsData);
     } catch (error) {
-        console.error("Analytics Cohorts Error:", error);
+        console.warn("Analytics Cohorts Error:", error);
         res.status(500).json({ message: "Failed to load cohort analytics" });
     }
 };
@@ -212,11 +300,15 @@ const getLTVPrediction = async (req, res) => {
         if (!targetUser) return res.status(404).json({ message: "User not found" });
 
         const jobsPosted = await Job.countDocuments({ employerId: userId });
-        const appsSubmitted = await Application.countDocuments({ candidateId: userId });
+        let appsSubmitted = 0;
+        const workerProfile = await WorkerProfile.findOne({ user: userId }).select('_id').lean();
+        if (workerProfile?._id) {
+            appsSubmitted = await Application.countDocuments({ worker: workerProfile._id });
+        }
 
         // Simple Heuristic ML Placeholder for LTV
         let calculatedLtv = 0;
-        if (targetUser.role === 'employer') {
+        if (isRecruiter(targetUser)) {
             calculatedLtv = 50 + (jobsPosted * 100);
             if (targetUser.subscription && targetUser.subscription.plan === 'pro') {
                 calculatedLtv += 600; // Expected 1-year retention at $49/mo
@@ -229,12 +321,12 @@ const getLTVPrediction = async (req, res) => {
             userId,
             role: targetUser.role,
             predictedLTV: calculatedLtv,
-            currency: 'USD',
+            currency: DEFAULT_BASE_CURRENCY,
             confidenceScore: 0.85
         });
 
     } catch (error) {
-        console.error("Analytics LTV Error:", error);
+        console.warn("Analytics LTV Error:", error);
         res.status(500).json({ message: "Failed to compute LTV predictions" });
     }
 }
@@ -261,7 +353,7 @@ const getExecutiveDashboard = async (req, res) => {
             },
             revenue: {
                 mrr: mrr,
-                currency: 'USD'
+                currency: DEFAULT_BASE_CURRENCY
             },
             conversions: {
                 visitorToSignup: '12%',
@@ -270,7 +362,7 @@ const getExecutiveDashboard = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Analytics Dashboard Error:", error);
+        console.warn("Analytics Dashboard Error:", error);
         res.status(500).json({ message: "Failed to load executive dashboard" });
     }
 }
@@ -303,6 +395,11 @@ const getEmployerFillRateMeter = async (req, res) => {
         if (String(req.user?._id) !== String(employerId) && !req.user?.isAdmin) {
             return res.status(403).json({ message: 'Not authorized' });
         }
+        void dispatchAsyncTask({
+            type: TASK_TYPES.METRICS_AGGREGATION,
+            payload: { source: 'analytics_employer_fill_rate' },
+            label: 'analytics_metrics_fill_rate',
+        });
 
         const { from, to } = getWindow(req, 30);
         const city = String(req.query.city || 'Hyderabad');
@@ -370,7 +467,7 @@ const getEmployerFillRateMeter = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Fill rate meter error:', error);
+        console.warn('Fill rate meter error:', error);
         return res.status(500).json({ message: 'Failed to compute fill-rate meter' });
     }
 };
@@ -383,6 +480,11 @@ const getCityHiringQuality = async (req, res) => {
         const { from, to } = getWindow(req, 30);
         const cityMatch = toCityMatch(city);
         const snapshotEnabled = String(process.env.CITY_SNAPSHOT_ENABLED || 'false').toLowerCase() === 'true';
+        void dispatchAsyncTask({
+            type: TASK_TYPES.METRICS_AGGREGATION,
+            payload: { source: 'analytics_city_hiring_quality', city },
+            label: 'analytics_metrics_city_quality',
+        });
 
         let totals = {
             applications: 0,
@@ -515,7 +617,7 @@ const getCityHiringQuality = async (req, res) => {
             })),
         });
     } catch (error) {
-        console.error('City hiring quality error:', error);
+        console.warn('City hiring quality error:', error);
         return res.status(500).json({ message: 'Failed to compute city hiring quality' });
     }
 };
@@ -528,6 +630,11 @@ const getRevenueLoops = async (req, res) => {
         const cityMatch = toCityMatch(city);
         const { from, to } = getWindow(req, 30);
         const activityFrom = new Date(to.getTime() - 30 * MS_PER_DAY);
+        void dispatchAsyncTask({
+            type: TASK_TYPES.METRICS_AGGREGATION,
+            payload: { source: 'analytics_revenue_loops', city },
+            label: 'analytics_metrics_revenue_loops',
+        });
 
         const [revenueAgg] = await RevenueEvent.aggregate([
             {
@@ -568,7 +675,20 @@ const getRevenueLoops = async (req, res) => {
             }).distinct('employerId'),
             Application.find({
                 job: { $in: cityJobIds },
-                status: { $in: ['shortlisted', 'accepted', 'rejected', 'hired', 'offer_proposed', 'offer_accepted'] },
+                status: {
+                    $in: [
+                        'shortlisted',
+                        'interview_requested',
+                        'interview_completed',
+                        'offer_sent',
+                        'offer_accepted',
+                        'rejected',
+                        'hired',
+                        // Legacy compatibility.
+                        'accepted',
+                        'offer_proposed',
+                    ],
+                },
                 updatedAt: { $gte: activityFrom, $lte: to },
             }).distinct('employer'),
             RevenueEvent.find({
@@ -681,7 +801,7 @@ const getRevenueLoops = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Revenue loops analytics error:', error);
+        console.warn('Revenue loops analytics error:', error);
         return res.status(500).json({ message: 'Failed to compute revenue loop metrics' });
     }
 };
@@ -718,7 +838,7 @@ const getMatchQualityOverview = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Match quality overview error:', error);
+        console.warn('Match quality overview error:', error);
         return res.status(500).json({ message: 'Failed to compute match quality overview' });
     }
 };
@@ -750,8 +870,258 @@ const getMatchQualityDetail = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Match quality detail error:', error);
+        console.warn('Match quality detail error:', error);
         return res.status(500).json({ message: 'Failed to compute match quality detail' });
+    }
+};
+
+// @desc Smart Interview quality intelligence metrics
+// @route GET /api/analytics/smart-interview-quality
+const getSmartInterviewQuality = async (req, res) => {
+    try {
+        const { from, to } = getWindow(req, 30);
+
+        const baseMatch = {
+            createdAt: { $gte: from, $lte: to },
+        };
+
+        const [
+            totalInterviews,
+            completedInterviews,
+            clarificationRows,
+            slotRows,
+            qualityBuckets,
+            salaryOutlierRows,
+        ] = await Promise.all([
+            InterviewProcessingJob.countDocuments(baseMatch),
+            InterviewProcessingJob.countDocuments({
+                ...baseMatch,
+                status: 'completed',
+            }),
+            InterviewProcessingJob.aggregate([
+                { $match: baseMatch },
+                {
+                    $group: {
+                        _id: null,
+                        clarificationTriggeredCount: { $sum: { $ifNull: ['$clarificationTriggeredCount', 0] } },
+                        clarificationResolvedCount: { $sum: { $ifNull: ['$clarificationResolvedCount', 0] } },
+                        clarificationSkippedCount: { $sum: { $ifNull: ['$clarificationSkippedCount', 0] } },
+                    },
+                },
+            ]),
+            InterviewProcessingJob.aggregate([
+                {
+                    $match: {
+                        ...baseMatch,
+                        status: 'completed',
+                    },
+                },
+                {
+                    $group: {
+                        _id: null,
+                        avgSlotCompletenessRatio: { $avg: { $ifNull: ['$rawMetrics.slotCompletenessRatio', 0] } },
+                        avgProfileQualityScore: { $avg: { $ifNull: ['$rawMetrics.profileQualityScore', 0] } },
+                        avgAmbiguityRate: { $avg: { $ifNull: ['$rawMetrics.ambiguityRate', 0] } },
+                    },
+                },
+            ]),
+            WorkerProfile.aggregate([
+                {
+                    $match: {
+                        'interviewIntelligence.profileQualityScore': { $ne: null },
+                    },
+                },
+                {
+                    $project: {
+                        qualityBucket: {
+                            $switch: {
+                                branches: [
+                                    {
+                                        case: { $gte: ['$interviewIntelligence.profileQualityScore', 0.8] },
+                                        then: 'HIGH',
+                                    },
+                                    {
+                                        case: { $gte: ['$interviewIntelligence.profileQualityScore', 0.6] },
+                                        then: 'MEDIUM',
+                                    },
+                                ],
+                                default: 'LOW',
+                            },
+                        },
+                    },
+                },
+                {
+                    $lookup: {
+                        from: Application.collection.name,
+                        localField: '_id',
+                        foreignField: 'worker',
+                        as: 'applications',
+                    },
+                },
+                {
+                    $project: {
+                        qualityBucket: 1,
+                        hasHire: {
+                            $gt: [
+                                {
+                                    $size: {
+                                        $filter: {
+                                            input: '$applications',
+                                            as: 'app',
+                                            cond: {
+                                                $in: [
+                                                    '$$app.status',
+                                                    ['hired', 'offer_accepted'],
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                                0,
+                            ],
+                        },
+                    },
+                },
+                {
+                    $group: {
+                        _id: '$qualityBucket',
+                        workers: { $sum: 1 },
+                        workersWithHire: {
+                            $sum: { $cond: ['$hasHire', 1, 0] },
+                        },
+                    },
+                },
+            ]),
+            WorkerProfile.aggregate([
+                {
+                    $match: {
+                        'interviewIntelligence.salaryOutlierFlag': { $in: [true, false] },
+                    },
+                },
+                {
+                    $project: {
+                        salaryOutlierFlag: '$interviewIntelligence.salaryOutlierFlag',
+                    },
+                },
+                {
+                    $lookup: {
+                        from: Application.collection.name,
+                        localField: '_id',
+                        foreignField: 'worker',
+                        as: 'applications',
+                    },
+                },
+                {
+                    $project: {
+                        salaryOutlierFlag: 1,
+                        totalApplications: { $size: '$applications' },
+                        shortlistedApplications: {
+                            $size: {
+                                $filter: {
+                                    input: '$applications',
+                                    as: 'app',
+                                    cond: {
+                                        $in: [
+                                            '$$app.status',
+                                            [
+                                                'shortlisted',
+                                                'interview_requested',
+                                                'interview_completed',
+                                                'offer_sent',
+                                                'offer_accepted',
+                                                'hired',
+                                                // Legacy compatibility.
+                                                'accepted',
+                                                'offer_proposed',
+                                            ],
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                {
+                    $group: {
+                        _id: '$salaryOutlierFlag',
+                        totalApplications: { $sum: '$totalApplications' },
+                        shortlistedApplications: { $sum: '$shortlistedApplications' },
+                    },
+                },
+            ]),
+        ]);
+
+        const completionRate = ratio(completedInterviews, totalInterviews);
+        const clarificationTotals = clarificationRows[0] || {};
+        const clarificationFrequency = totalInterviews > 0
+            ? Number((Number(clarificationTotals.clarificationTriggeredCount || 0) / totalInterviews).toFixed(4))
+            : 0;
+        const slotTotals = slotRows[0] || {};
+
+        const qualityCorrelation = qualityBuckets.map((row) => ({
+            profileQualityBucket: row._id,
+            workers: Number(row.workers || 0),
+            workersWithHire: Number(row.workersWithHire || 0),
+            hireRate: ratio(row.workersWithHire || 0, row.workers || 0),
+        }));
+
+        const salaryOutlierImpact = salaryOutlierRows.map((row) => ({
+            salaryOutlierFlag: Boolean(row._id),
+            totalApplications: Number(row.totalApplications || 0),
+            shortlistedApplications: Number(row.shortlistedApplications || 0),
+            shortlistRate: ratio(row.shortlistedApplications || 0, row.totalApplications || 0),
+        }));
+
+        return res.json({
+            from,
+            to,
+            metrics: {
+                interviewCompletionRate: completionRate,
+                clarificationFrequency,
+                slotCompletenessRatio: Number(slotTotals.avgSlotCompletenessRatio || 0),
+                avgProfileQualityScore: Number(slotTotals.avgProfileQualityScore || 0),
+                avgAmbiguityRate: Number(slotTotals.avgAmbiguityRate || 0),
+            },
+            clarification: {
+                clarificationTriggeredCount: Number(clarificationTotals.clarificationTriggeredCount || 0),
+                clarificationResolvedCount: Number(clarificationTotals.clarificationResolvedCount || 0),
+                clarificationSkippedCount: Number(clarificationTotals.clarificationSkippedCount || 0),
+            },
+            profileQualityVsHireRate: qualityCorrelation,
+            salaryOutlierShortlistImpact: salaryOutlierImpact,
+        });
+    } catch (error) {
+        console.warn('Smart interview quality analytics error:', error);
+        return res.status(500).json({ message: 'Failed to compute smart interview quality metrics' });
+    }
+};
+
+// @desc Region growth metrics snapshots
+// @route GET /api/analytics/region-metrics
+const getRegionMetrics = async (req, res) => {
+    try {
+        if (!req.user?.isAdmin) {
+            return res.status(403).json({ message: 'Not authorized. Executive access required.' });
+        }
+
+        const region = String(req.query.region || '').trim();
+        const country = String(req.query.country || '').trim();
+        const limit = Number.parseInt(req.query.limit || '100', 10);
+        const metrics = await listRegionMetrics({
+            region: region || null,
+            country: country || null,
+            limit,
+        });
+
+        return res.json({
+            count: metrics.length,
+            region: region || null,
+            country: country || null,
+            metrics,
+        });
+    } catch (error) {
+        console.warn('Region metrics analytics error:', error);
+        return res.status(500).json({ message: 'Failed to fetch region metrics' });
     }
 };
 
@@ -766,4 +1136,6 @@ module.exports = {
     getRevenueLoops,
     getMatchQualityOverview,
     getMatchQualityDetail,
+    getSmartInterviewQuality,
+    getRegionMetrics,
 };

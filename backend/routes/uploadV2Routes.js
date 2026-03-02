@@ -5,13 +5,15 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('ffmpeg-static');
 const { protect } = require('../middleware/authMiddleware');
+const { smartInterviewStartLimiter } = require('../middleware/rateLimiters');
+const logger = require('../utils/logger');
 const { uploadToS3 } = require('../services/s3Service');
 const InterviewProcessingJob = require('../models/InterviewProcessingJob');
 const {
-    enqueueInterviewJob,
     getInterviewQueueDepth,
     isQueueConfigured,
 } = require('../services/sqsInterviewQueue');
+const { enqueueBackgroundJob } = require('../services/backgroundQueueService');
 const {
     toInterviewRole,
     buildInterviewIdempotencyKey,
@@ -20,9 +22,11 @@ const {
     trackInterviewEvent,
 } = require('../services/interviewProcessingService');
 const uploadRoutes = require('./uploadRoutes');
+const { ensureExtensionMatchesMime, isValidMp4Signature, runVirusScanHook } = require('../services/uploadSecurityService');
+const { isDegradationActive } = require('../services/degradationService');
 
 const router = express.Router();
-const upload = multer({ dest: path.join(__dirname, '../uploads/') });
+const isProductionRuntime = () => String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const maxQueueDepth = Number.parseInt(process.env.INTERVIEW_QUEUE_MAX_DEPTH || '5000', 10);
 const maxUploadSizeBytes = Number.parseInt(process.env.INTERVIEW_MAX_FILE_BYTES || String(150 * 1024 * 1024), 10);
 const maxVideoDurationSeconds = Number.parseInt(process.env.INTERVIEW_MAX_DURATION_SECONDS || '180', 10);
@@ -30,6 +34,22 @@ const maxUploadsPerWindow = Number.parseInt(process.env.INTERVIEW_UPLOAD_RATE_LI
 const uploadRateWindowMs = Number.parseInt(process.env.INTERVIEW_UPLOAD_RATE_LIMIT_WINDOW_MS || String(10 * 60 * 1000), 10);
 const dailyProcessingLimit = Number.parseInt(process.env.INTERVIEW_DAILY_LIMIT || '20000', 10);
 const allowedMimeTypes = new Set(['video/mp4']);
+const MIME_EXTENSION_MAP = new Map([
+    ['video/mp4', ['.mp4']],
+]);
+const upload = multer({
+    dest: path.join(__dirname, '../uploads/'),
+    limits: {
+        fileSize: maxUploadSizeBytes,
+    },
+    fileFilter: (req, file, cb) => {
+        if (allowedMimeTypes.has(String(file.mimetype || '').toLowerCase())) {
+            cb(null, true);
+            return;
+        }
+        cb(new Error('Unsupported video format. Please upload an MP4 file.'));
+    },
+});
 
 ffmpeg.setFfmpegPath(ffmpegInstaller);
 const { getSystemFlag } = require('../services/systemFlagService');
@@ -49,24 +69,36 @@ const probeDurationInSeconds = async (videoPath) => {
     });
 };
 
-const isLikelyMp4 = (filePath) => {
-    try {
-        const fd = fs.openSync(filePath, 'r');
-        const buffer = Buffer.alloc(64);
-        fs.readSync(fd, buffer, 0, 64, 0);
-        fs.closeSync(fd);
-        return buffer.includes(Buffer.from('ftyp'));
-    } catch (error) {
-        return false;
-    }
-};
-
-router.post('/video', protect, upload.single('video'), async (req, res) => {
+router.post('/video', protect, smartInterviewStartLimiter, (req, res, next) => {
+    upload.single('video')(req, res, (error) => {
+        if (!error) {
+            next();
+            return;
+        }
+        if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ success: false, error: 'Video too large' });
+        }
+        return res.status(400).json({ success: false, error: error.message || 'Invalid upload request.' });
+    });
+}, async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ success: false, error: 'No video file provided.' });
     }
 
+    if (isDegradationActive('queuePaused') || isDegradationActive('smartInterviewPaused')) {
+        return res.status(503).json({
+            success: false,
+            error: 'Smart Interview is temporarily paused due to system load. Please retry shortly.',
+        });
+    }
+
     if (!process.env.AWS_SQS_INTERVIEW_QUEUE_URL) {
+        if (isProductionRuntime()) {
+            return res.status(503).json({
+                success: false,
+                error: 'Interview queue is not configured.',
+            });
+        }
         return uploadRoutes.handleVideoUpload(req, res);
     }
 
@@ -93,12 +125,26 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
             });
         }
 
-        if (!isLikelyMp4(localVideoPath)) {
+        if (!ensureExtensionMatchesMime(req.file.originalname, mimeType, MIME_EXTENSION_MAP)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid file extension. Please upload an MP4 file.',
+            });
+        }
+
+        if (!isValidMp4Signature(localVideoPath)) {
             return res.status(400).json({
                 success: false,
                 error: 'Invalid video file. Please upload a valid MP4.',
             });
         }
+
+        await runVirusScanHook({
+            filePath: localVideoPath,
+            mimeType,
+            originalName: req.file.originalname,
+            correlationId: req.correlationId,
+        });
 
         if (Number(req.file.size || 0) > maxUploadSizeBytes) {
             return res.status(400).json({
@@ -165,7 +211,7 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
             .select('_id videoUrl');
         if (existing) {
             correlationId = String(existing._id);
-            console.log(JSON.stringify({
+            logger.info(JSON.stringify({
                 metric: 'v2_upload_count',
                 value: 1,
                 type: 'deduplicated',
@@ -225,14 +271,17 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
         });
         correlationId = String(processingJob._id);
 
-        await enqueueInterviewJob({
-            processingId: String(processingJob._id),
-            userId: String(req.user._id),
-            role,
-            videoUrl,
+        await enqueueBackgroundJob({
+            type: 'smart_interview_processing',
+            payload: {
+                processingId: String(processingJob._id),
+                userId: String(req.user._id),
+                role,
+                videoUrl,
+            },
         });
 
-        console.log(JSON.stringify({
+        logger.info(JSON.stringify({
             metric: 'v2_upload_count',
             value: 1,
             type: 'new',
@@ -246,7 +295,7 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
             correlationId,
             dimensions: { UploadType: 'new' },
         });
-        console.log(JSON.stringify({
+        logger.info(JSON.stringify({
             metric: 'queue_depth',
             value: queueDepth,
             correlationId,
@@ -291,14 +340,15 @@ router.post('/video', protect, upload.single('video'), async (req, res) => {
             }
         }
 
-        console.warn(JSON.stringify({
+        logger.warn(JSON.stringify({
             event: 'v2_upload_error',
             correlationId: correlationId || 'pending',
             message: error.message,
         }));
-        return res.status(500).json({
+        const statusCode = Number(error?.statusCode || 500);
+        return res.status(statusCode).json({
             success: false,
-            error: 'Failed to queue interview processing.',
+            error: statusCode >= 500 ? 'Failed to queue interview processing.' : String(error.message || 'Upload rejected'),
         });
     } finally {
         if (fs.existsSync(localVideoPath)) {

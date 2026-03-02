@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
+import { AuthContext } from '../context/AuthContext';
 import { logger } from '../utils/logger';
 
-export default function EmployerProfileCreateScreen({ navigation }) {
+export default function EmployerProfileCreateScreen() {
+    const { updateUserInfo } = useContext(AuthContext);
     const [companyName, setCompanyName] = useState('');
     const [tagline, setTagline] = useState('');
     const [location, setLocation] = useState('');
@@ -37,15 +39,11 @@ export default function EmployerProfileCreateScreen({ navigation }) {
             // Use PUT to update the existing user role to an established employer profile
             await client.put('/api/users/profile', updateData);
 
-            Alert.alert('Success', 'Profile created!', [
-                {
-                    text: 'OK',
-                    text: 'OK',
-                    onPress: () => navigation.replace('MainTab', {
-                        role: 'employer'
-                    })
-                }
-            ]);
+            await updateUserInfo({
+                hasCompletedProfile: true,
+            });
+
+            Alert.alert('Success', 'Profile created!');
 
         } catch (error) {
             logger.error("Profile Save Error:", error);
@@ -63,12 +61,12 @@ export default function EmployerProfileCreateScreen({ navigation }) {
                     <Text style={styles.subtitle}>Establish your hiring identity</Text>
                 </View>
 
-                <TouchableOpacity style={styles.logoUpload}>
+                <View style={styles.logoUpload}>
                     <View style={styles.logoPlaceholder}>
                         <Ionicons name="business" size={32} color="#7C3AED" />
                         <Text style={styles.uploadText}>Company Logo</Text>
                     </View>
-                </TouchableOpacity>
+                </View>
 
                 <View style={styles.form}>
                     <Text style={styles.label}>Company Name *</Text>

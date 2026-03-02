@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -21,6 +21,7 @@ import JobDetailsScreen from './src/screens/JobDetailsScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import CompanyDetailsScreen from './src/screens/CompanyDetailsScreen';
 import EmployerProfileCreateScreen from './src/screens/EmployerProfileCreateScreen';
+import ProfileSetupWizardScreen from './src/screens/ProfileSetupWizardScreen';
 import ApplicantTimelineScreen from './src/screens/ApplicantTimelineScreen';
 import SubscriptionScreen from './src/screens/SubscriptionScreen';
 import NotificationsScreen from './src/screens/NotificationsScreen';
@@ -31,10 +32,11 @@ import VerificationRequiredScreen from './src/screens/VerificationRequiredScreen
 import OTPVerificationScreen from './src/screens/OTPVerificationScreen';
 
 import { AuthProvider, AuthContext } from './src/context/AuthContext';
-import { ActivityIndicator, View, Alert, Text, Platform, StatusBar as RNStatusBar } from 'react-native';
+import { View, Alert, Platform, StatusBar as RNStatusBar } from 'react-native';
 
 import ErrorBoundary from './src/components/ErrorBoundary';
 import OfflineBanner from './src/components/OfflineBanner';
+import AppBootSplash from './src/components/AppBootSplash';
 import { AppStateProvider } from './src/context/AppStateContext';
 import SocketService from './src/services/socket';
 import Constants from 'expo-constants';
@@ -44,6 +46,7 @@ import { logger } from './src/utils/logger';
 import { AppStoreProvider, useAppStore } from './src/store/AppStore';
 import { logDemoAnalyticsSummary, trackEvent } from './src/services/analytics';
 import { DEMO_MODE } from './src/config';
+import client from './src/api/client';
 
 if (!__DEV__) {
   const noop = () => {};
@@ -53,14 +56,35 @@ if (!__DEV__) {
   console.debug = noop;
 }
 
+let SplashScreenApi = {
+  preventAutoHideAsync: async () => {},
+  hideAsync: async () => {},
+};
+try {
+  // Optional at build-time in offline/local environments.
+  // When available, native splash hold/hide is fully enabled.
+  SplashScreenApi = require('expo-splash-screen');
+} catch {
+  // noop fallback
+}
+
+SplashScreenApi.preventAutoHideAsync().catch(() => {});
+
 const Stack = createStackNavigator();
 
 const AppNav = () => {
-  const { isLoading, userToken, hasCompletedOnboarding } = useContext(AuthContext);
+  const { isLoading, userToken, userInfo, updateUserInfo, hasCompletedOnboarding } = useContext(AuthContext);
   const { role, setSocketStatus, incrementNotificationsCount, setNotificationsCount } = useAppStore();
   const notificationListener = useRef();
   const responseListener = useRef();
   const hasRunInterviewResumeCheckRef = useRef(false);
+  const hasHiddenNativeSplashRef = useRef(false);
+  const [showBootSplash, setShowBootSplash] = useState(true);
+  const [profileGateState, setProfileGateState] = useState({
+    checking: false,
+    requiresSetup: false,
+    completion: null,
+  });
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -213,6 +237,108 @@ const AppNav = () => {
   }, [userToken]);
 
   useEffect(() => {
+    if (DEMO_MODE) {
+      setProfileGateState({
+        checking: false,
+        requiresSetup: false,
+        completion: null,
+      });
+      return;
+    }
+    if (!userToken) {
+      setProfileGateState({
+        checking: false,
+        requiresSetup: false,
+        completion: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const loadProfileGate = async () => {
+      setProfileGateState((prev) => ({ ...prev, checking: true }));
+      try {
+        const { data } = await client.get('/api/users/profile-completion');
+        if (cancelled) return;
+        const completion = data?.completion || null;
+        const requiresSetup = !Boolean(completion?.actions?.canAccessApp);
+
+        setProfileGateState({
+          checking: false,
+          requiresSetup,
+          completion,
+        });
+
+        if (completion) {
+          await updateUserInfo?.({
+            hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
+            profileCompletion: completion,
+          });
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const fallbackRequiresSetup = !Boolean(userInfo?.hasCompletedProfile);
+        setProfileGateState({
+          checking: false,
+          requiresSetup: fallbackRequiresSetup,
+          completion: null,
+        });
+      }
+    };
+
+    void loadProfileGate();
+    return () => {
+      cancelled = true;
+    };
+  }, [userInfo?.activeRole, userInfo?.hasCompletedProfile, userToken, updateUserInfo]);
+
+  const handleProfileWizardCompleted = useCallback(async (completion) => {
+    setProfileGateState({
+      checking: false,
+      requiresSetup: false,
+      completion: completion || null,
+    });
+    if (completion) {
+      await updateUserInfo?.({
+        hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
+        profileCompletion: completion,
+      });
+    }
+  }, [updateUserInfo]);
+
+  useEffect(() => {
+    let active = true;
+    if (isLoading) {
+      setShowBootSplash(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    const finalizeBoot = async () => {
+      if (!hasHiddenNativeSplashRef.current) {
+        try {
+          await SplashScreenApi.hideAsync();
+        } catch {
+          // native splash may already be hidden
+        }
+        hasHiddenNativeSplashRef.current = true;
+      }
+
+      setTimeout(() => {
+        if (active) {
+          setShowBootSplash(false);
+        }
+      }, 520);
+    };
+
+    void finalizeBoot();
+    return () => {
+      active = false;
+    };
+  }, [isLoading, userToken, hasCompletedOnboarding]);
+
+  useEffect(() => {
     if (DEMO_MODE) return;
     if (!userToken) return;
 
@@ -242,14 +368,8 @@ const AppNav = () => {
     };
   }, [userToken]);
 
-  if (isLoading) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#9333ea', alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: '#fff', fontSize: 32, fontWeight: '900' }}>HIRE</Text>
-        <Text style={{ color: '#c084fc', fontSize: 32, fontWeight: '900' }}>CIRCLE</Text>
-        {!DEMO_MODE ? <ActivityIndicator color="#fff" style={{ marginTop: 24 }} /> : null}
-      </View>
-    );
+  if (showBootSplash || isLoading || (Boolean(userToken) && profileGateState.checking)) {
+    return <AppBootSplash showProgress={isLoading} />;
   }
 
   return (
@@ -262,24 +382,41 @@ const AppNav = () => {
       >
         {userToken !== null ? (
           // Authenticated Stack
-          <>
-            <Stack.Screen name="MainTab" component={MainTabNavigator} />
-            <Stack.Screen name="VideoRecord" component={VideoRecordScreen} />
-            <Stack.Screen name="SmartInterview" component={SmartInterviewScreen} />
-            <Stack.Screen name="VideoCall" component={VideoCallScreen} />
-            <Stack.Screen name="EmployerAnalytics" component={EmployerAnalyticsScreen} />
-            <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-            <Stack.Screen name="PostJob" component={PostJobScreen} />
-            <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
-            <Stack.Screen name="Chat" component={ChatScreen} />
-            <Stack.Screen name="ContactInfo" component={CompanyDetailsScreen} />
-            <Stack.Screen name="EmployerProfileCreate" component={EmployerProfileCreateScreen} />
-            <Stack.Screen name="ApplicantTimeline" component={ApplicantTimelineScreen} />
-            <Stack.Screen name="Subscription" component={SubscriptionScreen} />
-            <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ title: 'Notifications', headerBackTitle: 'Back' }} />
-            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-            <Stack.Screen name="OTPVerification" component={OTPVerificationScreen} />
-          </>
+          profileGateState.requiresSetup ? (
+            <>
+              <Stack.Screen name="ProfileSetupWizard">
+                {(props) => (
+                  <ProfileSetupWizardScreen
+                    {...props}
+                    completionSnapshot={profileGateState.completion}
+                    onCompleted={handleProfileWizardCompleted}
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="SmartInterview" component={SmartInterviewScreen} />
+              <Stack.Screen name="VideoRecord" component={VideoRecordScreen} />
+              <Stack.Screen name="OTPVerification" component={OTPVerificationScreen} />
+            </>
+          ) : (
+            <>
+              <Stack.Screen name="MainTab" component={MainTabNavigator} />
+              <Stack.Screen name="VideoRecord" component={VideoRecordScreen} />
+              <Stack.Screen name="SmartInterview" component={SmartInterviewScreen} />
+              <Stack.Screen name="VideoCall" component={VideoCallScreen} />
+              <Stack.Screen name="EmployerAnalytics" component={EmployerAnalyticsScreen} />
+              <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+              <Stack.Screen name="PostJob" component={PostJobScreen} />
+              <Stack.Screen name="JobDetails" component={JobDetailsScreen} />
+              <Stack.Screen name="Chat" component={ChatScreen} />
+              <Stack.Screen name="ContactInfo" component={CompanyDetailsScreen} />
+              <Stack.Screen name="EmployerProfileCreate" component={EmployerProfileCreateScreen} />
+              <Stack.Screen name="ApplicantTimeline" component={ApplicantTimelineScreen} />
+              <Stack.Screen name="Subscription" component={SubscriptionScreen} />
+              <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ title: 'Notifications', headerBackTitle: 'Back' }} />
+              <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+              <Stack.Screen name="OTPVerification" component={OTPVerificationScreen} />
+            </>
+          )
         ) : (
           // Unauthenticated Stack
           hasCompletedOnboarding ? (

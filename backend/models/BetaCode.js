@@ -18,6 +18,4 @@ const betaCodeSchema = mongoose.Schema({
     }
 }, { timestamps: true });
 
-betaCodeSchema.index({ code: 1 });
-
 module.exports = mongoose.model('BetaCode', betaCodeSchema);

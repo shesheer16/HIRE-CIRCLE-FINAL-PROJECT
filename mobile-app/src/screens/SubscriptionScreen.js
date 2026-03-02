@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import client from '../api/client';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PLANS = [
     {
@@ -33,21 +33,17 @@ export default function SubscriptionScreen({ navigation }) {
     const [processing, setProcessing] = useState(false);
 
     const handleUpgrade = async () => {
-        if (selectedPlan === 'free') {
-            Alert.alert('Free Plan', 'You are already on the Free plan.');
-            return;
-        }
-
         setProcessing(true);
         try {
-            // TODO: wire Stripe when installed
-            await client.post('/api/payments/create-intent', {
-                plan: selectedPlan,
-                amount: selectedPlan === 'pro' ? 49900 : 299900,
-            });
-            Alert.alert('Stripe Setup Needed', 'Payment flow will be enabled once Stripe is configured.');
+            await AsyncStorage.setItem('@hc_subscription_plan', selectedPlan);
+            Alert.alert(
+                'Plan saved',
+                selectedPlan === 'free'
+                    ? 'You are on the Free plan.'
+                    : 'Premium plan flag enabled. Payment gateway wiring is pending.',
+            );
         } catch (e) {
-            Alert.alert('Error', 'Payment setup failed. Please try again.');
+            Alert.alert('Error', 'Could not save plan preference right now.');
         } finally {
             setProcessing(false);
         }
@@ -56,7 +52,16 @@ export default function SubscriptionScreen({ navigation }) {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}> 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <TouchableOpacity
+                    onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                            return;
+                        }
+                        navigation.navigate('MainTab', { screen: 'Settings' });
+                    }}
+                    style={styles.backButton}
+                >
                     <Text style={styles.backText}>‹</Text>
                 </TouchableOpacity>
                 <View>
@@ -85,6 +90,11 @@ export default function SubscriptionScreen({ navigation }) {
                                         <Text style={styles.planBadgeText}>{plan.badge}</Text>
                                     </View>
                                 )}
+                                {plan.id !== 'free' ? (
+                                    <View style={styles.premiumPill}>
+                                        <Text style={styles.premiumPillText}>Premium</Text>
+                                    </View>
+                                ) : null}
                             </View>
                             <View style={styles.featuresList}>
                                 {plan.features.map((feature) => (
@@ -102,7 +112,7 @@ export default function SubscriptionScreen({ navigation }) {
                     onPress={handleUpgrade}
                     disabled={processing}
                 >
-                    {processing ? <ActivityIndicator color="#fff" /> : <Text style={styles.upgradeButtonText}>Upgrade to {selectedPlan.toUpperCase()}</Text>}
+                    {processing ? <ActivityIndicator color="#fff" /> : <Text style={styles.upgradeButtonText}>Activate {selectedPlan.toUpperCase()} Plan</Text>}
                 </TouchableOpacity>
             </View>
         </View>
@@ -187,6 +197,19 @@ const styles = StyleSheet.create({
         color: '#6d28d9',
         fontSize: 11,
         fontWeight: '700',
+    },
+    premiumPill: {
+        backgroundColor: '#eff6ff',
+        borderRadius: 10,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+    },
+    premiumPillText: {
+        color: '#1d4ed8',
+        fontSize: 10,
+        fontWeight: '800',
     },
     featuresList: {
         gap: 6,

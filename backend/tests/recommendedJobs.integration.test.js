@@ -12,6 +12,35 @@ jest.mock('../services/metricsService', () => ({
     publishMetric: jest.fn(),
 }));
 
+jest.mock('../services/matchMetricsService', () => ({
+    recordJobFillCompletedOnce: jest.fn(),
+    recordMatchPerformanceMetric: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../services/matchQualityIntelligenceService', () => ({
+    buildMatchIntelligenceContext: jest.fn(async () => ({
+        dynamicThresholds: {
+            STRONG: 0.82,
+            GOOD: 0.70,
+            POSSIBLE: 0.62,
+        },
+        getScoringContextForJob: () => ({}),
+    })),
+}));
+
+jest.mock('../services/matchIntentFilterService', () => ({
+    filterJobsByApplyIntent: jest.fn(async ({ jobs = [] }) => ({
+        jobs,
+        blocked: false,
+        reasons: {},
+        diagnostics: {
+            ignoredStrongCount: 0,
+            viewedStrongCount: 0,
+            salaryMismatchCount: 0,
+        },
+    })),
+}));
+
 jest.mock('../models/Job', () => ({
     find: jest.fn(),
 }));
@@ -143,5 +172,41 @@ describe('GET /api/jobs/recommended integration-style', () => {
         await getRecommendedJobs(req, res);
 
         expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('hides explainability payload when FEATURE_MATCH_UI_V1 is disabled', async () => {
+        const worker = buildWorker();
+        const jobs = buildJobs(10);
+
+        WorkerProfile.findOne.mockReturnValue({
+            populate: () => ({ lean: async () => worker }),
+        });
+
+        Job.find.mockReturnValue({
+            sort: () => ({
+                limit: () => ({
+                    lean: async () => jobs,
+                }),
+            }),
+        });
+
+        const req = {
+            user: {
+                _id: 'user-1',
+                isAdmin: false,
+                featureToggles: {
+                    FEATURE_MATCH_UI_V1: false,
+                    FEATURE_PROBABILISTIC_MATCH: false,
+                },
+            },
+            query: {},
+        };
+        const res = mockRes();
+
+        await getRecommendedJobs(req, res);
+
+        const payload = res.json.mock.calls[0][0];
+        expect(payload.recommendedJobs.length).toBeGreaterThan(0);
+        expect(payload.recommendedJobs[0].explainability).toEqual({});
     });
 });

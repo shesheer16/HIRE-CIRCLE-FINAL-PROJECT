@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-03-02T04:41:34.082Z",
+  "requestedInFlight": 35,
+  "successfulInFlight": 35,
+  "failedInFlight": 0,
+  "postShutdownStatus": 503,
+  "drainingStateObserved": true,
+  "serverClosed": true,
+  "inFlightAfterShutdown": 0,
+  "passed": true
+}

@@ -1,74 +1,158 @@
-import React, { useState } from 'react';
+import React, { useCallback, useContext, useRef, useState } from 'react';
 import {
-    View, Text, TextInput, TouchableOpacity, StyleSheet,
-    ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, Alert
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    Pressable,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as SecureStore from 'expo-secure-store';
+import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
+import UnifiedIdentityInput from '../components/UnifiedIdentityInput';
+import { navigateToWelcomeFallback } from '../utils/authNavigation';
 
 export default function LoginScreen({ navigation }) {
     const insets = useSafeAreaInsets();
-    const { login } = React.useContext(AuthContext);
-    const [inputMode, setInputMode] = useState('phone'); // 'phone' | 'email'
-    const [email, setEmail] = useState('');
-    const [phone, setPhone] = useState('');
-    const [password, setPassword] = useState('');
+    const { login } = useContext(AuthContext);
+
+    const identityRef = useRef(null);
+    const passwordRef = useRef('');
+    const passwordInputRef = useRef(null);
+
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [selectedRole, setSelectedRole] = useState('Available to Help');
-    const [isEmployer, setIsEmployer] = useState(false);
+    const [passwordFocused, setPasswordFocused] = useState(false);
+    const [identityError, setIdentityError] = useState('');
+    const [formError, setFormError] = useState('');
 
-    React.useEffect(() => {
-        const getRole = async () => {
-            const role = await SecureStore.getItemAsync('selectedRole');
-            if (role === 'recruiter') {
-                setSelectedRole('Looking for Someone');
-                setIsEmployer(true);
-            } else {
-                setSelectedRole('Available to Help');
-                setIsEmployer(false);
-            }
-        };
-        getRole();
-    }, []);
-
-    const handleLogin = async () => {
-        if (inputMode === 'email' && !email) {
-            Alert.alert('Missing Info', 'Please enter your email address.');
+    const handleBackPress = useCallback(() => {
+        if (navigation.canGoBack()) {
+            navigation.goBack();
             return;
         }
-        if (inputMode === 'phone' && !phone) {
-            Alert.alert('Missing Info', 'Please enter your phone number.');
+
+        navigateToWelcomeFallback(navigation);
+    }, [navigation]);
+
+    const handlePasswordChange = useCallback((value) => {
+        passwordRef.current = value;
+        if (formError) setFormError('');
+    }, [formError]);
+
+    const handleIdentityDetection = useCallback(() => {
+        if (identityError) setIdentityError('');
+        if (formError) setFormError('');
+    }, [formError, identityError]);
+
+    const handleLogin = useCallback(async () => {
+        const snapshot = identityRef.current?.getSnapshot?.();
+        const password = String(passwordRef.current || '').trim();
+
+        if (!snapshot?.raw) {
+            setIdentityError('Enter your email or phone to continue.');
             return;
         }
+
+        if (!snapshot.isValid) {
+            setIdentityError(snapshot.type === 'phone'
+                ? 'Enter a valid phone number (10-15 digits).'
+                : 'Enter a valid email address.');
+            return;
+        }
+
         if (!password) {
-            Alert.alert('Missing Info', 'Please enter your password.');
+            setFormError('Enter your password to continue.');
             return;
         }
 
+        setIdentityError('');
+        setFormError('');
         setLoading(true);
+
         try {
-            const loginEmail = inputMode === 'phone' ? `${phone}@example.com` : email;
-            const { data } = await client.post('/api/users/login', {
-                email: loginEmail,
-                password
-            });
+            let data;
 
-            await SecureStore.setItemAsync('selectedRole', data.role);
-            await login(data); // This updates AuthContext and triggers stack switch
+            try {
+                const primaryPayload = {
+                    email: snapshot.backendEmail,
+                    password,
+                };
+                const primaryResponse = await client.post('/api/users/login', {
+                    ...primaryPayload,
+                });
+                data = primaryResponse.data;
+            } catch (primaryError) {
+                const canTryAlternate = snapshot.type === 'phone'
+                    && Boolean(snapshot.alternateBackendEmail)
+                    && (primaryError?.response?.status === 401 || primaryError?.response?.status === 404);
 
-            setLoading(false);
-            // navigation.replace('MainTab') is now managed by App.js conditional stack
+                if (!canTryAlternate) {
+                    throw primaryError;
+                }
+
+                const alternateResponse = await client.post('/api/users/login', {
+                    email: snapshot.alternateBackendEmail,
+                    password,
+                });
+                data = alternateResponse.data;
+            }
+
+            await login(data);
         } catch (error) {
-            setLoading(false);
-            const errorMsg = error.response?.data?.message || 'Login failed. Please check your credentials.';
-            Alert.alert('Login Error', errorMsg);
-        }
-    };
+            const requiresOtp = Boolean(error?.response?.data?.requiresOtpVerification);
+            if (requiresOtp) {
+                const identity = snapshot.type === 'phone'
+                    ? { kind: 'phone', value: snapshot.phoneE164, label: snapshot.raw }
+                    : { kind: 'email', value: snapshot.backendEmail, label: snapshot.backendEmail };
+                const otpPayload = identity.kind === 'phone'
+                    ? { phone: identity.value }
+                    : { email: identity.value };
 
-    const themeColor = isEmployer ? styles.bgFuchsia : styles.bgPurple;
-    const themeText = isEmployer ? styles.textFuchsia : styles.textPurple;
+                let initialError = '';
+                let initialOtpDispatched = true;
+                try {
+                    await client.post('/api/auth/send-otp', otpPayload);
+                } catch (otpError) {
+                    initialOtpDispatched = false;
+                    initialError = otpError?.response?.data?.message || otpError?.message || 'Could not send OTP right now. Try resend.';
+                }
+
+                navigation.navigate('OTPVerification', {
+                    identity,
+                    intent: 'signin',
+                    initialOtpDispatched,
+                    initialError,
+                });
+                return;
+            }
+
+            const message = error?.response?.data?.message || 'We could not sign you in. Please verify your credentials.';
+            setFormError(message);
+            Alert.alert('Sign-In Failed', message);
+        } finally {
+            setLoading(false);
+        }
+    }, [login, navigation]);
+
+    const navigateToRegister = useCallback(() => {
+        navigation.navigate('Register');
+    }, [navigation]);
+
+    const navigateToForgot = useCallback(() => {
+        navigation.navigate('ForgotPassword');
+    }, [navigation]);
+
+    const togglePasswordVisibility = useCallback(() => {
+        setShowPassword((current) => !current);
+    }, []);
 
     return (
         <KeyboardAvoidingView
@@ -76,129 +160,105 @@ export default function LoginScreen({ navigation }) {
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
             <ScrollView
-                contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32 }]}
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 },
+                ]}
                 showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
+                keyboardShouldPersistTaps="always"
+                keyboardDismissMode="none"
             >
-                {/* Back Link */}
-                <TouchableOpacity
-                    style={styles.backBtn}
-                    onPress={() => navigation.goBack()}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Go back to previous screen"
-                >
-                    <Text style={styles.backArrow}>← Back</Text>
+                <TouchableOpacity style={styles.backBtn} onPress={handleBackPress} activeOpacity={0.75}>
+                    <Ionicons name="arrow-back" size={18} color="#334155" />
+                    <Text style={styles.backBtnText}>Back</Text>
                 </TouchableOpacity>
 
-                {/* Title */}
-                <Text style={styles.title}>Welcome!</Text>
-                <Text style={styles.subtitle}>Sign in to your {selectedRole} account</Text>
-
-                {/* Phone / Email Toggle */}
-                <View style={styles.toggle}>
-                    {['phone', 'email'].map(mode => (
-                        <TouchableOpacity
-                            key={mode}
-                            style={[styles.toggleTab, inputMode === mode && styles.toggleTabActive]}
-                            onPress={() => setInputMode(mode)}
-                            activeOpacity={0.8}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: inputMode === mode }}
-                            accessibilityLabel={`Login via ${mode}`}
-                        >
-                            <Text style={[styles.toggleTabText, inputMode === mode && styles.toggleTabTextActive]}>
-                                {mode.toUpperCase()}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
+                <View style={styles.headerBlock}>
+                    <View style={styles.brandMark}>
+                        <Ionicons name="sparkles-outline" size={14} color="#1d4ed8" />
+                    </View>
+                    <Text style={styles.title}>Sign in</Text>
+                    <Text style={styles.subtitle}>Back in under 30 seconds.</Text>
                 </View>
 
-                {/* Inputs */}
-                <View style={styles.form}>
-                    {inputMode === 'phone' ? (
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>PHONE NUMBER</Text>
-                            <View style={styles.phoneRow}>
-                                <View style={styles.countryPrefix}>
-                                    <Text style={styles.countryPrefixText}>+91</Text>
-                                </View>
-                                <TextInput
-                                    style={[styles.inputField, { flex: 1, marginLeft: 8 }]}
-                                    placeholder="98765 43210"
-                                    placeholderTextColor="#94a3b8"
-                                    value={phone}
-                                    onChangeText={setPhone}
-                                    keyboardType="phone-pad"
-                                />
-                            </View>
-                        </View>
-                    ) : (
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-                            <TextInput
-                                style={styles.inputField}
-                                placeholder="user@example.com"
-                                placeholderTextColor="#94a3b8"
-                                value={email}
-                                onChangeText={setEmail}
-                                autoCapitalize="none"
-                                keyboardType="email-address"
-                            />
-                        </View>
-                    )}
+                <View style={styles.formBlock}>
+                    <UnifiedIdentityInput
+                        ref={identityRef}
+                        editable={!loading}
+                        errorText={identityError}
+                        onDetectionChange={handleIdentityDetection}
+                        inputProps={{
+                            returnKeyType: 'next',
+                            blurOnSubmit: false,
+                            onSubmitEditing: () => passwordInputRef.current?.focus(),
+                        }}
+                    />
 
-                    {/* Password */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>PASSWORD</Text>
-                        <TextInput
-                            style={styles.inputField}
-                            placeholder="••••••••"
-                            placeholderTextColor="#94a3b8"
-                            value={password}
-                            onChangeText={setPassword}
-                            secureTextEntry={true}
-                        />
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Password</Text>
+                        <Pressable
+                            style={[styles.passwordShell, passwordFocused && styles.passwordShellFocused]}
+                            onPress={() => passwordInputRef.current?.focus()}
+                        >
+                            <TextInput
+                                ref={passwordInputRef}
+                                style={styles.passwordInput}
+                                placeholder="Enter your password"
+                                placeholderTextColor="rgba(71, 85, 105, 0.6)"
+                                secureTextEntry={!showPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                                onChangeText={handlePasswordChange}
+                                onFocus={() => setPasswordFocused(true)}
+                                onBlur={() => setPasswordFocused(false)}
+                                returnKeyType="done"
+                                onSubmitEditing={handleLogin}
+                                blurOnSubmit={false}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeTap}
+                                onPress={togglePasswordVisibility}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons
+                                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                                    size={18}
+                                    color="#64748b"
+                                />
+                            </TouchableOpacity>
+                        </Pressable>
                     </View>
 
-                    {/* Forgot Password */}
-                    <TouchableOpacity
-                        style={styles.forgotRow}
-                        onPress={() => navigation.navigate('ForgotPassword')}
-                        activeOpacity={0.7}
-                        accessibilityRole="button"
-                        accessibilityLabel="Forgot your password? Click to reset"
-                    >
-                        <Text style={[styles.forgotText, themeText]}>Forgot password?</Text>
+                    <TouchableOpacity style={styles.forgotTap} onPress={navigateToForgot} activeOpacity={0.8}>
+                        <Text style={styles.forgotText}>Forgot password?</Text>
                     </TouchableOpacity>
 
-                    {/* Sign In Button */}
+                    {formError ? (
+                        <View style={styles.errorBox}>
+                            <Text style={styles.errorText}>{formError}</Text>
+                        </View>
+                    ) : null}
+
                     <TouchableOpacity
-                        style={[styles.signInBtn, themeColor]}
+                        style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
                         onPress={handleLogin}
                         disabled={loading}
-                        activeOpacity={0.85}
-                        accessibilityRole="button"
-                        accessibilityLabel="Sign in securely to your account"
-                        accessibilityState={{ disabled: loading }}
+                        activeOpacity={0.9}
                     >
                         {loading ? (
-                            <ActivityIndicator color="#fff" />
+                            <ActivityIndicator color="#ffffff" />
                         ) : (
-                            <Text style={styles.signInBtnText}>Sign In</Text>
+                            <Text style={styles.primaryButtonText}>Continue</Text>
                         )}
                     </TouchableOpacity>
+                </View>
 
-                    {/* Join Free */}
-                    <View style={styles.footerRow}>
-                        <Text style={styles.joinFreeBtnText}>Don't have an account? </Text>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate('Register')}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[styles.joinFreeHighlight, themeText]}>Sign Up</Text>
-                        </TouchableOpacity>
-                    </View>
+                <View style={styles.footerRow}>
+                    <Text style={styles.footerText}>New to HIRE?</Text>
+                    <TouchableOpacity style={styles.footerLinkTap} onPress={navigateToRegister} activeOpacity={0.8}>
+                        <Text style={styles.footerLink}>Create account</Text>
+                    </TouchableOpacity>
                 </View>
             </ScrollView>
         </KeyboardAvoidingView>
@@ -208,160 +268,151 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#f5f7fa',
     },
     scrollContent: {
-        paddingHorizontal: 32,
-        flexGrow: 1, // Push footer to bottom
+        flexGrow: 1,
+        paddingHorizontal: 24,
     },
-
-    // Back
     backBtn: {
-        marginBottom: 32,
-        alignSelf: 'flex-start',
         minHeight: 44,
-        minWidth: 44,
-        justifyContent: 'center',
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 28,
     },
-    backArrow: {
-        color: '#94a3b8',
+    backBtnText: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontWeight: '500',
+        color: '#334155',
     },
-
-    // Title
+    headerBlock: {
+        marginBottom: 32,
+    },
+    brandMark: {
+        width: 28,
+        height: 28,
+        borderRadius: 9,
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
+        backgroundColor: '#edf3ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
     title: {
+        fontSize: 26,
+        fontWeight: '700',
         color: '#0f172a',
-        fontSize: 30,
-        fontWeight: 'bold',
-        marginBottom: 8,
+        letterSpacing: -0.2,
     },
     subtitle: {
+        marginTop: 6,
         color: '#64748b',
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '500',
-        marginBottom: 32,
     },
-
-    // Toggle
-    toggle: {
-        flexDirection: 'row',
-        backgroundColor: '#f1f5f9', // bg-slate-100
-        borderRadius: 12,
-        padding: 4,
-        marginBottom: 24,
-    },
-    toggleTab: {
-        flex: 1,
-        paddingVertical: 8,
-        alignItems: 'center',
-        borderRadius: 8,
-    },
-    toggleTabActive: {
-        backgroundColor: '#ffffff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
-    },
-    toggleTabText: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: '#64748b', // text-slate-500
-    },
-    toggleTabTextActive: {
-        color: '#0f172a', // text-slate-900
-    },
-
-    // Form
-    form: {
+    formBlock: {
         gap: 16,
-        flex: 1,
     },
-    inputGroup: {
+    fieldGroup: {
         gap: 6,
     },
-    inputLabel: {
-        fontSize: 10,
-        fontWeight: 'bold',
-        color: '#94a3b8',
-        textTransform: 'uppercase',
-        letterSpacing: 1,
-    },
-    inputField: {
-        backgroundColor: '#f8fafc', // bg-slate-50
-        borderWidth: 1,
-        borderColor: '#e2e8f0', // border-slate-200
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+    fieldLabel: {
         fontSize: 14,
-        color: '#0f172a',
         fontWeight: '500',
+        color: '#334155',
     },
-    phoneRow: {
-        flexDirection: 'row',
-    },
-    countryPrefix: {
-        backgroundColor: '#f8fafc',
+    passwordShell: {
+        minHeight: 52,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        justifyContent: 'center',
+        borderColor: '#d1d9e4',
+        backgroundColor: '#ffffff',
+        flexDirection: 'row',
         alignItems: 'center',
+        paddingLeft: 14,
+        paddingRight: 10,
     },
-    countryPrefixText: {
-        color: '#64748b',
-        fontSize: 14,
-        fontWeight: 'bold',
+    passwordShellFocused: {
+        borderColor: '#1d4ed8',
+        shadowColor: '#1d4ed8',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 1,
     },
-    forgotRow: {
-        alignItems: 'flex-end',
-        minHeight: 44,
+    passwordInput: {
+        flex: 1,
+        fontSize: 15,
+        color: '#0f172a',
+        fontWeight: '400',
+        paddingVertical: 14,
+    },
+    eyeTap: {
+        minWidth: 32,
+        minHeight: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    forgotTap: {
+        minHeight: 28,
+        alignSelf: 'flex-start',
         justifyContent: 'center',
     },
     forgotText: {
         fontSize: 12,
-        fontWeight: 'bold',
+        fontWeight: '400',
+        color: '#475569',
     },
-    signInBtn: {
+    errorBox: {
         borderRadius: 12,
-        paddingVertical: 16,
-        alignItems: 'center',
-        marginTop: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 4,
+        borderWidth: 1,
+        borderColor: '#e8c7cb',
+        backgroundColor: '#fcf3f4',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
     },
-    signInBtnText: {
+    errorText: {
+        color: '#8f4b53',
+        fontSize: 12,
+        fontWeight: '400',
+    },
+    primaryButton: {
+        minHeight: 52,
+        borderRadius: 14,
+        backgroundColor: '#1d4ed8',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    primaryButtonDisabled: {
+        opacity: 0.72,
+    },
+    primaryButtonText: {
         color: '#ffffff',
-        fontSize: 14,
-        fontWeight: 'bold',
+        fontSize: 15,
+        fontWeight: '600',
     },
     footerRow: {
+        marginTop: 32,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: 'auto',
-        paddingTop: 32,
+        gap: 6,
     },
-    joinFreeBtnText: {
-        color: '#94a3b8',
-        fontSize: 12,
+    footerText: {
+        fontSize: 14,
+        fontWeight: '400',
+        color: '#64748b',
+    },
+    footerLinkTap: {
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    footerLink: {
+        fontSize: 14,
         fontWeight: '500',
+        color: '#1d4ed8',
     },
-    joinFreeHighlight: {
-        fontWeight: 'bold',
-        fontSize: 12,
-    },
-
-    // Themes
-    bgPurple: { backgroundColor: '#7c3aed' },
-    bgFuchsia: { backgroundColor: '#d946ef' },
-    textPurple: { color: '#7c3aed' },
-    textFuchsia: { color: '#d946ef' },
 });

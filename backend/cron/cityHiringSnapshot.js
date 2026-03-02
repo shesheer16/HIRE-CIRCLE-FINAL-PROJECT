@@ -3,17 +3,12 @@ require('dotenv').config();
 const connectDB = require('../config/db');
 const HiringLifecycleEvent = require('../models/HiringLifecycleEvent');
 const CityHiringDailySnapshot = require('../models/CityHiringDailySnapshot');
+const { startOfUtcDay, addUtcDays } = require('../utils/timezone');
 
 const runCityHiringSnapshot = async () => {
-    const now = new Date();
-    const dayStart = new Date(now);
-    dayStart.setHours(0, 0, 0, 0);
-
-    const previousDayStart = new Date(dayStart);
-    previousDayStart.setDate(previousDayStart.getDate() - 1);
-
-    const previousDayEnd = new Date(dayStart);
-    previousDayEnd.setMilliseconds(-1);
+    const dayStart = startOfUtcDay(new Date());
+    const previousDayStart = addUtcDays(dayStart, -1);
+    const previousDayEnd = new Date(dayStart.getTime() - 1);
 
     const rows = await HiringLifecycleEvent.aggregate([
         {
@@ -78,6 +73,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-    console.error('[city-snapshot] failed:', error.message);
+    console.warn('[city-snapshot] failed:', error.message);
     process.exit(1);
 });

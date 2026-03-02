@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function MentorCardComponent({ mentor, isConnected, onConnect }) {
     const handleConnect = useCallback(() => {
@@ -39,17 +40,13 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 16,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: '#f6f2ff',
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
         borderRadius: RADIUS.xl,
         padding: 16,
         marginBottom: 12,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        ...connectShadow,
     },
     avatar: {
         width: 48,
@@ -62,36 +59,36 @@ const styles = StyleSheet.create({
     skillLabel: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.primaryDark,
+        color: connectPalette.accentDark,
         marginBottom: 4,
     },
     nameText: {
         fontSize: 14,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
     },
     metaText: {
         fontSize: 9,
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         marginTop: 2,
     },
     connectButton: {
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
     },
     connectButtonDone: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderWidth: 1,
-        borderColor: theme.primaryLight,
+        borderColor: connectPalette.accentSoftAlt,
     },
     connectButtonText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     connectButtonTextDone: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
 });

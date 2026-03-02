@@ -1,26 +1,16 @@
 import React, { memo, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Animated, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Animated, FlatList } from 'react-native';
 import { IconMapPin, IconUsers } from '../../../components/Icons';
-import { theme, RADIUS } from '../../../theme/theme';
-
-const FALLBACK_GIGS = [
-    { id: 1, title: 'Electrician Needed — Emergency', employer: 'Amir Khan', distance: '0.4 km', pay: '₹800', urgent: true, timePosted: '8 min ago', category: 'Trades' },
-    { id: 2, title: 'AC Repair Assistant', employer: 'Sharma Cooling Co.', distance: '1.2 km', pay: '₹600', urgent: false, timePosted: '1h ago', category: 'Trades' },
-    { id: 3, title: 'Delivery Run — Gachibowli Loop', employer: 'QuickMove Logistics', distance: '1.8 km', pay: '₹350', urgent: false, timePosted: '2h ago', category: 'Delivery' },
-];
-
-const FALLBACK_PROS = [
-    { id: 1, name: 'Siva Kumar', role: 'Electrician', distance: '0.6 km', karma: 890, available: true, avatar: 'https://i.pravatar.cc/150?u=siva' },
-    { id: 2, name: 'Priya R.', role: 'Tailor', distance: '1.1 km', karma: 420, available: true, avatar: 'https://i.pravatar.cc/150?u=priya' },
-    { id: 3, name: 'Raju D.', role: 'Auto Driver', distance: '2.0 km', karma: 650, available: false, avatar: 'https://i.pravatar.cc/150?u=raju' },
-];
+import { RADIUS, SHADOWS, SPACING } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
+import SkeletonLoader from '../../../components/SkeletonLoader';
 
 const getCategoryTone = (label = '') => {
     const normalized = String(label).toLowerCase();
-    if (normalized.includes('trade')) return { bg: theme.primaryLight, fg: theme.primaryDark };
-    if (normalized.includes('delivery')) return { bg: theme.indigo, fg: theme.surface };
-    if (normalized.includes('operation')) return { bg: theme.warning, fg: theme.surface };
-    return { bg: theme.border, fg: theme.textSecondary };
+    if (normalized.includes('trade')) return { bg: connectPalette.accentSoft, fg: connectPalette.accentDark };
+    if (normalized.includes('delivery')) return { bg: connectPalette.accent, fg: connectPalette.surface };
+    if (normalized.includes('operation')) return { bg: connectPalette.warning, fg: connectPalette.surface };
+    return { bg: '#f1f3f8', fg: connectPalette.muted };
 };
 
 const PulseGigCard = memo(function PulseGigCardComponent({
@@ -52,6 +42,11 @@ const PulseGigCard = memo(function PulseGigCardComponent({
                         ) : null}
                     </View>
                     <Text style={styles.gigEmployer}>{gig.employer}</Text>
+                    <View style={styles.gigProofRow}>
+                        <Text style={styles.gigProofText}>{Number(gig.engagementCount || gig.applicantsCount || 0)} active responses</Text>
+                        <Text style={styles.gigProofDot}>•</Text>
+                        <Text style={styles.gigProofText}>{gig.responseTime || 'Fast reply'}</Text>
+                    </View>
                 </View>
                 <View style={[styles.categoryBadge, categoryBadgeStyle]}>
                     <Text style={[styles.categoryBadgeText, categoryBadgeTextStyle]}>{gig.category}</Text>
@@ -77,7 +72,7 @@ const PulseProCard = memo(function PulseProCardComponent({
     onHirePro,
 }) {
     const availabilityDotStyle = useMemo(() => ({
-        backgroundColor: pro.available ? theme.success : theme.textMuted,
+        backgroundColor: pro.available ? connectPalette.success : connectPalette.subtle,
     }), [pro.available]);
 
     const hireBtnStyle = isRequested ? styles.hireBtnDone : styles.hireBtn;
@@ -124,11 +119,8 @@ function PulseTabComponent({
     onHirePro,
     contentContainerStyle,
 }) {
-    const nearbyGigs = useMemo(() => {
-        return pulseItems.length > 0 ? pulseItems : FALLBACK_GIGS;
-    }, [pulseItems]);
-
-    const nearbyPros = FALLBACK_PROS;
+    const nearbyGigs = useMemo(() => pulseItems, [pulseItems]);
+    const nearbyPros = useMemo(() => [], []);
 
     const pulseScale = pulseAnim.interpolate({
         inputRange: [0.3, 1],
@@ -162,20 +154,23 @@ function PulseTabComponent({
                     </Animated.View>
                     <Text style={styles.pulseTitle}>Live Radar</Text>
                     <Text style={styles.pulseSub}>{nearbyGigs.length} urgent gigs · {nearbyPros.length} pros within 2km</Text>
+                    <View style={styles.trendingTag}>
+                        <Text style={styles.trendingTagText}>Trending right now</Text>
+                    </View>
                     <TouchableOpacity
                         style={[styles.pulseBtn, radarRefreshing && styles.pulseBtnDisabled]}
                         onPress={onRefreshRadar}
                         disabled={radarRefreshing}
                         activeOpacity={0.85}
                     >
-                        {radarRefreshing ? <ActivityIndicator size="small" color={theme.surface} style={styles.buttonLoader} /> : null}
+                        {radarRefreshing ? <SkeletonLoader width={14} height={14} borderRadius={RADIUS.full} style={styles.buttonLoader} tone="tint" /> : null}
                         <Text style={styles.pulseBtnText}>{radarRefreshing ? 'SCANNING...' : 'SEARCH LOCAL GIGS'}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
 
             <View style={styles.sectionHeaderRow}>
-                <IconMapPin size={16} color={theme.primary} />
+                <IconMapPin size={16} color={connectPalette.accent} />
                 <Text style={styles.sectionTitle}>URGENT GIGS NEAR YOU</Text>
             </View>
         </>
@@ -183,16 +178,20 @@ function PulseTabComponent({
 
     const listFooter = useMemo(() => (
         <>
-            <View style={[styles.sectionHeaderRow, styles.sectionHeaderMargin]}>
-                <IconUsers size={16} color={theme.primary} />
-                <Text style={styles.sectionTitle}>PROFESSIONALS ONLINE NEARBY</Text>
-            </View>
-            {nearbyPros.map((pro) => {
-                const isRequested = hiredProIds.has(pro.id);
-                return (
-                    <PulseProCard key={pro.id} pro={pro} isRequested={isRequested} onHirePro={onHirePro} />
-                );
-            })}
+            {nearbyPros.length > 0 ? (
+                <>
+                    <View style={[styles.sectionHeaderRow, styles.sectionHeaderMargin]}>
+                        <IconUsers size={16} color={connectPalette.accent} />
+                        <Text style={styles.sectionTitle}>PROFESSIONALS ONLINE NEARBY</Text>
+                    </View>
+                    {nearbyPros.map((pro) => {
+                        const isRequested = hiredProIds.has(pro.id);
+                        return (
+                            <PulseProCard key={pro.id} pro={pro} isRequested={isRequested} onHirePro={onHirePro} />
+                        );
+                    })}
+                </>
+            ) : null}
             <View style={styles.bottomSpacer} />
         </>
     ), [nearbyPros, hiredProIds, onHirePro]);
@@ -204,6 +203,12 @@ function PulseTabComponent({
             renderItem={renderGigItem}
             ListHeaderComponent={listHeader}
             ListFooterComponent={listFooter}
+            ListEmptyComponent={(
+                <View style={styles.emptyStateCard}>
+                    <Text style={styles.emptyStateTitle}>No posts yet.</Text>
+                    <Text style={styles.emptyStateSubtitle}>Pulse jobs will appear here when employers publish urgent needs.</Text>
+                </View>
+            )}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={contentContainerStyle}
             removeClippedSubviews
@@ -218,11 +223,12 @@ export default memo(PulseTabComponent);
 
 const styles = StyleSheet.create({
     pulseCard: {
-        backgroundColor: theme.darkCard,
-        borderRadius: 40,
+        backgroundColor: connectPalette.dark,
+        borderRadius: 34,
         overflow: 'hidden',
-        minHeight: 300,
+        minHeight: 290,
         marginBottom: 24,
+        ...SHADOWS.lg,
     },
     pulseBgEffect: {
         position: 'absolute',
@@ -230,14 +236,14 @@ const styles = StyleSheet.create({
         left: -50,
         right: -50,
         bottom: -50,
-        backgroundColor: theme.primary,
-        opacity: 0.15,
+        backgroundColor: connectPalette.accent,
+        opacity: 0.22,
         borderRadius: RADIUS.full,
     },
     pulseContent: {
         position: 'relative',
         zIndex: 10,
-        padding: 32,
+        padding: SPACING.xl,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -245,40 +251,57 @@ const styles = StyleSheet.create({
         width: 80,
         height: 80,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 24,
         borderWidth: 4,
-        borderColor: theme.primaryDark,
+        borderColor: '#5b23b0',
+        ...SHADOWS.md,
     },
     pulseRadarInner: {
         width: 12,
         height: 12,
         borderRadius: RADIUS.full,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: '#ccb0ff',
     },
     pulseTitle: {
         fontSize: 24,
-        fontWeight: '900',
-        color: theme.surface,
+        fontWeight: '800',
+        color: connectPalette.surface,
         marginBottom: 8,
     },
     pulseSub: {
         fontSize: 12,
-        color: theme.textMuted,
+        color: '#bbc3dd',
         textAlign: 'center',
         marginBottom: 24,
         lineHeight: 18,
         paddingHorizontal: 16,
     },
+    trendingTag: {
+        borderRadius: RADIUS.full,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        marginBottom: 12,
+    },
+    trendingTagText: {
+        color: '#f8fafc',
+        fontSize: 10,
+        fontWeight: '900',
+        letterSpacing: 0.35,
+    },
     pulseBtn: {
-        backgroundColor: theme.primary,
-        paddingHorizontal: 32,
+        backgroundColor: connectPalette.accent,
+        paddingHorizontal: SPACING.xl,
         paddingVertical: 14,
         borderRadius: RADIUS.lg,
         flexDirection: 'row',
         alignItems: 'center',
+        ...SHADOWS.md,
     },
     pulseBtnDisabled: {
         opacity: 0.75,
@@ -289,7 +312,7 @@ const styles = StyleSheet.create({
     pulseBtnText: {
         fontSize: 14,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     sectionHeaderRow: {
         flexDirection: 'row',
@@ -302,17 +325,18 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         letterSpacing: 1,
     },
     gigCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.lg,
         padding: 14,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
+        ...SHADOWS.md,
     },
     gigTop: {
         flexDirection: 'row',
@@ -332,18 +356,33 @@ const styles = StyleSheet.create({
     },
     gigTitle: {
         fontSize: 13,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         marginRight: 6,
     },
     gigEmployer: {
         fontSize: 10,
         fontWeight: '700',
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         marginTop: 2,
     },
+    gigProofRow: {
+        marginTop: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    gigProofText: {
+        fontSize: 10,
+        color: '#475569',
+        fontWeight: '700',
+    },
+    gigProofDot: {
+        fontSize: 10,
+        color: '#94a3b8',
+    },
     urgentBadge: {
-        backgroundColor: theme.error,
+        backgroundColor: connectPalette.danger,
         borderRadius: RADIUS.full,
         paddingHorizontal: 6,
         paddingVertical: 2,
@@ -352,7 +391,7 @@ const styles = StyleSheet.create({
     urgentBadgeText: {
         fontSize: 9,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     categoryBadge: {
         paddingHorizontal: 8,
@@ -370,7 +409,7 @@ const styles = StyleSheet.create({
     },
     gigMeta: {
         fontSize: 10,
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         fontWeight: '600',
     },
     gigBottomRight: {
@@ -381,34 +420,35 @@ const styles = StyleSheet.create({
     gigPay: {
         fontSize: 15,
         fontWeight: '900',
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
     applyBtn: {
-        backgroundColor: theme.darkCard,
+        backgroundColor: connectPalette.dark,
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
     },
     applyBtnDone: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     applyBtnText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     applyBtnTextDone: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
     proCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.lg,
         padding: 14,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
         flexDirection: 'row',
         alignItems: 'center',
+        ...connectShadow,
     },
     proAvatarWrap: {
         position: 'relative',
@@ -418,7 +458,7 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: RADIUS.lg,
-        backgroundColor: theme.borderMedium,
+        backgroundColor: connectPalette.lineStrong,
     },
     availabilityDot: {
         position: 'absolute',
@@ -428,7 +468,7 @@ const styles = StyleSheet.create({
         height: 14,
         borderRadius: RADIUS.full,
         borderWidth: 2,
-        borderColor: theme.surface,
+        borderColor: connectPalette.surface,
     },
     proMain: {
         flex: 1,
@@ -436,16 +476,16 @@ const styles = StyleSheet.create({
     proName: {
         fontSize: 14,
         fontWeight: '800',
-        color: theme.textPrimary,
+        color: connectPalette.text,
     },
     proMeta: {
         fontSize: 10,
         fontWeight: '600',
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         marginTop: 2,
     },
     karmaBadge: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: RADIUS.md,
@@ -453,28 +493,28 @@ const styles = StyleSheet.create({
     karmaBadgeText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
     hireBtn: {
-        backgroundColor: theme.darkCard,
+        backgroundColor: connectPalette.dark,
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
         marginLeft: 8,
     },
     hireBtnDone: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     hireBtnText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     hireBtnTextDone: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
     busyTag: {
-        backgroundColor: theme.border,
+        backgroundColor: '#eef1f8',
         paddingHorizontal: 10,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
@@ -483,7 +523,27 @@ const styles = StyleSheet.create({
     busyTagText: {
         fontSize: 10,
         fontWeight: '700',
-        color: theme.textMuted,
+        color: connectPalette.subtle,
+    },
+    emptyStateCard: {
+        marginTop: 14,
+        borderRadius: RADIUS.lg,
+        borderWidth: 1,
+        borderColor: connectPalette.line,
+        backgroundColor: connectPalette.surface,
+        paddingVertical: 20,
+        paddingHorizontal: 16,
+    },
+    emptyStateTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: connectPalette.text,
+        marginBottom: 6,
+    },
+    emptyStateSubtitle: {
+        fontSize: 12,
+        color: connectPalette.muted,
+        lineHeight: 18,
     },
     bottomSpacer: {
         height: 32,

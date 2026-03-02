@@ -1,9 +1,9 @@
 import React, { memo, useCallback, useMemo } from 'react';
-import { View, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { IconPlus } from '../../../components/Icons';
+import { View, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
 import FeedComposer from './FeedComposer';
 import FeedPostCard from './FeedPostCard';
-import { theme, RADIUS } from '../../../theme/theme';
+import EmptyState from '../../../components/EmptyState';
+import { connectPalette } from '../connectPalette';
 
 function FeedTabComponent({
     feedPosts,
@@ -30,6 +30,7 @@ function FeedTabComponent({
     onToggleVouch,
     onCommentInputChange,
     onSubmitComment,
+    onReportPost,
 }) {
     const keyExtractor = useCallback((item) => String(item._id), []);
 
@@ -49,6 +50,7 @@ function FeedTabComponent({
                 onToggleVouch={onToggleVouch}
                 onCommentInputChange={onCommentInputChange}
                 onSubmitComment={onSubmitComment}
+                onReport={onReportPost}
             />
         );
     }, [
@@ -63,6 +65,7 @@ function FeedTabComponent({
         onToggleVouch,
         onCommentInputChange,
         onSubmitComment,
+        onReportPost,
     ]);
 
     const listHeader = useMemo(() => (
@@ -93,12 +96,21 @@ function FeedTabComponent({
         if (loadingMoreFeed) {
             return (
                 <View style={styles.footerLoading}>
-                    <ActivityIndicator color={theme.primary} />
+                    <ActivityIndicator color={connectPalette.accent} />
                 </View>
             );
         }
         return <View style={styles.footerSpacer} />;
     }, [loadingMoreFeed]);
+
+    const listEmpty = useMemo(() => (
+        <EmptyState
+            icon="✍️"
+            title="No posts yet"
+            subtitle="Be the first to share your work today"
+            action={{ label: 'Create Post', onPress: onInputAreaClick }}
+        />
+    ), [onInputAreaClick]);
 
     return (
         <View style={styles.container}>
@@ -113,16 +125,13 @@ function FeedTabComponent({
                 onEndReached={onLoadMoreFeed}
                 onEndReachedThreshold={0.3}
                 ListHeaderComponent={listHeader}
+                ListEmptyComponent={listEmpty}
                 ListFooterComponent={listFooter}
                 removeClippedSubviews
                 windowSize={10}
                 maxToRenderPerBatch={8}
                 initialNumToRender={6}
             />
-
-            <TouchableOpacity style={styles.fab} activeOpacity={0.88}>
-                <IconPlus size={24} color={theme.surface} />
-            </TouchableOpacity>
         </View>
     );
 }
@@ -134,29 +143,13 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     content: {
-        paddingHorizontal: 14,
+        paddingHorizontal: 12,
         paddingTop: 12,
     },
     footerLoading: {
         paddingVertical: 16,
     },
     footerSpacer: {
-        height: 84,
-    },
-    fab: {
-        position: 'absolute',
-        right: 18,
-        bottom: 18,
-        width: 56,
-        height: 56,
-        borderRadius: RADIUS.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.primary,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 4,
+        height: 26,
     },
 });

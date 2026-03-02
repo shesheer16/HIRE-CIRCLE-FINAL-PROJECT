@@ -17,6 +17,8 @@ const { sendPushNotificationForUser } = require('../services/pushService');
 const {
     receiveInterviewMessages,
     deleteInterviewMessage,
+    sendToInterviewDeadLetterQueue,
+    getQueueSelfRecoveryConfig,
     isQueueConfigured,
     getInterviewQueueDepth,
 } = require('../services/sqsInterviewQueue');
@@ -29,6 +31,11 @@ const {
     fireAndForget,
     markFirstJobDraftCreatedOnce,
 } = require('../services/revenueInstrumentationService');
+const { safeLogPlatformEvent } = require('../services/eventLoggingService');
+const { recordQueueBacklog } = require('../services/systemMonitoringService');
+const { isDegradationActive, setDegradationFlag } = require('../services/degradationService');
+const { updateResilienceState } = require('../services/resilienceStateService');
+const { EMPLOYER_PRIMARY_ROLE } = require('../utils/roleGuards');
 
 ffmpeg.setFfmpegPath(ffmpegInstaller);
 
@@ -39,6 +46,7 @@ const workerConfig = {
     staleMinutes: Number.parseInt(process.env.INTERVIEW_PROCESSING_STALE_MINUTES || '15', 10),
     processingTimeoutMs: Number.parseInt(process.env.INTERVIEW_PROCESSING_TIMEOUT_MS || String(5 * 60 * 1000), 10),
 };
+const queueRecoveryConfig = getQueueSelfRecoveryConfig();
 
 let isShuttingDown = false;
 let lastStaleRecoveryRun = 0;
@@ -46,6 +54,7 @@ const processingDurations = [];
 let completionCount = 0;
 let failureCount = 0;
 const dlqEscalationCounter = new Map();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
 const parseNumber = (value, fallback = 0) => {
     const normalized = Number.parseInt(String(value ?? '').replace(/[^0-9-]/g, ''), 10);
@@ -103,7 +112,7 @@ const cleanupFile = (filePath) => {
 };
 
 const mapExtractionToProfileData = ({ rawData, role, userName }) => {
-    if (role === 'employer') {
+    if (role === EMPLOYER_PRIMARY_ROLE) {
         return {
             extractedData: {
                 jobTitle: rawData?.jobTitle || rawData?.roleTitle || rawData?.roleName || null,
@@ -136,7 +145,7 @@ const mapExtractionToProfileData = ({ rawData, role, userName }) => {
 };
 
 const createDraftJobIfEmployer = async ({ userId, role, extractedData }) => {
-    if (role !== 'employer') return null;
+    if (role !== EMPLOYER_PRIMARY_ROLE) return null;
 
     const createdJob = await Job.create({
         employerId: userId,
@@ -236,6 +245,50 @@ const notifyInterviewReady = async ({ userId, processingId, correlationId }) => 
     }));
 };
 
+const handleRetryLimitExceeded = async ({
+    message,
+    correlationId,
+    processingId,
+    role,
+    reason = 'max_receive_count_exceeded',
+}) => {
+    await sendToInterviewDeadLetterQueue({
+        payload: {
+            processingId,
+            body: message?.Body || null,
+        },
+        reason,
+        originalMessage: message,
+    });
+
+    if (processingId) {
+        await InterviewProcessingJob.findByIdAndUpdate(processingId, {
+            $set: {
+                status: 'failed',
+                errorMessage: `Moved to DLQ: ${reason}`,
+                completedAt: new Date(),
+            },
+        });
+    }
+
+    await publishMetric({
+        metricName: 'InterviewFailureCount',
+        value: 1,
+        role: role || 'system',
+        correlationId,
+        dimensions: { Reason: 'DeadLetterQueue' },
+    });
+
+    console.warn(JSON.stringify({
+        event: 'interview_dlq_moved',
+        correlationId,
+        receiveCount: Number(message?.Attributes?.ApproximateReceiveCount || 0),
+        reason,
+    }));
+
+    await deleteInterviewMessage(message?.ReceiptHandle);
+};
+
 const processQueueMessage = async (message) => {
     const startedAt = Date.now();
     let parsedBody = null;
@@ -243,7 +296,7 @@ const processQueueMessage = async (message) => {
     try {
         parsedBody = JSON.parse(message.Body || '{}');
     } catch (error) {
-        console.error(JSON.stringify({
+        console.warn(JSON.stringify({
             event: 'interview_worker_invalid_message',
             correlationId: 'unknown',
             message: error.message,
@@ -255,11 +308,20 @@ const processQueueMessage = async (message) => {
     const { processingId, userId, role, videoUrl } = parsedBody;
     const correlationId = String(processingId || 'unknown');
     const receiveCount = Number.parseInt(message?.Attributes?.ApproximateReceiveCount || '1', 10) || 1;
-    if (receiveCount >= 5) {
+    if (receiveCount >= Number(queueRecoveryConfig.maxReceiveCount || 5)) {
+        await handleRetryLimitExceeded({
+            message,
+            correlationId,
+            processingId,
+            role,
+        });
+        return;
+    }
+    if (receiveCount >= 4) {
         const currentEscalationCount = (dlqEscalationCounter.get(correlationId) || 0) + 1;
         dlqEscalationCounter.set(correlationId, currentEscalationCount);
         if (currentEscalationCount >= 2) {
-            console.error(JSON.stringify({
+            console.warn(JSON.stringify({
                 event: 'interview_dlq_escalation',
                 severity: 'critical',
                 correlationId,
@@ -358,7 +420,12 @@ const processQueueMessage = async (message) => {
             await downloadVideo(videoUrl, videoPath);
             const videoDurationResolved = await extractDuration(videoPath);
             await extractAudio(videoPath, audioPath);
-            const aiData = await extractWorkerDataFromAudio(audioPath, role);
+            const aiData = await extractWorkerDataFromAudio(audioPath, role, {
+                userId,
+                interviewProcessingId: processingId,
+                rateLimitKey: String(userId || processingId || 'interview-worker'),
+                region: null,
+            });
             const rawData = Array.isArray(aiData) ? aiData[0] : aiData;
 
             const user = await User.findById(userId).select('name');
@@ -436,6 +503,15 @@ const processQueueMessage = async (message) => {
             role,
             durationMs: Date.now() - startedAt,
         });
+        safeLogPlatformEvent({
+            type: 'interview_complete',
+            userId,
+            meta: {
+                processingId: String(processingId),
+                role,
+                durationMs: Date.now() - startedAt,
+            },
+        });
 
         const durationMs = Date.now() - startedAt;
         processingDurations.push(durationMs);
@@ -468,7 +544,7 @@ const processQueueMessage = async (message) => {
 
         await deleteInterviewMessage(message.ReceiptHandle);
     } catch (error) {
-        console.error(JSON.stringify({
+        console.warn(JSON.stringify({
             event: 'interview_worker_error',
             correlationId,
             message: error.message,
@@ -547,8 +623,27 @@ const runLoop = async () => {
 
     while (!isShuttingDown) {
         try {
+            if (isDegradationActive('queuePaused')) {
+                await sleep(1000);
+                continue;
+            }
+
             await recoverStaleJobsIfNeeded();
             const queueDepth = await getInterviewQueueDepth();
+            updateResilienceState({
+                queueDepth,
+                queueBackpressureActive: queueDepth >= Number.parseInt(process.env.QUEUE_BACKPRESSURE_DEPTH || '1500', 10),
+            });
+            await recordQueueBacklog({ queueDepth });
+
+            if (queueDepth >= Number.parseInt(process.env.QUEUE_BACKPRESSURE_DEPTH || '1500', 10)) {
+                setDegradationFlag('smartInterviewPaused', true, 'queue_backpressure');
+                setDegradationFlag('heavyAnalyticsPaused', true, 'queue_backpressure');
+            } else if (!isDegradationActive('queuePaused')) {
+                setDegradationFlag('smartInterviewPaused', false, null);
+                setDegradationFlag('heavyAnalyticsPaused', false, null);
+            }
+
             await publishMetric({
                 metricName: 'InterviewQueueDepth',
                 value: queueDepth,
@@ -564,7 +659,7 @@ const runLoop = async () => {
             if (!messages.length) continue;
             await Promise.all(messages.map((message) => processQueueMessage(message)));
         } catch (error) {
-            console.error('Interview worker loop error:', error.message);
+            console.warn('Interview worker loop error:', error.message);
         }
     }
 
@@ -575,7 +670,7 @@ const bootstrap = async () => {
     await connectDB();
 
     if (!isQueueConfigured()) {
-        console.error('Interview worker cannot start: queue is not configured.');
+        console.warn('Interview worker cannot start: queue is not configured.');
         process.exit(1);
     }
 
@@ -591,6 +686,6 @@ process.on('SIGINT', () => {
 });
 
 bootstrap().catch((error) => {
-    console.error('Interview worker bootstrap failed:', error.message);
+    console.warn('Interview worker bootstrap failed:', error.message);
     process.exit(1);
 });

@@ -1,0 +1,102 @@
+{
+  "phase": "phase5_trust_test",
+  "generatedAt": "2026-03-02T04:41:38.896Z",
+  "pass": true,
+  "trustChecks": {
+    "fakeProfileAttempt": true,
+    "spamEmployerAttempt": true,
+    "rapidOtpAbuseAttempt": true,
+    "referralAbuseAttempt": true
+  },
+  "mode": "simulation_db",
+  "evidence": {
+    "otpScript": {
+      "status": 0,
+      "result": {
+        "sendOtpStatuses": [
+          200,
+          200,
+          429
+        ],
+        "verifyOtpStatuses": [
+          400,
+          400,
+          400,
+          429
+        ],
+        "rapidOtpRateLimitTriggered": true,
+        "bruteForceBlocked": true,
+        "otpStoredHashed": true,
+        "bruteOtpAttemptCount": 3,
+        "bruteOtpBlockedUntilSet": true,
+        "rapidOtpBlockedUntilSet": true,
+        "note": "Lite OTP simulation used because runtime blocked MongoMemoryServer."
+      },
+      "stderr": "otp_provider_unavailable",
+      "fallback": true
+    },
+    "referralScript": {
+      "status": 0,
+      "result": {
+        "scenario": {
+          "interactions": 10000,
+          "hires": 1000,
+          "endorsements": 505,
+          "disputes": 100,
+          "fakeEndorsementRingAttempted": true,
+          "referralAbuseLoopAttempted": true
+        },
+        "assertions": {
+          "noScoreOverflow": true,
+          "noScoreUnderflow": true,
+          "noInfiniteAuthorityLoop": true,
+          "noUnfairAmplification": true,
+          "stableBoundedBehavior": true,
+          "fakeEndorsementRingDetected": true,
+          "referralAbuseLoopDetected": true
+        },
+        "aggregates": {
+          "minTrust": 32.5,
+          "maxTrust": 59,
+          "minAuthority": 50,
+          "maxAuthority": 50,
+          "averageTrust": 51.931,
+          "averageAuthority": 50
+        }
+      },
+      "stderr": null
+    },
+    "abuseSimulation": {
+      "massJobSpamDetected": true,
+      "duplicateProfileDetected": true,
+      "suspiciousOtpDetected": true,
+      "spamSignals": [
+        {
+          "signalType": "mass_job_posting_spam",
+          "score": 100,
+          "status": "open",
+          "blocked": false,
+          "detectedAt": "2026-03-02T04:41:37.739Z"
+        }
+      ],
+      "fakeProfileSignals": [
+        {
+          "signalType": "duplicate_profile_pattern",
+          "score": 80,
+          "status": "open",
+          "blocked": false,
+          "detectedAt": "2026-03-02T04:41:38.435Z"
+        }
+      ],
+      "otpSignals": [
+        {
+          "signalType": "suspicious_otp_attempts",
+          "score": 100,
+          "status": "open",
+          "blocked": false,
+          "detectedAt": "2026-03-02T04:41:38.625Z"
+        }
+      ]
+    }
+  }
+}

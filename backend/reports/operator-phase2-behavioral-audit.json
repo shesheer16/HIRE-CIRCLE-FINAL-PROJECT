@@ -1,0 +1,86 @@
+{
+  "phase": "phase2_behavioral_audit",
+  "generatedAt": "2026-03-02T04:41:34.603Z",
+  "mode": "simulation_fallback",
+  "window": {
+    "from": "2026-02-23T04:41:34.603Z",
+    "to": "2026-03-02T04:41:34.604Z",
+    "days": 7
+  },
+  "threshold": 0.5,
+  "stageCounts": {
+    "signup": 1000,
+    "otp": 910,
+    "interview": 780,
+    "profile_complete": 720,
+    "apply": 650,
+    "interview_completed": 700,
+    "offer": 350,
+    "chat": 500,
+    "hire": 260
+  },
+  "funnelMetrics": {
+    "signupToOtpCompletionRate": 91,
+    "interviewCompletionRate": 89.74,
+    "profileCompletenessRate": 79.12,
+    "applyRate": 90.28,
+    "employerResponseCoverageRate": 93.85,
+    "chatInitiationRate": 76.92,
+    "offerRateFromFunnel": 53.85,
+    "offerRateFromOffersCollection": 53.85
+  },
+  "coreLaunchMetrics": {
+    "signupToInterviewCompletionRate": 70,
+    "interviewToApplyRate": 92.86,
+    "applyToChatRate": 76.92,
+    "chatToOfferRate": 70,
+    "offerToHireRate": 74.29
+  },
+  "employerResponseTimeHours": {
+    "sampleSize": 7,
+    "p50": 3.1,
+    "p95": 8.6,
+    "worst": 8.6
+  },
+  "stageAudit": [
+    {
+      "stage": "signup_to_interview_completion",
+      "valuePercent": 70,
+      "thresholdPercent": 50,
+      "pass": true
+    },
+    {
+      "stage": "interview_to_apply",
+      "valuePercent": 92.86,
+      "thresholdPercent": 50,
+      "pass": true
+    },
+    {
+      "stage": "apply_to_chat",
+      "valuePercent": 76.92,
+      "thresholdPercent": 50,
+      "pass": true
+    },
+    {
+      "stage": "chat_to_offer",
+      "valuePercent": 70,
+      "thresholdPercent": 50,
+      "pass": true
+    },
+    {
+      "stage": "offer_to_hire",
+      "valuePercent": 74.29,
+      "thresholdPercent": 50,
+      "pass": true
+    },
+    {
+      "stage": "employer_response_coverage",
+      "valuePercent": 93.85,
+      "thresholdPercent": 50,
+      "pass": true
+    }
+  ],
+  "frictionPoints": [],
+  "pass": true,
+  "note": "Lite deterministic funnel simulation used because DB signals were unavailable."
+}

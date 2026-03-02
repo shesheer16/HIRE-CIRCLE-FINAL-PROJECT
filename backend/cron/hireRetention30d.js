@@ -5,6 +5,7 @@ const Application = require('../models/Application');
 const Job = require('../models/Job');
 const WorkerProfile = require('../models/WorkerProfile');
 const HiringLifecycleEvent = require('../models/HiringLifecycleEvent');
+const MatchSnapshot = require('../models/MatchSnapshot');
 const { normalizeSalaryBand } = require('../services/revenueInstrumentationService');
 const { recordMatchPerformanceMetric } = require('../services/matchMetricsService');
 
@@ -57,6 +58,16 @@ const runRetentionEventJob = async () => {
 
         if (result?.upsertedCount) upsertedCount += 1;
         if (result?.upsertedCount) {
+            await MatchSnapshot.updateOne(
+                { applicationId: app._id },
+                {
+                    $set: {
+                        retentionOutcome: 'retained_30d',
+                    },
+                }
+            );
+        }
+        if (result?.upsertedCount) {
             await recordMatchPerformanceMetric({
                 eventName: 'WORKER_JOINED',
                 jobId: app.job,
@@ -83,6 +94,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-    console.error('[retention-30d] failed:', error.message);
+    console.warn('[retention-30d] failed:', error.message);
     process.exit(1);
 });

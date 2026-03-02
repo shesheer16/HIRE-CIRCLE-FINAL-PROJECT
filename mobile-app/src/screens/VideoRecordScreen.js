@@ -167,7 +167,16 @@ export default function VideoRecordScreen({ navigation, route }) {
                 <SafeAreaView style={styles.overlay}>
                     <View>
                         <View style={styles.header}>
-                            <TouchableOpacity onPress={() => navigation.goBack()} disabled={isRecording}>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    if (navigation.canGoBack()) {
+                                        navigation.goBack();
+                                        return;
+                                    }
+                                    navigation.navigate('MainTab');
+                                }}
+                                disabled={isRecording}
+                            >
                                 <Ionicons name="close-circle" size={40} color="white" style={{ opacity: isRecording ? 0.0 : 1 }} />
                             </TouchableOpacity>
                             <View style={styles.timerContainer}>

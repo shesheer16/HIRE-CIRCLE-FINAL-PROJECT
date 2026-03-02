@@ -1,7 +1,8 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Image, StyleSheet } from 'react-native';
 import { IconMic, IconImage, IconVideo } from '../../../components/Icons';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 function FeedComposerComponent({
     composerOpen,
@@ -42,7 +43,7 @@ function FeedComposerComponent({
                     value={composerText}
                     onChangeText={onComposerTextChange}
                     placeholder={placeholder}
-                    placeholderTextColor={theme.textMuted}
+                    placeholderTextColor={connectPalette.subtle}
                     multiline
                     numberOfLines={3}
                     autoFocus
@@ -51,17 +52,17 @@ function FeedComposerComponent({
 
             <View style={styles.toolbar}>
                 <TouchableOpacity style={styles.toolButton} onPress={onVoicePress} activeOpacity={0.8}>
-                    <IconMic size={14} color={composerMediaType === 'VOICE' ? theme.primary : theme.textSecondary} />
+                    <IconMic size={14} color={composerMediaType === 'VOICE' ? connectPalette.accent : connectPalette.muted} />
                     <Text style={[styles.toolText, composerMediaType === 'VOICE' && styles.toolTextActive]}>VOICE</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.toolButton} onPress={onPhotosPress} activeOpacity={0.8}>
-                    <IconImage size={14} color={composerMediaType === 'PHOTOS' ? theme.indigo : theme.textSecondary} />
+                    <IconImage size={14} color={composerMediaType === 'PHOTOS' ? connectPalette.accent : connectPalette.muted} />
                     <Text style={[styles.toolText, composerMediaType === 'PHOTOS' && styles.toolTextIndigo]}>PHOTOS</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.toolButton} onPress={onVideoPress} activeOpacity={0.8}>
-                    <IconVideo size={14} color={composerMediaType === 'VIDEO' ? theme.warning : theme.textSecondary} />
+                    <IconVideo size={14} color={composerMediaType === 'VIDEO' ? connectPalette.accent : connectPalette.muted} />
                     <Text style={[styles.toolText, composerMediaType === 'VIDEO' && styles.toolTextWarning]}>VIDEO</Text>
                 </TouchableOpacity>
 
@@ -95,15 +96,11 @@ export default memo(FeedComposerComponent);
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: theme.surface,
-        borderRadius: RADIUS.xl,
+        backgroundColor: connectPalette.surface,
+        borderRadius: 24,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderColor: connectPalette.line,
+        ...connectShadow,
         padding: 16,
         marginBottom: 16,
     },
@@ -113,32 +110,32 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     avatar: {
-        width: 40,
-        height: 40,
+        width: 42,
+        height: 42,
         borderRadius: RADIUS.lg,
         marginRight: 12,
     },
     inputTrigger: {
         flex: 1,
         borderRadius: RADIUS.lg,
-        backgroundColor: theme.background,
+        backgroundColor: '#f8f9fc',
         borderWidth: 1,
-        borderColor: theme.border,
+        borderColor: connectPalette.line,
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingVertical: 11,
     },
     inputTriggerText: {
-        color: theme.textMuted,
-        fontSize: 13,
+        color: connectPalette.subtle,
+        fontSize: 14,
         fontWeight: '500',
     },
     textArea: {
         marginBottom: 12,
         borderRadius: RADIUS.lg,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        backgroundColor: theme.background,
-        color: theme.textPrimary,
+        borderColor: connectPalette.lineStrong,
+        backgroundColor: '#f8f9fc',
+        color: connectPalette.text,
         minHeight: 80,
         fontSize: 14,
         lineHeight: 20,
@@ -158,23 +155,23 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     toolText: {
-        color: theme.textSecondary,
-        fontSize: 10,
-        fontWeight: '800',
+        color: connectPalette.muted,
+        fontSize: 11,
+        fontWeight: '700',
     },
     toolTextActive: {
-        color: theme.primary,
+        color: connectPalette.accent,
     },
     toolTextIndigo: {
-        color: theme.indigo,
+        color: connectPalette.accent,
     },
     toolTextWarning: {
-        color: theme.warning,
+        color: connectPalette.accent,
     },
     divider: {
         width: 1,
         height: 16,
-        backgroundColor: theme.borderMedium,
+        backgroundColor: connectPalette.lineStrong,
         marginLeft: 8,
         marginRight: 8,
     },
@@ -188,17 +185,17 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.sm,
         paddingHorizontal: 10,
         paddingVertical: 6,
-        backgroundColor: theme.border,
+        backgroundColor: '#eff2f8',
     },
     cancelText: {
-        color: theme.textSecondary,
+        color: connectPalette.muted,
         fontSize: 10,
         fontWeight: '900',
     },
     postButton: {
         marginLeft: 'auto',
         borderRadius: RADIUS.sm,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         paddingHorizontal: 14,
         paddingVertical: 6,
     },
@@ -206,9 +203,9 @@ const styles = StyleSheet.create({
         opacity: 0.45,
     },
     postText: {
-        color: theme.primary,
-        fontSize: 10,
-        fontWeight: '900',
+        color: connectPalette.accentDark,
+        fontSize: 11,
+        fontWeight: '800',
         letterSpacing: 0.3,
     },
 });

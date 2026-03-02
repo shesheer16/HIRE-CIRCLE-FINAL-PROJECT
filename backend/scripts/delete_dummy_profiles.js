@@ -36,7 +36,7 @@ const cleanupProfiles = async () => {
         console.log("\n✅ Cleanup Complete!");
 
     } catch (error) {
-        console.error("💥 Error during cleanup:", error);
+        console.warn("💥 Error during cleanup:", error);
     } finally {
         mongoose.disconnect();
     }

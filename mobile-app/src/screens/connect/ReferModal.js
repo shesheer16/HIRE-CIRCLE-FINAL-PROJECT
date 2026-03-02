@@ -15,7 +15,7 @@ function ReferModalComponent({
     return (
         <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
             <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-                <TouchableOpacity style={styles.sheet} activeOpacity={1}>
+                <View style={styles.sheet}>
                     <View style={styles.headerRow}>
                         <View>
                             <Text style={styles.headerLabel}>Referral for</Text>
@@ -53,7 +53,7 @@ function ReferModalComponent({
                     <TouchableOpacity style={styles.submitButton} onPress={onSendReferral}>
                         <Text style={styles.submitButtonText}>SEND REFERRAL</Text>
                     </TouchableOpacity>
-                </TouchableOpacity>
+                </View>
             </TouchableOpacity>
         </Modal>
     );

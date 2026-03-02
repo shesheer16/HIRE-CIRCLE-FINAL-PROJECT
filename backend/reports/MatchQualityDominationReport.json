@@ -1,0 +1,76 @@
+{
+  "generatedAt": "2026-02-27T20:27:59.603Z",
+  "benchmark": {
+    "scorePairs": 10000,
+    "totalTimeMs": 64.3,
+    "p50Ms": 0.0021,
+    "p95Ms": 0.0046,
+    "p99Ms": 0.0063,
+    "memoryUsage": {
+      "beforeMb": 19.94,
+      "afterMb": 25.06,
+      "deltaMb": 5.12
+    },
+    "noMatchExplosion": true
+  },
+  "scoreDistributionHistogram": [
+    {
+      "range": "0.00-0.19",
+      "count": 3143,
+      "percent": 31.43
+    },
+    {
+      "range": "0.20-0.39",
+      "count": 571,
+      "percent": 5.71
+    },
+    {
+      "range": "0.40-0.59",
+      "count": 1215,
+      "percent": 12.15
+    },
+    {
+      "range": "0.60-0.79",
+      "count": 501,
+      "percent": 5.01
+    },
+    {
+      "range": "0.80-1.00",
+      "count": 4570,
+      "percent": 45.7
+    }
+  ],
+  "tierDistributionPerCity": {
+    "Hyderabad": {
+      "STRONG": 0,
+      "GOOD": 0,
+      "POSSIBLE": 0,
+      "REJECT": 1000
+    },
+    "Nizamabad": {
+      "STRONG": 4476,
+      "GOOD": 358,
+      "POSSIBLE": 285,
+      "REJECT": 3881
+    }
+  },
+  "conversionDeltaSimulation": {
+    "baselineShortlistRate": 0.4572,
+    "optimizedShortlistRate": 0.5048,
+    "shortlistLiftPercent": 10.41,
+    "baselineLowIntentShare": 0.4998,
+    "optimizedLowIntentShare": 0.5,
+    "baselineQualityAdjustedRate": 0.2287,
+    "optimizedQualityAdjustedRate": 0.2524,
+    "qualityAdjustedShortlistLiftPercent": 10.36
+  },
+  "noShowRiskImpact": {
+    "avgScoreLowRisk": 1,
+    "avgScoreHighRisk": 0.7722,
+    "scoreDelta": 0.2278
+  },
+  "queryPerformanceExplain": {
+    "skipped": true,
+    "reason": "querySrv ECONNREFUSED _mongodb._tcp.hireapp.hrucgrp.mongodb.net"
+  }
+}

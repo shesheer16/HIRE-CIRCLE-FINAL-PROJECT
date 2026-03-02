@@ -1,14 +1,15 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
 import { useNavigation } from '@react-navigation/native';
+import { AuthContext } from '../context/AuthContext';
 
 export default function Header({ title, subtitle, showBack = true }) {
     const navigation = useNavigation();
+    const { logout } = React.useContext(AuthContext);
 
     const handleLogout = async () => {
-        await SecureStore.deleteItemAsync('userInfo');
+        await logout?.();
         navigation.getParent()?.reset({
             index: 0,
             routes: [{ name: 'RoleSelection' }],
@@ -19,7 +20,16 @@ export default function Header({ title, subtitle, showBack = true }) {
         <View style={styles.header}>
             <View style={styles.leftContainer}>
                 {showBack && (
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <TouchableOpacity
+                        onPress={() => {
+                            if (navigation.canGoBack()) {
+                                navigation.goBack();
+                                return;
+                            }
+                            navigation.navigate('MainTab');
+                        }}
+                        style={styles.backButton}
+                    >
                         <Ionicons name="arrow-back" size={24} color="#374151" />
                     </TouchableOpacity>
                 )}

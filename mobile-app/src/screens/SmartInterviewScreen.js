@@ -1,6 +1,5 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Animated,
     Alert,
     AppState,
@@ -22,11 +21,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import client from '../api/client';
 import InterviewClarificationSheet from '../components/InterviewClarificationSheet';
-import clarificationFieldMap from '../config/clarificationFieldMap';
+import { clarificationFieldMap } from '../config';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
 import { triggerHaptic } from '../utils/haptics';
 import { logger } from '../utils/logger';
 import { trackEvent } from '../services/analytics';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const { width } = Dimensions.get('window');
 
@@ -94,7 +94,7 @@ const buildDefaultExtractedData = (role, userInfo) => {
 
 export default function SmartInterviewScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const { userInfo, completeOnboarding } = useContext(AuthContext);
+    const { userInfo, completeOnboarding, updateUserInfo } = useContext(AuthContext);
     const role = getPrimaryRoleFromUser(userInfo);
     const isEmployer = role === 'employer';
 
@@ -640,14 +640,8 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 },
             };
 
-            let data;
-            try {
-                const v2Response = await client.post('/api/v2/upload/video', formData, uploadConfig);
-                data = v2Response?.data;
-            } catch (v2Error) {
-                const fallbackResponse = await client.post('/api/upload/video', formData, uploadConfig);
-                data = fallbackResponse?.data;
-            }
+            const v2Response = await client.post('/api/v2/upload/video', formData, uploadConfig);
+            const data = v2Response?.data;
 
             if (!data?.success) {
                 throw new Error(data?.error || 'Could not queue interview processing.');
@@ -746,6 +740,64 @@ export default function SmartInterviewScreen({ navigation, route }) {
         setTimer(0);
         setStage(STAGES.INTRO);
     }, [clearTimer, isRecording]);
+
+    const handleRetakeInterview = useCallback(() => {
+        if (isRecording && cameraRef.current) {
+            cameraRef.current.stopRecording();
+        }
+
+        clearTimer();
+        stopStatusTracking();
+        clearClarificationTimers();
+
+        setIsRecording(false);
+        setTimer(0);
+        setVideoUri(null);
+        setProcessingId(null);
+        setCreatedJobId(null);
+        setExtractedData(null);
+        setWaitingForPush(false);
+        setProcessingMessageIndex(0);
+        setShowBoostUpsell(false);
+        setUpsellJobId(null);
+        setUiPaused(false);
+        setCameraReady(false);
+        setRecordingRequested(false);
+        setSlotState({});
+        setSlotConfidence({});
+        setAmbiguousFields([]);
+        setMissingSlot(null);
+        setInterviewComplete(false);
+        setClarificationField(null);
+        setClarificationVisible(false);
+        setClarificationSubmitting(false);
+        setClarificationQueuedAt(null);
+        setClarificationContextText('');
+        setClarificationHints({});
+        setShowThinkingIndicator(false);
+        setProcessingFallbackMessage(null);
+        setAdaptiveQuestion(null);
+        setInterviewStep(0);
+        setMaxSteps(8);
+        setProfileQualityScore(0);
+        setSlotCompletenessRatio(0);
+        setCommunicationClarityScore(0);
+        setSalaryOutlierFlag(false);
+        setSalaryMedianForRoleCity(null);
+        setUploadProgress(0);
+        setSavingProfile(false);
+        setStage(STAGES.INTRO);
+
+        clarificationEventKeyRef.current = '';
+        activeClarificationFieldRef.current = null;
+        lastStateSignatureRef.current = '';
+        lastStateChangeAtRef.current = 0;
+        lastHybridPayloadRef.current = null;
+        stagnationFallbackShownRef.current = false;
+        completionAlertShownRef.current = false;
+
+        triggerHaptic.light();
+    }, [clearClarificationTimers, clearTimer, isRecording, stopStatusTracking]);
 
     const toggleUiPause = useCallback(() => {
         setUiPaused((prev) => !prev);
@@ -891,6 +943,9 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 });
             }
 
+            await updateUserInfo?.({
+                hasCompletedProfile: true,
+            });
             await completeOnboarding?.();
             triggerHaptic.success();
             setStage(STAGES.COMPLETE);
@@ -900,7 +955,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
         } finally {
             setSavingProfile(false);
         }
-    }, [completeOnboarding, createdJobId, extractedData, isEmployer, maybeShowBoostUpsell, parseSkills, processingId, savingProfile, userInfo]);
+    }, [completeOnboarding, createdJobId, extractedData, isEmployer, maybeShowBoostUpsell, parseSkills, processingId, savingProfile, updateUserInfo, userInfo]);
 
     const navigateToProfileLanding = useCallback(() => {
         const targetTab = isEmployer ? 'Talent' : 'Profiles';
@@ -1096,7 +1151,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
         return (
             <>
                 <View style={styles.loaderContainer}>
-                    <ActivityIndicator color="#ffffff" size="large" />
+                    <SkeletonLoader width={56} height={56} borderRadius={28} tone="tint" />
                 </View>
                 {clarificationSheetNode}
             </>
@@ -1197,9 +1252,9 @@ export default function SmartInterviewScreen({ navigation, route }) {
                             <Text style={styles.profileQualitySubtext}>
                                 Completion {Math.round(Math.max(0, Math.min(1, slotCompletenessRatio)) * 100)}% • Clarity {Math.round(Math.max(0, Math.min(1, communicationClarityScore)) * 100)}%
                             </Text>
-                            <TouchableOpacity style={styles.improveProfileCta}>
+                            <View style={styles.improveProfileCta}>
                                 <Text style={styles.improveProfileCtaText}>Improve Profile</Text>
-                            </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
 
@@ -1328,15 +1383,25 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         )}
                     </View>
 
-                    <TouchableOpacity
-                        style={[styles.primaryButton, savingProfile && styles.primaryButtonDisabled]}
-                        onPress={handleConfirmSave}
-                        disabled={savingProfile}
-                    >
-                        {savingProfile
-                            ? <ActivityIndicator color="#ffffff" size="small" />
-                            : <Text style={styles.primaryButtonText}>Confirm & Continue</Text>}
-                    </TouchableOpacity>
+                    <View style={styles.reviewActionRow}>
+                        <TouchableOpacity
+                            style={styles.secondaryButton}
+                            onPress={handleRetakeInterview}
+                            disabled={savingProfile}
+                        >
+                            <Text style={styles.secondaryButtonText}>Retake</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.primaryButton, styles.reviewPrimaryAction, savingProfile && styles.primaryButtonDisabled]}
+                            onPress={handleConfirmSave}
+                            disabled={savingProfile}
+                        >
+                            {savingProfile
+                                ? <SkeletonLoader width={20} height={20} borderRadius={10} tone="tint" />
+                                : <Text style={styles.primaryButtonText}>Confirm & Continue</Text>}
+                        </TouchableOpacity>
+                    </View>
 
                     <View style={styles.trustBadgeCard}>
                         <Text style={styles.trustBadgeTitle}>Visibility Boost</Text>
@@ -1423,7 +1488,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                     <View style={styles.middleArea}>
                         {(stage === STAGES.UPLOADING || stage === STAGES.PROCESSING) ? (
                             <View style={styles.processingCard}>
-                                <ActivityIndicator color="#5B8CFF" size="large" />
+                                <SkeletonLoader width={48} height={48} borderRadius={24} tone="tint" />
                                 <Text style={styles.processingTitle}>{PROCESSING_MESSAGES[processingMessageIndex]}</Text>
                                 <Text style={styles.processingSubtext}>
                                     {processingFallbackMessage
@@ -1432,6 +1497,10 @@ export default function SmartInterviewScreen({ navigation, route }) {
                                         ? 'Processing continues in background. We will notify you when ready.'
                                         : 'Please keep the app open for faster completion.'}
                                 </Text>
+                                <View style={styles.processingShimmerStack}>
+                                    <SkeletonLoader width="82%" height={8} borderRadius={4} tone="tint" />
+                                    <SkeletonLoader width="64%" height={8} borderRadius={4} tone="tint" />
+                                </View>
                                 {stage === STAGES.UPLOADING ? (
                                     <Text style={styles.uploadProgressText}>{Math.max(0, Math.min(100, uploadProgress))}% uploaded</Text>
                                 ) : null}
@@ -1710,6 +1779,27 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         marginLeft: 6,
     },
+    reviewActionRow: {
+        marginTop: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    secondaryButton: {
+        flex: 1,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+        backgroundColor: '#f8fafc',
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    secondaryButtonText: {
+        color: '#334155',
+        fontWeight: '700',
+        fontSize: 16,
+    },
     primaryButton: {
         width: '100%',
         backgroundColor: '#7c3aed',
@@ -1722,6 +1812,10 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.22,
         shadowRadius: 12,
         elevation: 6,
+    },
+    reviewPrimaryAction: {
+        flex: 2,
+        width: 'auto',
     },
     primaryButtonDisabled: {
         opacity: 0.7,
@@ -1859,6 +1953,12 @@ const styles = StyleSheet.create({
         color: '#cbd5e1',
         fontSize: 13,
         textAlign: 'center',
+    },
+    processingShimmerStack: {
+        width: '100%',
+        alignItems: 'center',
+        marginTop: 10,
+        marginBottom: 2,
     },
     uploadProgressText: {
         marginTop: 10,

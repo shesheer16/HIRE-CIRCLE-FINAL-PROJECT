@@ -1,337 +1,489 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
-    View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    StyleSheet,
-    Alert,
-    ActivityIndicator,
-    ScrollView
+    Pressable,
+    View,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
-import client from '../api/client';
-import { AuthContext } from '../context/AuthContext';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import client from '../api/client';
+import UnifiedIdentityInput from '../components/UnifiedIdentityInput';
+import { navigateToWelcomeFallback } from '../utils/authNavigation';
 
-const ACQUISITION_SOURCES = [
-    { label: 'Camp', value: 'camp' },
-    { label: 'Referral', value: 'referral' },
-    { label: 'Organic', value: 'organic' },
-    { label: 'Circle', value: 'circle' },
-];
+const DEFAULT_ACQUISITION_SOURCE = 'organic';
 
 export default function RegisterScreen({ navigation }) {
-    const [activeTab, setActiveTab] = useState('email'); // 'email' or 'phone'
-    const [role, setRole] = useState('candidate');
-    const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
-    const [phone, setPhone] = useState('');
-    const [password, setPassword] = useState('');
-    const [acquisitionSource, setAcquisitionSource] = useState('organic');
+    const insets = useSafeAreaInsets();
+
+    const identityRef = useRef(null);
+    const nameInputRef = useRef(null);
+    const passwordInputRef = useRef(null);
+    const confirmPasswordInputRef = useRef(null);
+    const nameRef = useRef('');
+    const passwordRef = useRef('');
+    const confirmPasswordRef = useRef('');
+
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [loading, setLoading] = useState(false);
-    const { login } = useContext(AuthContext);
+    const [focusedField, setFocusedField] = useState('');
+    const [identityError, setIdentityError] = useState('');
+    const [formError, setFormError] = useState('');
 
-    useEffect(() => {
-        const getRole = async () => {
-            const storedRole = await SecureStore.getItemAsync('selectedRole');
-            if (storedRole) setRole(storedRole);
-        };
-        getRole();
-    }, []);
-
-    const handleRegister = async () => {
-        if (activeTab === 'phone') {
-            Alert.alert('Notice', 'Phone signup is not yet connected to the backend. Please use Email.');
+    const handleBackPress = useCallback(() => {
+        if (navigation.canGoBack()) {
+            navigation.goBack();
             return;
         }
 
-        if (!name || !email || !password) {
-            Alert.alert('Error', 'Please fill in all fields');
+        navigateToWelcomeFallback(navigation);
+    }, [navigation]);
+
+    const handleIdentityDetection = useCallback(() => {
+        if (identityError) setIdentityError('');
+        if (formError) setFormError('');
+    }, [formError, identityError]);
+
+    const handleRegister = useCallback(async () => {
+        const snapshot = identityRef.current?.getSnapshot?.();
+        const name = String(nameRef.current || '').trim();
+        const password = String(passwordRef.current || '').trim();
+        const confirmPassword = String(confirmPasswordRef.current || '').trim();
+
+        if (!name) {
+            setFormError('Enter your full name to continue.');
             return;
         }
 
+        if (!snapshot?.raw) {
+            setIdentityError('Enter your email or phone to continue.');
+            return;
+        }
+
+        if (!snapshot.isValid) {
+            setIdentityError(snapshot.type === 'phone'
+                ? 'Enter a valid phone number (10-15 digits).'
+                : 'Enter a valid email address.');
+            return;
+        }
+
+        if (!password) {
+            setFormError('Create a password to continue.');
+            return;
+        }
+
+        if (password.length < 6) {
+            setFormError('Use at least 6 characters for password.');
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            setFormError('Passwords do not match.');
+            return;
+        }
+
+        setIdentityError('');
+        setFormError('');
         setLoading(true);
-        try {
-            const { data } = await client.post('/api/users/register', {
-                name,
-                email,
-                password,
-                role,
-                acquisitionSource,
-            });
 
-            // Let AuthContext handle the storage and state changes, which automatically navigates
-            await login(data);
+        try {
+            const registerPayload = {
+                name,
+                email: snapshot.backendEmail,
+                phoneNumber: snapshot.type === 'phone' ? snapshot.phoneE164 : '',
+                password,
+                acquisitionSource: DEFAULT_ACQUISITION_SOURCE,
+            };
+
+            await client.post('/api/users/register', registerPayload);
+
+            const otpIdentity = snapshot.type === 'phone'
+                ? { kind: 'phone', value: snapshot.phoneE164, label: snapshot.raw }
+                : { kind: 'email', value: snapshot.backendEmail, label: snapshot.backendEmail };
+            const otpPayload = otpIdentity.kind === 'phone'
+                ? { phone: otpIdentity.value }
+                : { email: otpIdentity.value };
+
+            let otpDispatchError = '';
+            let initialOtpDispatched = true;
+            try {
+                await client.post('/api/auth/send-otp', otpPayload);
+            } catch (otpError) {
+                initialOtpDispatched = false;
+                otpDispatchError = otpError?.response?.data?.message || otpError?.message || 'Could not send OTP right now. Try resend.';
+            }
+
+            navigation.replace('OTPVerification', {
+                identity: otpIdentity,
+                intent: 'signup',
+                initialOtpDispatched,
+                initialError: otpDispatchError || '',
+            });
         } catch (error) {
-            const msg = error.response?.data?.message || 'Registration failed';
-            Alert.alert('Error', msg);
+            const message = error?.response?.data?.message || error?.message || 'Registration failed';
+            setFormError(message);
+            Alert.alert('Sign-up Failed', message);
         } finally {
             setLoading(false);
         }
-    };
+    }, [navigation]);
+
+    const navigateToLogin = useCallback(() => {
+        navigation.navigate('Login');
+    }, [navigation]);
 
     return (
-        <SafeAreaView style={styles.container}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="arrow-back" size={24} color="#374151" />
+        <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+            <ScrollView
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 },
+                ]}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="always"
+                keyboardDismissMode="none"
+            >
+                <TouchableOpacity style={styles.backBtn} onPress={handleBackPress} activeOpacity={0.75}>
+                    <Ionicons name="arrow-back" size={18} color="#334155" />
+                    <Text style={styles.backBtnText}>Back</Text>
                 </TouchableOpacity>
 
-                <View style={styles.header}>
-                    <Text style={styles.title}>Create Account</Text>
-                    <Text style={styles.subtitle}>
-                        Signing up as a <Text style={{ fontWeight: 'bold', color: '#4F46E5' }}>{role === 'candidate' ? 'Available to Help' : 'Looking for Someone'}</Text>
-                    </Text>
+                <View style={styles.headerBlock}>
+                    <View style={styles.brandMark}>
+                        <Ionicons name="sparkles-outline" size={14} color="#1d4ed8" />
+                    </View>
+                    <Text style={styles.title}>Create Your Account</Text>
+                    <Text style={styles.subtitle}>Takes about 30 seconds. You can preview jobs right after OTP.</Text>
+                    <View style={styles.speedHint}>
+                        <Text style={styles.speedHintText}>Step 1 of 2</Text>
+                    </View>
                 </View>
 
-                {/* Custom Tab Switcher */}
-                <View style={styles.tabContainer}>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === 'phone' && styles.activeTab]}
-                        onPress={() => setActiveTab('phone')}
-                    >
-                        <Text style={[styles.tabText, activeTab === 'phone' && styles.activeTabText]}>Phone</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === 'email' && styles.activeTab]}
-                        onPress={() => setActiveTab('email')}
-                    >
-                        <Text style={[styles.tabText, activeTab === 'email' && styles.activeTabText]}>Email</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.form}>
-                    <Text style={styles.label}>Full Name</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="John Doe"
-                        value={name}
-                        onChangeText={setName}
-                    />
-
-                    {activeTab === 'email' ? (
-                        <>
-                            <Text style={styles.label}>Email Address</Text>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="user@example.com"
-                                value={email}
-                                onChangeText={setEmail}
-                                autoCapitalize="none"
-                                keyboardType="email-address"
-                            />
-                        </>
-                    ) : (
-                        <>
-                            <Text style={styles.label}>Phone Number</Text>
-                            <View style={styles.phoneRow}>
-                                <TextInput
-                                    style={[styles.input, styles.countryCode]}
-                                    value="+91"
-                                    editable={false}
-                                />
-                                <TextInput
-                                    style={[styles.input, styles.phoneInput]}
-                                    placeholder="98765 43210"
-                                    value={phone}
-                                    onChangeText={setPhone}
-                                    keyboardType="phone-pad"
-                                />
-                            </View>
-                        </>
-                    )}
-
-                    <Text style={styles.label}>Password</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="••••••••"
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                    />
-
-                    <View>
-                        <Text style={styles.label}>How did you hear about us?</Text>
-                        <View style={styles.sourceChipsRow}>
-                            {ACQUISITION_SOURCES.map((item) => (
-                                <TouchableOpacity
-                                    key={item.value}
-                                    style={[
-                                        styles.sourceChip,
-                                        acquisitionSource === item.value && styles.sourceChipActive,
-                                    ]}
-                                    onPress={() => setAcquisitionSource(item.value)}
-                                    activeOpacity={0.8}
-                                >
-                                    <Text
-                                        style={[
-                                            styles.sourceChipText,
-                                            acquisitionSource === item.value && styles.sourceChipTextActive,
-                                        ]}
-                                    >
-                                        {item.label}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
+                <View style={styles.formBlock}>
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Full name</Text>
+                        <TextInput
+                            ref={nameInputRef}
+                            style={[styles.textField, focusedField === 'name' && styles.textFieldFocused]}
+                            placeholder="Enter your full name"
+                            placeholderTextColor="rgba(71, 85, 105, 0.6)"
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                            editable={!loading}
+                            onChangeText={(value) => {
+                                nameRef.current = value;
+                                if (formError) setFormError('');
+                            }}
+                            onFocus={() => setFocusedField('name')}
+                            onBlur={() => setFocusedField('')}
+                            returnKeyType="next"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => identityRef.current?.focus?.()}
+                        />
                     </View>
 
+                    <UnifiedIdentityInput
+                        ref={identityRef}
+                        editable={!loading}
+                        errorText={identityError}
+                        onDetectionChange={handleIdentityDetection}
+                        inputProps={{
+                            returnKeyType: 'next',
+                            blurOnSubmit: false,
+                            onSubmitEditing: () => passwordInputRef.current?.focus(),
+                        }}
+                    />
+
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Password</Text>
+                        <Pressable
+                            style={[styles.passwordShell, focusedField === 'password' && styles.passwordShellFocused]}
+                            onPress={() => passwordInputRef.current?.focus()}
+                        >
+                            <TextInput
+                                ref={passwordInputRef}
+                                style={styles.passwordInput}
+                                placeholder="Create a password"
+                                placeholderTextColor="rgba(71, 85, 105, 0.6)"
+                                secureTextEntry={!showPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                                onChangeText={(value) => {
+                                    passwordRef.current = value;
+                                    if (formError) setFormError('');
+                                }}
+                                onFocus={() => setFocusedField('password')}
+                                onBlur={() => setFocusedField('')}
+                                returnKeyType="next"
+                                blurOnSubmit={false}
+                                onSubmitEditing={() => confirmPasswordInputRef.current?.focus()}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeTap}
+                                onPress={() => setShowPassword((current) => !current)}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#64748b" />
+                            </TouchableOpacity>
+                        </Pressable>
+                    </View>
+
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Confirm password</Text>
+                        <Pressable
+                            style={[styles.passwordShell, focusedField === 'confirm' && styles.passwordShellFocused]}
+                            onPress={() => confirmPasswordInputRef.current?.focus()}
+                        >
+                            <TextInput
+                                ref={confirmPasswordInputRef}
+                                style={styles.passwordInput}
+                                placeholder="Re-enter your password"
+                                placeholderTextColor="rgba(71, 85, 105, 0.6)"
+                                secureTextEntry={!showConfirmPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                                onChangeText={(value) => {
+                                    confirmPasswordRef.current = value;
+                                    if (formError) setFormError('');
+                                }}
+                                onFocus={() => setFocusedField('confirm')}
+                                onBlur={() => setFocusedField('')}
+                                returnKeyType="done"
+                                onSubmitEditing={handleRegister}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeTap}
+                                onPress={() => setShowConfirmPassword((current) => !current)}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons
+                                    name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                                    size={18}
+                                    color="#64748b"
+                                />
+                            </TouchableOpacity>
+                        </Pressable>
+                    </View>
+
+                    {formError ? (
+                        <View style={styles.errorBox}>
+                            <Text style={styles.errorText}>{formError}</Text>
+                        </View>
+                    ) : null}
+
                     <TouchableOpacity
-                        style={styles.button}
+                        style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
                         onPress={handleRegister}
                         disabled={loading}
+                        activeOpacity={0.9}
                     >
                         {loading ? (
-                            <ActivityIndicator color="#FFF" />
+                            <ActivityIndicator color="#ffffff" />
                         ) : (
-                            <Text style={styles.buttonText}>Sign Up</Text>
+                            <Text style={styles.primaryButtonText}>Continue</Text>
                         )}
                     </TouchableOpacity>
+                </View>
 
-                    <View style={styles.footer}>
-                        <Text style={styles.footerText}>Already have an account? </Text>
-                        <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                            <Text style={styles.link}>Log In</Text>
-                        </TouchableOpacity>
-                    </View>
+                <View style={styles.footerRow}>
+                    <Text style={styles.footerText}>Already have an account?</Text>
+                    <TouchableOpacity style={styles.footerLinkTap} onPress={navigateToLogin} activeOpacity={0.8}>
+                        <Text style={styles.footerLink}>Sign in</Text>
+                    </TouchableOpacity>
                 </View>
             </ScrollView>
-        </SafeAreaView>
+        </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#f5f7fa',
     },
     scrollContent: {
-        padding: 24
+        flexGrow: 1,
+        paddingHorizontal: 24,
     },
-    backButton: {
-        marginBottom: 20
+    backBtn: {
+        minHeight: 44,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 28,
     },
-    header: {
-        marginBottom: 32
+    backBtnText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#334155',
+    },
+    headerBlock: {
+        marginBottom: 32,
+    },
+    brandMark: {
+        width: 28,
+        height: 28,
+        borderRadius: 9,
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
+        backgroundColor: '#edf3ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
     },
     title: {
-        fontSize: 32,
-        fontWeight: 'bold',
-        color: '#111827',
-        marginBottom: 8,
+        fontSize: 26,
+        fontWeight: '700',
+        color: '#0f172a',
+        letterSpacing: -0.2,
     },
     subtitle: {
-        fontSize: 16,
-        color: '#6B7280',
+        marginTop: 6,
+        color: '#64748b',
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: '500',
+        maxWidth: 320,
     },
-    tabContainer: {
-        flexDirection: 'row',
-        backgroundColor: '#F3F4F6',
-        borderRadius: 25,
-        padding: 4,
-        marginBottom: 24
+    speedHint: {
+        marginTop: 10,
+        alignSelf: 'flex-start',
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#d7e2fb',
+        backgroundColor: '#eef4ff',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
     },
-    tab: {
-        flex: 1,
-        paddingVertical: 12,
-        alignItems: 'center',
-        borderRadius: 20,
+    speedHintText: {
+        color: '#1e40af',
+        fontSize: 11,
+        fontWeight: '700',
     },
-    activeTab: {
-        backgroundColor: '#fff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    tabText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#6B7280'
-    },
-    activeTabText: {
-        color: '#111827'
-    },
-    form: {
+    formBlock: {
         gap: 16,
     },
-    label: {
+    fieldGroup: {
+        gap: 6,
+    },
+    fieldLabel: {
         fontSize: 14,
-        fontWeight: '600',
-        color: '#374151',
-        marginBottom: 8,
+        fontWeight: '500',
+        color: '#334155',
     },
-    input: {
+    textField: {
+        minHeight: 52,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#D1D5DB',
-        borderRadius: 12,
-        padding: 16,
-        fontSize: 16,
-        backgroundColor: '#F9FAFB',
+        borderColor: '#d1d9e4',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        fontSize: 15,
+        fontWeight: '400',
+        color: '#0f172a',
     },
-    phoneRow: {
+    textFieldFocused: {
+        borderColor: '#1d4ed8',
+        shadowColor: '#1d4ed8',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 1,
+    },
+    passwordShell: {
+        minHeight: 52,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#d1d9e4',
+        backgroundColor: '#ffffff',
         flexDirection: 'row',
-        gap: 12
-    },
-    countryCode: {
-        width: 80,
-        textAlign: 'center',
-        backgroundColor: '#E5E7EB'
-    },
-    phoneInput: {
-        flex: 1
-    },
-    button: {
-        backgroundColor: '#4F46E5',
-        padding: 16,
-        borderRadius: 12,
         alignItems: 'center',
-        marginTop: 16,
+        paddingLeft: 14,
+        paddingRight: 10,
     },
-    buttonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: 'bold',
+    passwordShellFocused: {
+        borderColor: '#1d4ed8',
+        shadowColor: '#1d4ed8',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 1,
     },
-    footer: {
-        flexDirection: 'row',
+    passwordInput: {
+        flex: 1,
+        fontSize: 15,
+        fontWeight: '400',
+        color: '#0f172a',
+        paddingVertical: 14,
+    },
+    eyeTap: {
+        minWidth: 32,
+        minHeight: 32,
+        alignItems: 'center',
         justifyContent: 'center',
-        marginTop: 24
+    },
+    errorBox: {
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e8c7cb',
+        backgroundColor: '#fcf3f4',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    errorText: {
+        color: '#8f4b53',
+        fontSize: 12,
+        fontWeight: '400',
+    },
+    primaryButton: {
+        minHeight: 52,
+        borderRadius: 14,
+        backgroundColor: '#1d4ed8',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    primaryButtonDisabled: {
+        opacity: 0.72,
+    },
+    primaryButtonText: {
+        color: '#ffffff',
+        fontSize: 15,
+        fontWeight: '600',
+    },
+    footerRow: {
+        marginTop: 32,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
     },
     footerText: {
-        color: '#6B7280'
+        fontSize: 14,
+        fontWeight: '400',
+        color: '#64748b',
     },
-    link: {
-        color: '#4F46E5',
-        fontWeight: 'bold'
+    footerLinkTap: {
+        minHeight: 44,
+        justifyContent: 'center',
     },
-    sourceChipsRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginTop: 4,
+    footerLink: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#1d4ed8',
     },
-    sourceChip: {
-        borderWidth: 1,
-        borderColor: '#D1D5DB',
-        borderRadius: 999,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        backgroundColor: '#F9FAFB',
-    },
-    sourceChipActive: {
-        borderColor: '#4F46E5',
-        backgroundColor: '#EEF2FF',
-    },
-    sourceChipText: {
-        color: '#4B5563',
-        fontSize: 12,
-        fontWeight: '600',
-    },
-    sourceChipTextActive: {
-        color: '#3730A3',
-    }
 });

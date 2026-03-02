@@ -51,6 +51,92 @@ const interviewProcessingJobSchema = mongoose.Schema(
             videoDuration: { type: Number, default: null },
             transcriptWordCount: { type: Number, default: null },
             confidenceScore: { type: Number, default: null },
+            profileQualityScore: { type: Number, default: null },
+            slotCompletenessRatio: { type: Number, default: null },
+            ambiguityRate: { type: Number, default: null },
+            communicationClarityScore: { type: Number, default: null },
+            confidenceLanguageScore: { type: Number, default: null },
+            salaryOutlierFlag: { type: Boolean, default: false },
+            salaryMedianForRoleCity: { type: Number, default: null },
+            salaryRealismRatio: { type: Number, default: null },
+            experienceSkillConsistencyFlag: { type: Boolean, default: false },
+            communicationMetricsAggregate: {
+                type: mongoose.Schema.Types.Mixed,
+                default: {},
+            },
+        },
+        slotState: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+        },
+        slotConfidence: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+        },
+        ambiguousFields: {
+            type: [String],
+            default: [],
+        },
+        missingSlot: {
+            type: String,
+            default: null,
+        },
+        interviewComplete: {
+            type: Boolean,
+            default: false,
+        },
+        interviewStep: {
+            type: Number,
+            default: 0,
+        },
+        maxSteps: {
+            type: Number,
+            default: 8,
+        },
+        adaptiveQuestion: {
+            type: String,
+            default: null,
+        },
+        clarificationHints: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+        },
+        latestTranscriptSnippet: {
+            type: String,
+            default: null,
+        },
+        lastTurnSignature: {
+            type: String,
+            default: null,
+        },
+        lastTurnAt: {
+            type: Date,
+            default: null,
+        },
+        lastStateSignature: {
+            type: String,
+            default: null,
+        },
+        stagnationCount: {
+            type: Number,
+            default: 0,
+        },
+        turnLockUntil: {
+            type: Date,
+            default: null,
+            index: true,
+        },
+        clarificationTriggeredCount: {
+            type: Number,
+            default: 0,
+        },
+        clarificationResolvedCount: {
+            type: Number,
+            default: 0,
+        },
+        clarificationSkippedCount: {
+            type: Number,
+            default: 0,
         },
         startedAt: {
             type: Date,
@@ -84,7 +170,7 @@ const interviewProcessingJobSchema = mongoose.Schema(
 );
 
 interviewProcessingJobSchema.index({ userId: 1, createdAt: -1 });
-interviewProcessingJobSchema.index({ status: 1 });
+interviewProcessingJobSchema.index({ userId: 1, status: 1, createdAt: -1 });
 interviewProcessingJobSchema.index({ createdAt: 1 });
 interviewProcessingJobSchema.index(
     { completedAt: 1 },

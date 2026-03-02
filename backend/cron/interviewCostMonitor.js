@@ -4,6 +4,7 @@ const connectDB = require('../config/db');
 const InterviewProcessingJob = require('../models/InterviewProcessingJob');
 const { setSystemFlag } = require('../services/systemFlagService');
 const { publishMetric } = require('../services/metricsService');
+const { startOfUtcDay } = require('../utils/timezone');
 
 const inputTokensPerInterview = Number.parseFloat(process.env.INTERVIEW_AVG_INPUT_TOKENS || '2200');
 const outputTokensPerInterview = Number.parseFloat(process.env.INTERVIEW_AVG_OUTPUT_TOKENS || '300');
@@ -21,8 +22,7 @@ const estimateCostUsd = (interviewCount) => {
 };
 
 const runCostMonitor = async () => {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = startOfUtcDay(new Date());
 
     const processedToday = await InterviewProcessingJob.countDocuments({
         createdAt: { $gte: startOfDay },
@@ -57,6 +57,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-    console.error('Interview cost monitor failed:', error.message);
+    console.warn('Interview cost monitor failed:', error.message);
     process.exit(1);
 });

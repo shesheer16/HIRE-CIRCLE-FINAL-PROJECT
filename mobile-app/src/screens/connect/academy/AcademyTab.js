@@ -2,13 +2,8 @@ import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { IconAward, IconBookOpen, IconSparkles } from '../../../components/Icons';
 import MentorCard from './MentorCard';
-import { theme, RADIUS } from '../../../theme/theme';
-
-const FALLBACK_COURSES = [
-    { id: 1, title: 'Safe Driving on Highways', instructor: 'Rajiv Menon', duration: '3h 20m', level: 'Beginner', enrolled: 1420, rating: 4.8, thumb: 'https://picsum.photos/id/1076/200/120' },
-    { id: 2, title: 'Electrical Safety at Work Sites', instructor: 'Kavya Srinivas', duration: '2h 05m', level: 'Intermediate', enrolled: 890, rating: 4.6, thumb: 'https://picsum.photos/id/160/200/120' },
-    { id: 3, title: 'Inventory Management Basics', instructor: 'Anand Rao', duration: '1h 45m', level: 'Beginner', enrolled: 2100, rating: 4.7, thumb: 'https://picsum.photos/id/180/200/120' },
-];
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 const getLevelStyle = (level) => {
     if (level === 'Beginner') {
@@ -39,6 +34,7 @@ function CourseCardComponent({ course, isEnrolled, onEnrollCourse }) {
     }, [isEnrolled, onEnrollCourse, course.id]);
 
     const levelStyle = useMemo(() => getLevelStyle(course.level), [course.level]);
+    const isTrending = Number(course.enrolled || 0) >= 500;
     const enrollButtonStyle = useMemo(() => [
         styles.actionButton,
         isEnrolled && styles.actionButtonDone,
@@ -51,17 +47,30 @@ function CourseCardComponent({ course, isEnrolled, onEnrollCourse }) {
 
     return (
         <View style={styles.courseCard}>
-            <Image source={{ uri: course.thumb }} style={styles.courseThumb} />
+            {course.thumb ? (
+                <Image source={{ uri: course.thumb }} style={styles.courseThumb} />
+            ) : (
+                <View style={styles.courseThumbPlaceholder}>
+                    <IconBookOpen size={20} color={connectPalette.accentDark} />
+                </View>
+            )}
             <View style={styles.courseContent}>
                 <View style={styles.courseHeaderRow}>
                     <Text style={styles.courseTitle}>{course.title}</Text>
-                    <View style={[styles.levelBadge, levelStyle.badge]}>
-                        <Text style={[styles.levelBadgeText, levelStyle.text]}>{course.level.toUpperCase()}</Text>
+                    <View style={styles.courseHeaderBadges}>
+                        {isTrending ? (
+                            <View style={styles.trendingBadge}>
+                                <Text style={styles.trendingBadgeText}>TRENDING</Text>
+                            </View>
+                        ) : null}
+                        <View style={[styles.levelBadge, levelStyle.badge]}>
+                            <Text style={[styles.levelBadgeText, levelStyle.text]}>{course.level.toUpperCase()}</Text>
+                        </View>
                     </View>
                 </View>
                 <Text style={styles.courseInstructor}>{course.instructor} · {course.duration}</Text>
                 <View style={styles.courseFooterRow}>
-                    <Text style={styles.courseMeta}>⭐ {course.rating} · {course.enrolled.toLocaleString()} enrolled</Text>
+                    <Text style={styles.courseMeta}>{course.lessonCount} lessons · {course.enrolled.toLocaleString()} enrolled</Text>
                     <TouchableOpacity
                         style={enrollButtonStyle}
                         onPress={handleEnroll}
@@ -87,27 +96,25 @@ function AcademyTabComponent({
     onConnectMentor,
     contentContainerStyle,
 }) {
-    const courses = useMemo(() => {
-        if (academyCourses.length === 0) {
-            return FALLBACK_COURSES;
-        }
-
-        return academyCourses.map((course, index) => ({
+    const courses = useMemo(() => (
+        academyCourses.map((course) => ({
             id: course.id,
             title: course.title,
-            instructor: 'HireCircle Academy',
-            duration: course.duration || '2h',
+            instructor: course.instructor || 'HireCircle Academy',
+            duration: course.duration || `${Math.max(0, Number(course.lessonCount || 0))} lessons`,
             level: course.level ? `${course.level.charAt(0).toUpperCase()}${course.level.slice(1)}` : 'Beginner',
-            enrolled: enrolledCourses.filter((item) => item.courseId === course.id).length || 0,
-            rating: 4.7,
-            thumb: `https://picsum.photos/id/${160 + index}/200/120`,
-        }));
-    }, [academyCourses, enrolledCourses]);
+            enrolled: Number(course.enrolledCount || enrolledCourses.filter((item) => item.courseId === course.id).length || 0),
+            lessonCount: Math.max(0, Number(course.lessonCount || 0)),
+            thumb: course.thumb || course.thumbnailUrl || course.coverImageUrl || '',
+        }))
+    ), [academyCourses, enrolledCourses]);
 
-    const totalCourses = courses.length + 5;
-    const doneCourses = enrolledCourseIds.size + 2;
-    const progressPct = useMemo(() => Math.round((doneCourses / totalCourses) * 100), [doneCourses, totalCourses]);
-    const karmaEarned = useMemo(() => (enrolledCourseIds.size * 120) + 240, [enrolledCourseIds]);
+    const totalCourses = courses.length;
+    const doneCourses = Math.min(enrolledCourseIds.size, totalCourses);
+    const progressPct = useMemo(() => (
+        totalCourses > 0 ? Math.round((doneCourses / totalCourses) * 100) : 0
+    ), [doneCourses, totalCourses]);
+    const karmaEarned = useMemo(() => (enrolledCourseIds.size * 120), [enrolledCourseIds]);
     const progressFillStyle = useMemo(() => [styles.progressFill, { width: `${progressPct}%` }], [progressPct]);
 
     const isCourseEnrolled = useCallback((courseId) => (
@@ -144,7 +151,7 @@ function AcademyTabComponent({
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={contentContainerStyle}>
             <View style={styles.academyCard}>
                 <View style={styles.headerRow}>
-                    <IconBookOpen size={16} color={theme.primary} />
+                    <IconBookOpen size={16} color={connectPalette.accent} />
                     <Text style={styles.headerTitle}>MY LEARNING</Text>
                     <View style={styles.karmaBadge}>
                         <Text style={styles.karmaText}>+{karmaEarned} KARMA</Text>
@@ -157,22 +164,31 @@ function AcademyTabComponent({
                 <View style={styles.progressTrack}>
                     <View style={progressFillStyle} />
                 </View>
-                <Text style={styles.progressSubcopy}>2 courses in progress · Next: Forklift Certification</Text>
+                <Text style={styles.progressSubcopy}>
+                    {totalCourses > 0 ? 'Track your course completion here.' : 'No courses published yet.'}
+                </Text>
             </View>
 
             <View style={styles.sectionHeaderRow}>
-                <IconAward size={16} color={theme.primary} />
+                <IconAward size={16} color={connectPalette.accent} />
                 <Text style={styles.sectionTitle}>TOP COURSES FOR YOU</Text>
             </View>
 
-            {courseCards}
+            {courseCards.length > 0 ? courseCards : (
+                <View style={styles.emptyCard}>
+                    <Text style={styles.emptyTitle}>No posts yet.</Text>
+                    <Text style={styles.emptySubtitle}>Academy courses will appear here once published.</Text>
+                </View>
+            )}
 
             <View style={styles.academyCard}>
                 <View style={styles.headerRow}>
-                    <IconSparkles size={16} color={theme.primary} />
+                    <IconSparkles size={16} color={connectPalette.accent} />
                     <Text style={styles.headerTitle}>AI MENTOR MATCH</Text>
                 </View>
-                {mentorCards}
+                {mentorCards.length > 0 ? mentorCards : (
+                    <Text style={styles.emptySubtitle}>No mentors available right now.</Text>
+                )}
             </View>
 
             <View style={styles.bottomSpace} />
@@ -184,17 +200,13 @@ export default memo(AcademyTabComponent);
 
 const styles = StyleSheet.create({
     academyCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 16,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        borderColor: connectPalette.line,
+        ...connectShadow,
     },
     headerRow: {
         flexDirection: 'row',
@@ -204,20 +216,20 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
     },
     karmaBadge: {
         marginLeft: 'auto',
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: RADIUS.md,
     },
     karmaText: {
         fontSize: 10,
-        fontWeight: '900',
-        color: theme.primary,
+        fontWeight: '800',
+        color: connectPalette.accentDark,
     },
     progressHeaderRow: {
         flexDirection: 'row',
@@ -227,27 +239,27 @@ const styles = StyleSheet.create({
     progressCaption: {
         fontSize: 11,
         fontWeight: '700',
-        color: theme.textSecondary,
+        color: connectPalette.muted,
     },
     progressPercent: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
     },
     progressTrack: {
         height: 6,
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
         borderRadius: RADIUS.sm,
         overflow: 'hidden',
     },
     progressFill: {
         height: '100%',
-        backgroundColor: theme.primary,
+        backgroundColor: connectPalette.accent,
         borderRadius: RADIUS.sm,
     },
     progressSubcopy: {
         fontSize: 10,
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         marginTop: 6,
     },
     sectionHeaderRow: {
@@ -258,31 +270,35 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
         letterSpacing: 1,
     },
     courseCard: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderRadius: RADIUS.xl,
         padding: 14,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
         flexDirection: 'row',
         gap: 12,
         alignItems: 'flex-start',
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        ...connectShadow,
     },
     courseThumb: {
         width: 90,
         height: 64,
         borderRadius: RADIUS.md,
-        backgroundColor: theme.borderMedium,
+        backgroundColor: connectPalette.lineStrong,
+    },
+    courseThumbPlaceholder: {
+        width: 90,
+        height: 64,
+        borderRadius: RADIUS.md,
+        backgroundColor: connectPalette.accentSoft,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     courseContent: {
         flex: 1,
@@ -295,11 +311,30 @@ const styles = StyleSheet.create({
         marginBottom: 2,
         gap: 4,
     },
+    courseHeaderBadges: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    trendingBadge: {
+        borderRadius: RADIUS.sm,
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        backgroundColor: '#fee2e2',
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+    },
+    trendingBadgeText: {
+        color: '#b91c1c',
+        fontSize: 9,
+        fontWeight: '900',
+        letterSpacing: 0.35,
+    },
     courseTitle: {
         flex: 1,
         fontSize: 13,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontWeight: '800',
+        color: connectPalette.text,
     },
     levelBadge: {
         paddingHorizontal: 8,
@@ -311,27 +346,27 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     levelBeginnerBg: {
-        backgroundColor: theme.border,
+        backgroundColor: '#f2f4f8',
     },
     levelBeginnerText: {
-        color: theme.success,
+        color: connectPalette.success,
     },
     levelIntermediateBg: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     levelIntermediateText: {
-        color: theme.warning,
+        color: connectPalette.warning,
     },
     levelAdvancedBg: {
-        backgroundColor: theme.chatBackground,
+        backgroundColor: '#ece8ff',
     },
     levelAdvancedText: {
-        color: theme.primaryDark,
+        color: connectPalette.accentDark,
     },
     courseInstructor: {
         fontSize: 10,
         fontWeight: '700',
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         marginTop: 2,
     },
     courseFooterRow: {
@@ -342,29 +377,49 @@ const styles = StyleSheet.create({
     },
     courseMeta: {
         fontSize: 10,
-        color: theme.textMuted,
+        color: connectPalette.subtle,
         fontWeight: '600',
         flex: 1,
         marginRight: 12,
     },
     actionButton: {
-        backgroundColor: theme.darkCard,
+        backgroundColor: connectPalette.dark,
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: RADIUS.md,
     },
     actionButtonDone: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: connectPalette.accentSoft,
     },
     actionButtonText: {
         fontSize: 10,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     actionButtonTextDone: {
-        color: theme.primary,
+        color: connectPalette.accentDark,
     },
     bottomSpace: {
         height: 32,
+    },
+    emptyCard: {
+        borderRadius: RADIUS.xl,
+        borderWidth: 1,
+        borderColor: connectPalette.line,
+        backgroundColor: connectPalette.surface,
+        paddingHorizontal: 16,
+        paddingVertical: 18,
+        marginBottom: 12,
+    },
+    emptyTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: connectPalette.text,
+        marginBottom: 6,
+    },
+    emptySubtitle: {
+        fontSize: 12,
+        color: connectPalette.muted,
+        lineHeight: 18,
     },
 });

@@ -1,6 +1,5 @@
 const fs = require('fs/promises');
 const path = require('path');
-const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
 const User = require('../models/userModel');
@@ -10,6 +9,30 @@ const Job = require('../models/Job');
 const Application = require('../models/Application');
 const RevenueEvent = require('../models/RevenueEvent');
 const Notification = require('../models/Notification');
+const { EMPLOYER_PRIMARY_ROLE, hasEmployerPrimaryRole } = require('../utils/roleGuards');
+const {
+    applyRoleContractToUser,
+    resolveUserRoleContract,
+    normalizeActiveRole,
+    defaultCapabilitiesForRole,
+} = require('../utils/userRoleContract');
+const { normalizeCountryCode, resolveLocaleBundle } = require('../services/geoExpansionService');
+const { normalizeTimeZone, formatInTimeZone } = require('../utils/timezone');
+const { getLegalConfigForCountry } = require('../services/legalConfigService');
+const { delByPattern } = require('../services/cacheService');
+const {
+    DEFAULT_BASE_CURRENCY,
+    buildMoneyView,
+    resolveDisplayCurrency,
+} = require('../services/currencyConversionService');
+const { isRegionFeatureEnabled } = require('../services/regionFeatureFlagService');
+const { deleteUserDataCascade } = require('../services/privacyService');
+const { resolveExportRequestType, buildExportPayload } = require('../services/dataProtectionService');
+const {
+    evaluateProfileCompletion,
+    syncUserProfileCompletionFlag,
+} = require('../services/profileCompletionService');
+const logger = require('../utils/logger');
 
 const EXPORT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const EXPORT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -28,6 +51,26 @@ const toNumberOrNull = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
 };
+const hasValidAvatarSignature = async ({ filePath, mimeType }) => {
+    const buffer = await fs.readFile(filePath);
+    if (!buffer || buffer.length < 12) return false;
+
+    const normalizedMimeType = String(mimeType || '').toLowerCase();
+    if (normalizedMimeType === 'image/jpeg') {
+        return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    }
+    if (normalizedMimeType === 'image/png') {
+        return buffer[0] === 0x89
+            && buffer[1] === 0x50
+            && buffer[2] === 0x4e
+            && buffer[3] === 0x47;
+    }
+    if (normalizedMimeType === 'image/webp') {
+        return buffer.toString('ascii', 0, 4) === 'RIFF'
+            && buffer.toString('ascii', 8, 12) === 'WEBP';
+    }
+    return false;
+};
 const uniqueStrings = (items = []) => Array.from(new Set(
     (Array.isArray(items) ? items : [])
         .map((item) => normalizeString(item))
@@ -41,13 +84,12 @@ const buildPlanLimits = (plan = 'free') => {
 };
 
 const getRoleLabel = (user) => {
-    const primaryRole = String(user?.primaryRole || '').toLowerCase();
-    if (primaryRole === 'employer') return 'employer';
-    return 'worker';
+    const roleContract = resolveUserRoleContract(user || {});
+    return roleContract.activeRole === EMPLOYER_PRIMARY_ROLE ? EMPLOYER_PRIMARY_ROLE : 'worker';
 };
 
 const getProfileForUser = async (user) => {
-    const isEmployer = getRoleLabel(user) === 'employer';
+    const isEmployer = getRoleLabel(user) === EMPLOYER_PRIMARY_ROLE;
     if (isEmployer) {
         const profile = await EmployerProfile.findOne({ user: user._id }).lean();
         return { profile, isEmployer };
@@ -74,6 +116,7 @@ const buildBillingOverview = async (user) => {
             {
                 $group: {
                     _id: null,
+                    totalBase: { $sum: { $ifNull: ['$amountBase', '$amountInr'] } },
                     totalInr: { $sum: '$amountInr' },
                     invoicesCount: { $sum: 1 },
                 },
@@ -81,11 +124,27 @@ const buildBillingOverview = async (user) => {
         ]),
     ]);
 
+    const spendBase = Number(settledRevenue?.[0]?.totalBase || settledRevenue?.[0]?.totalInr || 0);
+    const displayCurrency = resolveDisplayCurrency({
+        user,
+        fallback: String(user?.currencyCode || DEFAULT_BASE_CURRENCY).toUpperCase(),
+    });
+    const money = await buildMoneyView({
+        baseAmount: spendBase,
+        baseCurrency: DEFAULT_BASE_CURRENCY,
+        displayCurrency,
+    });
+
     const usage = {
         activeJobs,
         availableCredits: Number(user?.subscription?.credits || 0),
         invoicesLast30d: Number(settledRevenue?.[0]?.invoicesCount || 0),
         spendLast30dInr: Number(settledRevenue?.[0]?.totalInr || 0),
+        spendLast30dBase: money.baseAmount,
+        spendLast30dDisplay: money.displayAmount,
+        baseCurrency: money.baseCurrency,
+        displayCurrency: money.displayCurrency,
+        exchangeRateUsed: money.exchangeRateUsed,
     };
 
     return {
@@ -104,26 +163,59 @@ const buildInvoices = async (user) => {
         .limit(50)
         .lean();
 
-    return rows.map((row) => ({
-        invoiceId: row._id,
-        eventType: row.eventType,
-        amountInr: row.amountInr,
-        currency: row.currency,
-        status: row.status,
-        issuedAt: row.settledAt || row.createdAt,
-        stripeSessionId: row.stripeSessionId || null,
-        stripeSubscriptionId: row.stripeSubscriptionId || null,
+    const fallbackDisplayCurrency = resolveDisplayCurrency({
+        user,
+        fallback: String(user?.currencyCode || DEFAULT_BASE_CURRENCY).toUpperCase(),
+    });
+
+    return Promise.all(rows.map(async (row) => {
+        const issuedAt = row.settledAt || row.createdAt;
+        const money = await buildMoneyView({
+            baseAmount: Number(row.amountBase || row.amountInr || 0),
+            baseCurrency: String(row.baseCurrency || DEFAULT_BASE_CURRENCY).toUpperCase(),
+            displayCurrency: String(row.displayCurrency || fallbackDisplayCurrency).toUpperCase(),
+        });
+
+        return ({
+            invoiceId: row._id,
+            eventType: row.eventType,
+            amountInr: row.amountInr,
+            amountBase: money.baseAmount,
+            baseCurrency: money.baseCurrency,
+            amountDisplay: money.displayAmount,
+            displayCurrency: money.displayCurrency,
+            exchangeRateUsed: Number(row.exchangeRateUsed || money.exchangeRateUsed || 1),
+            currency: row.currency || String(money.displayCurrency || '').toLowerCase(),
+            status: row.status,
+            issuedAt,
+            issuedAtLocal: formatInTimeZone(issuedAt, normalizeTimeZone(user?.timezone || 'UTC')),
+            stripeSessionId: row.stripeSessionId || null,
+            stripeSubscriptionId: row.stripeSubscriptionId || null,
+        });
     }));
 };
 
 const buildSettingsResponse = async (userDoc, profileDoc = null) => {
     const user = userDoc?.toObject ? userDoc.toObject() : userDoc;
+    const roleContract = resolveUserRoleContract(user);
     const profile = profileDoc || (await getProfileForUser(user)).profile;
-    const isEmployer = getRoleLabel(user) === 'employer';
+    const isEmployer = roleContract.activeRole === EMPLOYER_PRIMARY_ROLE;
 
     const roleProfiles = Array.isArray(profile?.roleProfiles) ? profile.roleProfiles : [];
     const primaryRoleProfile = roleProfiles[0] || {};
     const accountCity = normalizeString(user?.city || profile?.city || profile?.location || '');
+    const accountCountry = normalizeCountryCode(user?.country || profile?.country || 'IN');
+    const accountTimezone = normalizeTimeZone(user?.timezone || 'UTC');
+    const legalConfig = await getLegalConfigForCountry(accountCountry);
+    const [
+        videoCallEnabled,
+        escrowEnabled,
+        bountiesEnabled,
+    ] = await Promise.all([
+        isRegionFeatureEnabled({ key: 'FEATURE_VIDEO_CALL', user, country: accountCountry, fallback: true }),
+        isRegionFeatureEnabled({ key: 'FEATURE_ESCROW', user, country: accountCountry, fallback: true }),
+        isRegionFeatureEnabled({ key: 'FEATURE_BOUNTIES', user, country: accountCountry, fallback: true }),
+    ]);
 
     const allSkillTags = uniqueStrings(
         roleProfiles.flatMap((roleProfile) => Array.isArray(roleProfile?.skills) ? roleProfile.skills : [])
@@ -132,13 +224,20 @@ const buildSettingsResponse = async (userDoc, profileDoc = null) => {
     const canViewAdvanced = Boolean(user?.isAdmin || user?.isExperimentUser || user?.featureToggles?.FEATURE_SETTINGS_ADVANCED);
 
     return {
+        roleContract,
         accountInfo: {
             name: user?.name || '',
             email: user?.email || '',
             emailReadOnly: !Boolean(user?.linkedAccounts?.emailPassword),
             phoneNumber: user?.phoneNumber || '',
             city: accountCity,
-            role: isEmployer ? 'employer' : 'worker',
+            state: normalizeString(user?.state || ''),
+            country: accountCountry,
+            timezone: accountTimezone,
+            languagePreference: String(user?.languagePreference || user?.languageCode || 'en'),
+            currencyCode: String(user?.currencyCode || resolveLocaleBundle(accountCountry).currencyCode || 'INR'),
+            languageCode: String(user?.languageCode || resolveLocaleBundle(accountCountry).languageCode || 'en-IN'),
+            role: roleContract.activeRole,
             experienceLevel: Number(profile?.totalExperience || 0),
             skillTags: allSkillTags,
             profilePhoto: profile?.avatar || profile?.logoUrl || null,
@@ -158,6 +257,14 @@ const buildSettingsResponse = async (userDoc, profileDoc = null) => {
             twoFactorEnabled: Boolean(user?.securitySettings?.twoFactorEnabled),
             twoFactorMethod: user?.securitySettings?.twoFactorMethod || 'email',
             linkedAccounts: user?.linkedAccounts || {},
+        },
+        globalPreferences: user?.globalPreferences || {},
+        taxProfile: user?.taxProfile || {},
+        legalConfig,
+        regionalFeatureFlags: {
+            FEATURE_VIDEO_CALL: videoCallEnabled,
+            FEATURE_ESCROW: escrowEnabled,
+            FEATURE_BOUNTIES: bountiesEnabled,
         },
         dataManagement: {
             latestExportRequest: Array.isArray(user?.exportRequests) && user.exportRequests.length > 0
@@ -223,6 +330,17 @@ const sanitizeFeatureToggles = (payload = {}) => ({
     FEATURE_SMART_PUSH_TIMING: toSafeBool(payload.FEATURE_SMART_PUSH_TIMING, false),
 });
 
+const sanitizeGlobalPreferences = (payload = {}) => ({
+    crossBorderMatchEnabled: toSafeBool(payload.crossBorderMatchEnabled, false),
+    displayCurrency: normalizeString(payload.displayCurrency || '').toUpperCase() || null,
+});
+
+const sanitizeTaxProfile = (payload = {}) => ({
+    taxId: normalizeString(payload.taxId || '') || null,
+    businessType: normalizeString(payload.businessType || '') || null,
+    invoicePreference: normalizeString(payload.invoicePreference || '') || null,
+});
+
 const sanitizeMatchPreferences = (payload = {}) => {
     const maxCommuteDistanceKm = toNumberOrNull(payload.maxCommuteDistanceKm);
     const salaryExpectationMin = toNumberOrNull(payload.salaryExpectationMin);
@@ -256,6 +374,20 @@ const getSettings = async (req, res) => {
     }
 };
 
+const getLegalConfig = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select('country');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const legalConfig = await getLegalConfigForCountry(user.country || 'IN');
+        return res.json({ legalConfig });
+    } catch (_error) {
+        return res.status(500).json({ message: 'Failed to load legal configuration' });
+    }
+};
+
 const updateSettings = async (req, res) => {
     try {
         const payload = req.body || {};
@@ -267,6 +399,7 @@ const updateSettings = async (req, res) => {
         const { profile, isEmployer } = await getProfileForUser(userWithPassword);
         const accountInfo = payload.accountInfo || {};
         const changedFields = [];
+        let activeRoleChanged = false;
 
         await assertSensitiveUpdateAllowed({
             userWithPassword,
@@ -321,15 +454,72 @@ const updateSettings = async (req, res) => {
             }
         }
 
-        if (accountInfo.role !== undefined) {
-            const normalizedRole = normalizeString(accountInfo.role).toLowerCase();
-            if (normalizedRole === 'employer') {
-                userWithPassword.role = 'recruiter';
-                userWithPassword.primaryRole = 'employer';
-            } else if (normalizedRole === 'worker') {
-                userWithPassword.role = 'candidate';
-                userWithPassword.primaryRole = 'worker';
+        if (accountInfo.state !== undefined) {
+            const state = normalizeString(accountInfo.state);
+            userWithPassword.state = state || null;
+            changedFields.push('accountInfo.state');
+        }
+
+        if (accountInfo.timezone !== undefined) {
+            userWithPassword.timezone = normalizeTimeZone(accountInfo.timezone || 'UTC');
+            changedFields.push('accountInfo.timezone');
+        }
+
+        if (accountInfo.country !== undefined) {
+            const countryCode = normalizeCountryCode(accountInfo.country);
+            const localeBundle = resolveLocaleBundle(countryCode);
+            userWithPassword.country = countryCode;
+            userWithPassword.currencyCode = localeBundle.currencyCode;
+            userWithPassword.languageCode = localeBundle.languageCode;
+            userWithPassword.globalPreferences = {
+                ...userWithPassword.globalPreferences,
+                displayCurrency: localeBundle.currencyCode,
+            };
+            changedFields.push('accountInfo.country');
+            changedFields.push('accountInfo.currencyCode');
+            changedFields.push('accountInfo.languageCode');
+
+            if (isEmployer) {
+                await EmployerProfile.findOneAndUpdate(
+                    { user: userWithPassword._id },
+                    { $set: { country: countryCode } },
+                    { upsert: true }
+                );
+            } else {
+                await WorkerProfile.findOneAndUpdate(
+                    { user: userWithPassword._id },
+                    { $set: { country: countryCode } },
+                    { upsert: true }
+                );
             }
+        }
+
+        if (accountInfo.languagePreference !== undefined) {
+            userWithPassword.languagePreference = normalizeString(accountInfo.languagePreference) || 'en';
+            changedFields.push('accountInfo.languagePreference');
+        }
+
+        if (accountInfo.languageCode !== undefined) {
+            userWithPassword.languageCode = normalizeString(accountInfo.languageCode) || userWithPassword.languageCode;
+            changedFields.push('accountInfo.languageCode');
+        }
+
+        if (accountInfo.currencyCode !== undefined) {
+            userWithPassword.currencyCode = normalizeString(accountInfo.currencyCode).toUpperCase() || userWithPassword.currencyCode;
+            userWithPassword.globalPreferences = {
+                ...userWithPassword.globalPreferences,
+                displayCurrency: userWithPassword.currencyCode,
+            };
+            changedFields.push('accountInfo.currencyCode');
+        }
+
+        if (accountInfo.role !== undefined) {
+            const normalizedRole = normalizeActiveRole(normalizeString(accountInfo.role), 'worker');
+            activeRoleChanged = normalizedRole !== String(userWithPassword.activeRole || '');
+            applyRoleContractToUser(userWithPassword, {
+                activeRole: normalizedRole,
+                capabilities: defaultCapabilitiesForRole(normalizedRole),
+            });
             changedFields.push('accountInfo.role');
         }
 
@@ -396,6 +586,22 @@ const updateSettings = async (req, res) => {
             changedFields.push('featureToggles');
         }
 
+        if (payload.globalPreferences) {
+            userWithPassword.globalPreferences = {
+                ...userWithPassword.globalPreferences,
+                ...sanitizeGlobalPreferences(payload.globalPreferences),
+            };
+            changedFields.push('globalPreferences');
+        }
+
+        if (payload.taxProfile) {
+            userWithPassword.taxProfile = {
+                ...userWithPassword.taxProfile,
+                ...sanitizeTaxProfile(payload.taxProfile),
+            };
+            changedFields.push('taxProfile');
+        }
+
         if (payload.matchPreferences && !isEmployer) {
             const matchPreferences = sanitizeMatchPreferences(payload.matchPreferences);
             await WorkerProfile.findOneAndUpdate(
@@ -408,14 +614,43 @@ const updateSettings = async (req, res) => {
 
         await userWithPassword.save();
 
+        if (activeRoleChanged) {
+            const io = req.app?.get?.('io');
+            if (io) {
+                io.to(`user_${String(userWithPassword._id)}`).emit('session_role_updated', {
+                    userId: String(userWithPassword._id),
+                    activeRole: String(userWithPassword.activeRole || 'worker'),
+                    roles: Array.isArray(userWithPassword.roles) ? userWithPassword.roles : ['worker'],
+                    at: new Date().toISOString(),
+                });
+            }
+        }
+
+        await Promise.all([
+            delByPattern('cache:public_profile:*'),
+            delByPattern('cache:profile:public:*'),
+            hasEmployerPrimaryRole(userWithPassword) ? delByPattern('cache:analytics:employer-summary:*') : Promise.resolve(0),
+        ]).catch(() => { });
+
         const latestUser = await User.findById(userWithPassword._id).select('-password');
         const { profile: latestProfile } = await getProfileForUser(latestUser);
+        const completion = evaluateProfileCompletion({
+            user: latestUser || {},
+            workerProfile: isEmployer ? null : latestProfile,
+            employerProfile: isEmployer ? latestProfile : null,
+            roleOverride: isEmployer ? 'employer' : 'worker',
+        });
+        await syncUserProfileCompletionFlag({
+            userDoc: latestUser,
+            completion,
+        });
         const settings = await buildSettingsResponse(latestUser, latestProfile);
 
         return res.json({
             success: true,
             changedFields,
             settings,
+            profileCompletion: completion,
         });
     } catch (error) {
         const statusCode = Number(error?.statusCode || 500);
@@ -534,6 +769,14 @@ const requestDataDownload = async (req, res) => {
     try {
         const user = await User.findById(req.user._id);
         if (!user || user.isDeleted) return res.status(404).json({ message: 'User not found' });
+        const requestType = resolveExportRequestType(req.body?.requestType);
+
+        if (process.env.NODE_ENV !== 'production') {
+            const sample = await Application.findOne().lean();
+            if (sample && !Object.prototype.hasOwnProperty.call(sample, 'worker')) {
+                throw new Error('[EXPORT CONTRACT BROKEN] Application.worker field missing');
+            }
+        }
 
         const now = Date.now();
         const latestExport = Array.isArray(user.exportRequests) && user.exportRequests.length
@@ -549,34 +792,36 @@ const requestDataDownload = async (req, res) => {
         }
 
         user.exportRequests.push({
-            requestType: 'settings_data_export',
+            requestType,
             status: 'pending',
             requestedAt: new Date(),
         });
         const exportRequest = user.exportRequests[user.exportRequests.length - 1];
         await user.save();
 
+        const workerProfile = await WorkerProfile.findOne({ user: user._id }).lean();
+        if (!workerProfile) {
+            console.warn(`[EXPORT] WorkerProfile missing for user ${user._id}`);
+        }
+
         const [profileInfo, jobs, applications] = await Promise.all([
             getProfileForUser(user),
             Job.find({ employerId: user._id }).lean(),
-            Application.find({ $or: [{ employer: user._id }, { worker: user._id }] }).lean(),
+            workerProfile
+                ? Application.find({ worker: workerProfile._id })
+                    .populate('job')
+                    .lean()
+                : Promise.resolve([]),
         ]);
 
-        const exportPayload = {
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                primaryRole: user.primaryRole,
-                city: user.city,
-                createdAt: user.createdAt,
-            },
-            settings: await buildSettingsResponse(user, profileInfo.profile),
+        const settings = await buildSettingsResponse(user, profileInfo.profile);
+        const exportPayload = buildExportPayload({
+            user,
+            settings,
             jobs,
             applications,
-            generatedAt: new Date().toISOString(),
-        };
+            requestType,
+        });
 
         const exportsDir = path.join(__dirname, '..', 'exports');
         await fs.mkdir(exportsDir, { recursive: true });
@@ -635,71 +880,133 @@ const deleteAccount = async (req, res) => {
             return res.status(401).json({ message: 'Password confirmation failed' });
         }
 
-        const anonymizedTag = crypto.randomBytes(6).toString('hex');
-        user.name = `Deleted User ${anonymizedTag.slice(0, 6)}`;
-        user.email = `deleted_${anonymizedTag}@deleted.local`;
-        user.phoneNumber = null;
-        user.city = null;
-        user.pushTokens = [];
-        user.isDeleted = true;
-        user.deletedAt = new Date();
-        user.notificationPreferences = sanitizeNotificationPreferences({ pushEnabled: false, smsEnabled: false, emailEnabled: false });
-        user.privacyPreferences = sanitizePrivacyPreferences({
-            profileVisibleToEmployers: false,
-            showSalaryExpectation: false,
-            showInterviewBadge: false,
-            showLastActive: false,
-            allowLocationSharing: false,
-            locationVisibilityRadiusKm: 1,
-        });
-        user.subscription = {
-            ...user.subscription,
-            plan: 'free',
-            stripeCustomerId: null,
-            stripeSubscriptionId: null,
-            credits: 0,
-            billingPeriod: 'none',
-            nextBillingDate: null,
-        };
-        user.password = crypto.randomBytes(16).toString('hex');
-        await user.save();
-
-        await Promise.all([
-            WorkerProfile.updateMany(
-                { user: user._id },
-                {
-                    $set: {
-                        firstName: 'Deleted',
-                        lastName: 'User',
-                        city: 'Hidden',
-                        totalExperience: 0,
-                        isAvailable: false,
-                        roleProfiles: [],
-                        interviewVerified: false,
-                        lastActiveAt: null,
-                    },
-                }
-            ),
-            EmployerProfile.updateMany(
-                { user: user._id },
-                {
-                    $set: {
-                        companyName: 'Deleted Account',
-                        industry: 'Hidden',
-                        location: 'Hidden',
-                        website: null,
-                        logoUrl: null,
-                    },
-                }
-            ),
-        ]);
+        const deletion = await deleteUserDataCascade({ userId: user._id });
+        if (!deletion?.deleted) {
+            return res.status(500).json({ message: 'Failed to delete account records' });
+        }
 
         return res.json({
             success: true,
-            message: 'Account deletion completed. Data anonymized.',
+            message: 'Account and associated data deleted permanently.',
+            deletion,
         });
     } catch (error) {
-        return res.status(500).json({ message: 'Failed to delete account' });
+        logger.warn({
+            event: 'delete_account_failed',
+            message: error?.message || 'unknown error',
+            userId: String(req.user?._id || ''),
+        });
+        const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+        return res.status(500).json({
+            message: 'Failed to delete account',
+            reason: isProduction ? undefined : (error?.message || 'unknown error'),
+        });
+    }
+};
+
+const updateAvatar = async (req, res) => {
+    const localFilePath = req.file?.path;
+    try {
+        if (!req.file || !localFilePath) {
+            return res.status(400).json({ message: 'avatar file is required' });
+        }
+
+        const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+        if (!allowedMimeTypes.has(String(req.file.mimetype || '').toLowerCase())) {
+            return res.status(400).json({ message: 'Unsupported avatar format' });
+        }
+        const signatureValid = await hasValidAvatarSignature({
+            filePath: localFilePath,
+            mimeType: req.file.mimetype,
+        });
+        if (!signatureValid) {
+            return res.status(400).json({ message: 'Avatar content does not match supported image types' });
+        }
+
+        const { uploadToS3, deleteObjectByUrl } = require('../services/s3Service');
+        const isEmployer = hasEmployerPrimaryRole(req.user);
+        const objectPrefix = isEmployer ? 'avatars/employers' : 'avatars/workers';
+        const resolveProfileDoc = async (Model, projection = '') => {
+            if (!Model || typeof Model.findOne !== 'function') return null;
+            const baseQuery = Model.findOne({ user: req.user._id });
+            if (!baseQuery) return null;
+
+            const projected = projection && typeof baseQuery.select === 'function'
+                ? baseQuery.select(projection)
+                : baseQuery;
+
+            if (projected && typeof projected.lean === 'function') {
+                return projected.lean();
+            }
+            if (projected && typeof projected.then === 'function') {
+                return projected;
+            }
+            return projected || null;
+        };
+
+        const existingProfile = isEmployer
+            ? await resolveProfileDoc(EmployerProfile, 'logoUrl')
+            : await resolveProfileDoc(WorkerProfile, 'avatar');
+        const previousAvatarUrl = isEmployer
+            ? String(existingProfile?.logoUrl || '').trim()
+            : String(existingProfile?.avatar || '').trim();
+        const avatarUrl = await uploadToS3(localFilePath, req.file.mimetype, { prefix: objectPrefix });
+
+        if (isEmployer) {
+            await EmployerProfile.findOneAndUpdate(
+                { user: req.user._id },
+                { $set: { logoUrl: avatarUrl } },
+                { upsert: true }
+            );
+        } else {
+            await WorkerProfile.findOneAndUpdate(
+                { user: req.user._id },
+                { $set: { avatar: avatarUrl } },
+                { upsert: true }
+            );
+        }
+
+        if (previousAvatarUrl && previousAvatarUrl !== avatarUrl) {
+            await deleteObjectByUrl(previousAvatarUrl).catch(() => false);
+        }
+
+        let latestUser = req.user || null;
+        if (req.user?._id && typeof User.findById === 'function') {
+            const query = User.findById(req.user._id);
+            if (query && typeof query.select === 'function') {
+                latestUser = await query.select('-password');
+            } else if (query && typeof query.then === 'function') {
+                latestUser = await query;
+            }
+        }
+        const latestProfile = isEmployer
+            ? await resolveProfileDoc(EmployerProfile)
+            : await resolveProfileDoc(WorkerProfile);
+        const completion = evaluateProfileCompletion({
+            user: latestUser || {},
+            workerProfile: isEmployer ? null : latestProfile,
+            employerProfile: isEmployer ? latestProfile : null,
+            roleOverride: isEmployer ? 'employer' : 'worker',
+        });
+        await syncUserProfileCompletionFlag({
+            userDoc: latestUser,
+            completion,
+        });
+
+        return res.json({
+            success: true,
+            avatarUrl,
+            profileCompletion: completion,
+        });
+    } catch (error) {
+        if (error?.name === 'ValidationError' || error?.name === 'CastError') {
+            return res.status(400).json({ message: error?.message || 'Invalid avatar payload' });
+        }
+        return res.status(500).json({ message: 'Failed to upload avatar' });
+    } finally {
+        if (localFilePath) {
+            await fs.unlink(localFilePath).catch(() => { });
+        }
     }
 };
 
@@ -729,7 +1036,9 @@ const getInvoices = async (req, res) => {
 
 module.exports = {
     getSettings,
+    getLegalConfig,
     updateSettings,
+    updateAvatar,
     updateNotificationPreferences,
     updatePrivacyPreferences,
     updateSecuritySettings,

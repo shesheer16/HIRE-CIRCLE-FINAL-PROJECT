@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FeedTab from './connect/feed/FeedTab';
@@ -13,8 +13,10 @@ import ConnectTabBar from './connect/ConnectTabBar';
 import ReferModal from './connect/ReferModal';
 import MyProfileModal from './connect/MyProfileModal';
 import { CONNECT_TABS, CURRENT_USER, useConnectData } from './connect/useConnectData';
-import { theme, RADIUS } from '../theme/theme';
+import { theme, RADIUS, SHADOWS, SPACING } from '../theme/theme';
+import { connectPalette } from './connect/connectPalette';
 import { trackEvent } from '../services/analytics';
+import { MOTION } from '../theme/motion';
 
 export default function ConnectScreen() {
     const insets = useSafeAreaInsets();
@@ -38,6 +40,12 @@ export default function ConnectScreen() {
     } = useConnectData();
 
     const containerStyle = useMemo(() => [styles.container, { paddingTop: insets.top }], [insets.top]);
+    const currentUserAvatar = useMemo(() => {
+        const displayName = String(userInfo?.name || CURRENT_USER.name || 'You').trim() || 'You';
+        return `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=8b3dff&color=fff&rounded=true`;
+    }, [userInfo?.name]);
+    const tabFade = useRef(new Animated.Value(1)).current;
+    const tabSlide = useRef(new Animated.Value(0)).current;
 
     const openNotifications = useCallback(() => {
         navigation.navigate('Notifications');
@@ -50,6 +58,16 @@ export default function ConnectScreen() {
     const closeProfile = useCallback(() => {
         setShowMyProfile(false);
     }, [setShowMyProfile]);
+
+    const handleEditProfile = useCallback(() => {
+        setShowMyProfile(false);
+        const routeNames = navigation.getState?.()?.routeNames || [];
+        if (routeNames.includes('Profiles')) {
+            navigation.navigate('Profiles');
+            return;
+        }
+        navigation.navigate('Settings');
+    }, [navigation, setShowMyProfile]);
 
     const handleTabPress = useCallback((nextTab) => {
         const normalizedTab = String(nextTab || '').toLowerCase();
@@ -80,17 +98,38 @@ export default function ConnectScreen() {
         }
     }, [activeTab, feedTabProps, pulseTabProps, circlesTabProps, academyTabProps, bountiesTabProps]);
 
+    useEffect(() => {
+        tabFade.setValue(0.72);
+        tabSlide.setValue(6);
+        Animated.parallel([
+            Animated.timing(tabFade, {
+                toValue: 1,
+                duration: MOTION.tabTransitionMs,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(tabSlide, {
+                toValue: 0,
+                duration: MOTION.tabTransitionMs,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, [activeTab, tabFade, tabSlide]);
+
     return (
         <View style={containerStyle}>
             <ConnectHeader
-                avatar={CURRENT_USER.avatar}
+                avatar={currentUserAvatar}
                 onNotificationsPress={openNotifications}
                 onProfilePress={openProfile}
             />
 
             <ConnectTabBar tabs={CONNECT_TABS} activeTab={activeTab} onTabPress={handleTabPress} />
 
-            <View style={styles.mainContent}>{tabContent}</View>
+            <Animated.View style={[styles.mainContent, { opacity: tabFade, transform: [{ translateY: tabSlide }] }]}>
+                {tabContent}
+            </Animated.View>
 
             <CircleDetailView {...circleDetailProps} insetsTop={insets.top} />
 
@@ -100,8 +139,9 @@ export default function ConnectScreen() {
                 visible={showMyProfile}
                 insetsTop={insets.top}
                 userInfo={userInfo}
-                avatar={CURRENT_USER.avatar}
+                avatar={currentUserAvatar}
                 onClose={closeProfile}
+                onEditProfile={handleEditProfile}
             />
 
             {pulseToast ? (
@@ -122,27 +162,24 @@ export default function ConnectScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: theme.background,
+        backgroundColor: connectPalette.page,
     },
     mainContent: {
         flex: 1,
     },
     tabContent: {
-        padding: 16,
-        paddingBottom: 24,
+        padding: SPACING.md,
+        paddingBottom: SPACING.lg,
     },
     toastContainer: {
         position: 'absolute',
         bottom: 90,
         alignSelf: 'center',
-        backgroundColor: theme.darkCard,
-        paddingHorizontal: 20,
-        paddingVertical: 12,
+        backgroundColor: connectPalette.dark,
+        paddingHorizontal: SPACING.lg - 2,
+        paddingVertical: SPACING.smd,
         borderRadius: RADIUS.full,
-        shadowColor: theme.textPrimary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
+        ...SHADOWS.lg,
         elevation: 20,
     },
     toastText: {

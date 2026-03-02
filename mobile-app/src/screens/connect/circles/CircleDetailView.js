@@ -1,17 +1,11 @@
 import React, { memo, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, ScrollView, TextInput, FlatList } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, ScrollView, TextInput } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { IconCheck, IconMessageSquare, IconMic, IconPlus, IconSend, IconSparkles } from '../../../components/Icons';
-import { theme, RADIUS } from '../../../theme/theme';
+import { RADIUS } from '../../../theme/theme';
+import { connectPalette, connectShadow } from '../connectPalette';
 
 const DETAIL_TABS = ['DISCUSSION', 'RATES', 'MEMBERS'];
-
-const MEMBERS = [
-    { id: 1, name: 'Vijay Kumar', role: 'Admin', joined: '2022', karma: 2100, avatar: 'https://i.pravatar.cc/150?u=vijay', isAdmin: true },
-    { id: 2, name: 'Ramesh T.', role: 'Driver', joined: '2023', karma: 890, avatar: 'https://i.pravatar.cc/150?u=ramesh', isAdmin: false },
-    { id: 3, name: 'Siva M.', role: 'Mechanic', joined: '2023', karma: 650, avatar: 'https://i.pravatar.cc/150?u=sivam', isAdmin: false },
-    { id: 4, name: 'Anita R.', role: 'Driver', joined: '2024', karma: 420, avatar: 'https://i.pravatar.cc/150?u=anita', isAdmin: false },
-    { id: 5, name: 'Deepak S.', role: 'Helper', joined: '2024', karma: 210, avatar: 'https://i.pravatar.cc/150?u=deepak', isAdmin: false },
-];
 
 function CircleDetailViewComponent({
     visible,
@@ -24,8 +18,10 @@ function CircleDetailViewComponent({
     chatText,
     onChatTextChange,
     isCircleRecording,
+    circleMessages,
     onSendTextMessage,
     onToggleVoiceRecording,
+    circleMembers,
     circleCustomRates,
     showCircleRateForm,
     circleRateService,
@@ -36,129 +32,145 @@ function CircleDetailViewComponent({
     onShowRateForm,
     onCancelRateForm,
 }) {
-    const rates = useMemo(() => ([...(selectedCircle?.rates || []), ...circleCustomRates]), [selectedCircle?.rates, circleCustomRates]);
+    const rates = useMemo(
+        () => ([...(selectedCircle?.rates || []), ...circleCustomRates]),
+        [selectedCircle?.rates, circleCustomRates]
+    );
 
-    const renderTabItem = useCallback(({ item }) => {
-        const isActive = circleDetailTab === item;
-        const label = item === 'DISCUSSION' ? 'CHAT ROOM' : item;
+    const renderTabButton = useCallback((tabKey) => {
+        const isActive = circleDetailTab === tabKey;
+        const label = tabKey === 'DISCUSSION' ? 'CHAT ROOM' : tabKey;
+
         return (
             <TouchableOpacity
-                style={[styles.modalSubtabItem, isActive && styles.modalSubtabItemActive]}
-                onPress={() => onTabChange(item)}
+                key={tabKey}
+                style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                onPress={() => onTabChange(tabKey)}
+                activeOpacity={0.9}
             >
-                <Text style={[styles.modalSubtabText, isActive && styles.modalSubtabTextActive]}>{label}</Text>
+                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{label}</Text>
             </TouchableOpacity>
         );
     }, [circleDetailTab, onTabChange]);
 
     const rateRows = useMemo(() => (
-        rates.map((item, index) => (
-            <View key={`${item.service}-${index}`} style={styles.rateRow}>
-                <Text style={styles.rateCol1}>{item.service}</Text>
-                <Text style={styles.rateCol2}>{item.price}</Text>
-            </View>
-        ))
+        rates.map((item, index) => {
+            const isLast = index === rates.length - 1;
+            return (
+                <View key={`${item.service}-${index}`} style={[styles.rateRow, isLast && styles.rateRowLast]}>
+                    <Text style={styles.rateCol1}>{item.service}</Text>
+                    <Text style={styles.rateCol2}>{item.price}</Text>
+                </View>
+            );
+        })
     ), [rates]);
 
     const memberRows = useMemo(() => (
-        MEMBERS.map((item) => (
+        circleMembers.map((item) => (
             <View key={item.id} style={styles.memberRow}>
                 <View style={styles.memberAvatarWrap}>
                     <Image source={{ uri: item.avatar }} style={styles.memberAvatar} />
                     {item.isAdmin ? (
                         <View style={styles.adminBadge}>
-                            <Text style={styles.adminBadgeText}>👑</Text>
+                            <Text style={styles.adminBadgeText}>★</Text>
                         </View>
                     ) : null}
                 </View>
+
                 <View style={styles.memberMain}>
-                    <View style={styles.memberNameRow}>
-                        <Text style={styles.memberName}>{item.name}</Text>
-                        {item.isAdmin ? <IconCheck size={12} color={theme.indigo} /> : null}
-                    </View>
-                    <Text style={styles.memberSub}>{item.isAdmin ? 'Admin · ' : ''}{item.role} · Since {item.joined}</Text>
+                    <Text style={styles.memberName}>{item.name}</Text>
+                    <Text style={styles.memberSub}>{item.isAdmin ? 'Admin' : item.role}</Text>
                 </View>
-                <View style={styles.karmaBadge}>
-                    <Text style={styles.karmaBadgeText}>{item.karma.toLocaleString()}</Text>
+
+                <View style={styles.memberMsgBtn}>
+                    <IconMessageSquare size={21} color={connectPalette.subtle} />
                 </View>
-                <TouchableOpacity style={styles.memberMsgBtn}>
-                    <IconMessageSquare size={16} color={theme.textMuted} />
-                </TouchableOpacity>
             </View>
         ))
-    ), []);
+    ), [circleMembers]);
 
     return (
         <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
             <View style={styles.modalContainer}>
-                <View style={styles.safeTopSpacer} />
                 {insetsTop ? <View style={{ height: insetsTop }} /> : null}
-                <View style={styles.modalHeaderBg}>
-                    <View style={styles.modalHeaderRow}>
-                        <TouchableOpacity onPress={onClose} style={styles.modalBackBtn}>
-                            <Text style={styles.modalBackIcon}>‹</Text>
+
+                <LinearGradient
+                    colors={[connectPalette.accent, connectPalette.accentDark]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.headerGradient}
+                >
+                    <View style={styles.headerRow}>
+                        <TouchableOpacity onPress={onClose} style={styles.backButton} activeOpacity={0.85}>
+                            <Text style={styles.backIcon}>‹</Text>
                         </TouchableOpacity>
-                        <Image source={{ uri: `https://ui-avatars.com/api/?name=${selectedCircle?.name}&background=7c3aed&color=fff&rounded=true` }} style={styles.modalHeaderAvatar} />
-                        <View style={styles.modalTitleWrap}>
-                            <Text style={styles.modalHeaderTitle}>{selectedCircle?.name}</Text>
-                            <Text style={styles.modalHeaderSub}>{selectedCircle?.members} Members • {selectedCircle?.online} Online</Text>
+
+                        <Image
+                            source={{ uri: `https://ui-avatars.com/api/?name=${selectedCircle?.name || 'HC'}&background=8b3dff&color=fff&rounded=true` }}
+                            style={styles.headerAvatar}
+                        />
+
+                        <View style={styles.headerTextWrap}>
+                            <Text style={styles.headerTitle}>{selectedCircle?.name || 'Community'}</Text>
+                            <Text style={styles.headerSub}>{selectedCircle?.members || '0'} Members • {selectedCircle?.online || '0'} Online</Text>
                         </View>
                     </View>
-                    <FlatList
-                        data={DETAIL_TABS}
-                        horizontal
-                        keyExtractor={(item) => item}
-                        renderItem={renderTabItem}
-                        contentContainerStyle={styles.modalSubtabsBg}
-                        showsHorizontalScrollIndicator={false}
-                    />
-                </View>
 
-                <View style={styles.modalContent}>
+                    <View style={styles.tabStrip}>
+                        {DETAIL_TABS.map(renderTabButton)}
+                    </View>
+                </LinearGradient>
+
+                <View style={styles.contentWrap}>
                     {circleDetailTab === 'DISCUSSION' ? (
                         <View style={styles.flex1}>
-                            <ScrollView ref={circleChatRef} contentContainerStyle={styles.chatScrollContent}>
-                                <View style={styles.chatTimeDiv}><Text style={styles.chatTimeText}>TODAY</Text></View>
-                                <View style={styles.chatBubbleRow}>
-                                    <View style={styles.chatBubbleAvatar}><Text style={styles.chatBubbleAvatarText}>R</Text></View>
-                                    <View style={styles.chatBubbleContent}>
-                                        <View style={styles.chatBubbleMeta}>
-                                            <Text style={styles.chatBubbleName}>Ramesh T.</Text>
-                                            <Text style={styles.chatBubbleRole}>Driver</Text>
+                            <ScrollView ref={circleChatRef} contentContainerStyle={styles.chatContent} showsVerticalScrollIndicator={false}>
+                                <View style={styles.todayBadge}><Text style={styles.todayText}>TODAY</Text></View>
+                                {circleMessages.length > 0 ? circleMessages.map((message) => (
+                                    <View key={message.id} style={styles.messageBlock}>
+                                        <View style={styles.messageMetaRow}>
+                                            <Text style={styles.messageName}>{message.user}</Text>
+                                            {message.isAdmin ? <IconCheck size={12} color={connectPalette.accent} /> : null}
+                                            <Text style={styles.rolePill}>{message.isAdmin ? 'Admin' : message.role}</Text>
                                         </View>
-                                        <View style={styles.chatBubbleTextBg}><Text style={styles.chatBubbleText}>Does anyone know if the NH65 diversions are cleared?</Text></View>
-                                        <Text style={styles.chatBubbleTime}>10:05 AM</Text>
-                                    </View>
-                                </View>
-                                <View style={styles.chatBubbleRow}>
-                                    <View style={styles.chatBubbleAvatar}><Text style={styles.chatBubbleAvatarText}>V</Text></View>
-                                    <View style={styles.chatBubbleContent}>
-                                        <View style={styles.chatBubbleMeta}>
-                                            <Text style={styles.chatBubbleName}>Vijay Kumar</Text>
-                                            <IconCheck size={12} color={theme.indigo} />
-                                            <Text style={styles.chatBubbleRole}>Admin</Text>
+                                        <View style={styles.messageBubble}>
+                                            <Text style={styles.messageText}>{message.text}</Text>
                                         </View>
-                                        <View style={styles.chatBubbleTextBg}><Text style={styles.chatBubbleText}>Yes, I passed through an hour ago. Traffic is moving smoothly.</Text></View>
-                                        <Text style={styles.chatBubbleTime}>10:08 AM</Text>
+                                        <Text style={styles.messageTime}>{message.time}</Text>
                                     </View>
-                                </View>
+                                )) : (
+                                    <View style={styles.emptyPanel}>
+                                        <Text style={styles.emptyPanelTitle}>No messages yet.</Text>
+                                        <Text style={styles.emptyPanelSubtitle}>Start the first conversation in this community.</Text>
+                                    </View>
+                                )}
                             </ScrollView>
-                            <View style={styles.chatInputRow}>
-                                <TouchableOpacity style={styles.chatAttachBtn}><IconPlus size={20} color={theme.textSecondary} /></TouchableOpacity>
+
+                            <View style={styles.inputBar}>
+                                <View style={styles.attachButton}>
+                                    <IconPlus size={22} color={connectPalette.muted} />
+                                </View>
+
                                 <TextInput
-                                    style={[styles.chatInputText, isCircleRecording && styles.chatInputRecording]}
-                                    placeholder={isCircleRecording ? '🔴 Recording... tap mic to stop' : 'Ask for help or share updates...'}
+                                    style={[styles.chatInput, isCircleRecording && styles.chatInputRecording]}
+                                    placeholder={isCircleRecording ? 'Recording... tap mic to stop' : 'Ask for help or share updates...'}
+                                    placeholderTextColor={connectPalette.subtle}
                                     value={chatText}
                                     onChangeText={onChatTextChange}
                                     editable={!isCircleRecording}
                                 />
+
                                 {chatText.length > 0 ? (
-                                    <TouchableOpacity style={styles.chatSendBtn} onPress={onSendTextMessage}>
-                                        <IconSend size={16} color={theme.surface} />
+                                    <TouchableOpacity style={styles.micSendButton} onPress={onSendTextMessage} activeOpacity={0.88}>
+                                        <IconSend size={17} color={connectPalette.surface} />
                                     </TouchableOpacity>
                                 ) : (
-                                    <TouchableOpacity style={[styles.chatSendBtn, isCircleRecording && styles.chatSendBtnRecording]} onPress={onToggleVoiceRecording}>
-                                        <IconMic size={18} color={theme.surface} />
+                                    <TouchableOpacity
+                                        style={[styles.micSendButton, isCircleRecording && styles.micSendButtonRecording]}
+                                        onPress={onToggleVoiceRecording}
+                                        activeOpacity={0.88}
+                                    >
+                                        <IconMic size={20} color={connectPalette.surface} />
                                     </TouchableOpacity>
                                 )}
                             </View>
@@ -166,14 +178,15 @@ function CircleDetailViewComponent({
                     ) : null}
 
                     {circleDetailTab === 'RATES' ? (
-                        <ScrollView contentContainerStyle={styles.ratesBox}>
+                        <ScrollView contentContainerStyle={styles.sectionContent} showsVerticalScrollIndicator={false}>
                             <View style={styles.ratesBanner}>
                                 <View style={styles.ratesBannerHead}>
-                                    <IconSparkles size={16} color={theme.warning} />
+                                    <IconSparkles size={15} color={connectPalette.warning} />
                                     <Text style={styles.ratesBannerTitle}>Community Rates</Text>
                                 </View>
                                 <Text style={styles.ratesBannerSub}>These are standard market rates sourced from community members. Use these to negotiate fair pay.</Text>
                             </View>
+
                             <View style={styles.ratesTable}>
                                 <View style={styles.ratesHeader}>
                                     <Text style={styles.ratesHeaderCol1}>SERVICE / ITEM</Text>
@@ -181,6 +194,7 @@ function CircleDetailViewComponent({
                                 </View>
                                 {rateRows}
                             </View>
+
                             {showCircleRateForm ? (
                                 <View style={styles.rateFormBox}>
                                     <Text style={styles.rateFormTitle}>SUGGEST A RATE</Text>
@@ -188,27 +202,27 @@ function CircleDetailViewComponent({
                                         style={styles.rateFormInput}
                                         value={circleRateService}
                                         onChangeText={onCircleRateServiceChange}
-                                        placeholder="Service name (e.g. Night Shift Premium)"
-                                        placeholderTextColor={theme.textMuted}
+                                        placeholder="Service name"
+                                        placeholderTextColor={connectPalette.subtle}
                                     />
                                     <TextInput
                                         style={styles.rateFormInput}
                                         value={circleRatePrice}
                                         onChangeText={onCircleRatePriceChange}
-                                        placeholder="Your suggested price (e.g. ₹450)"
-                                        placeholderTextColor={theme.textMuted}
+                                        placeholder="Price (e.g. ₹450)"
+                                        placeholderTextColor={connectPalette.subtle}
                                     />
                                     <View style={styles.rateActions}>
-                                        <TouchableOpacity style={styles.rateSubmitBtn} onPress={onSubmitRate}>
+                                        <TouchableOpacity style={styles.rateSubmitBtn} onPress={onSubmitRate} activeOpacity={0.9}>
                                             <Text style={styles.rateSubmitBtnText}>SUBMIT</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.rateCancelBtn} onPress={onCancelRateForm}>
+                                        <TouchableOpacity style={styles.rateCancelBtn} onPress={onCancelRateForm} activeOpacity={0.9}>
                                             <Text style={styles.rateCancelBtnText}>CANCEL</Text>
                                         </TouchableOpacity>
                                     </View>
                                 </View>
                             ) : (
-                                <TouchableOpacity style={styles.suggestRateBtn} onPress={onShowRateForm}>
+                                <TouchableOpacity style={styles.suggestRateBtn} onPress={onShowRateForm} activeOpacity={0.9}>
                                     <Text style={styles.suggestRateBtnText}>+ Suggest a Rate Change</Text>
                                 </TouchableOpacity>
                             )}
@@ -216,12 +230,17 @@ function CircleDetailViewComponent({
                     ) : null}
 
                     {circleDetailTab === 'MEMBERS' ? (
-                        <ScrollView contentContainerStyle={styles.ratesBox}>
+                        <ScrollView contentContainerStyle={styles.sectionContent} showsVerticalScrollIndicator={false}>
                             <View style={styles.membersHeader}>
                                 <Text style={styles.membersTitle}>Community Leaders</Text>
                                 <Text style={styles.membersSortBadge}>Sorted by Karma</Text>
                             </View>
-                            {memberRows}
+
+                            {memberRows.length > 0 ? memberRows : (
+                                <View style={styles.emptyPanel}>
+                                    <Text style={styles.emptyPanelTitle}>No members loaded.</Text>
+                                </View>
+                            )}
                         </ScrollView>
                     ) : null}
                 </View>
@@ -235,289 +254,324 @@ export default memo(CircleDetailViewComponent);
 const styles = StyleSheet.create({
     modalContainer: {
         flex: 1,
-        backgroundColor: theme.background,
+        backgroundColor: connectPalette.page,
     },
-    safeTopSpacer: {
-        height: 0,
+    headerGradient: {
+        paddingTop: 10,
+        paddingBottom: 12,
+        ...connectShadow,
     },
-    modalHeaderBg: {
-        backgroundColor: theme.primary,
-        paddingTop: 16,
-    },
-    modalHeaderRow: {
+    headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingBottom: 16,
+        paddingBottom: 12,
     },
-    modalBackBtn: {
-        padding: 4,
+    backButton: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
         marginRight: 8,
     },
-    modalBackIcon: {
-        color: theme.surface,
-        fontSize: 32,
-        lineHeight: 32,
+    backIcon: {
+        color: connectPalette.surface,
+        fontSize: 34,
+        lineHeight: 34,
         fontWeight: '300',
     },
-    modalHeaderAvatar: {
-        width: 40,
-        height: 40,
+    headerAvatar: {
+        width: 50,
+        height: 50,
         borderRadius: RADIUS.full,
-        borderWidth: 2,
-        borderColor: theme.primaryLight,
-        marginRight: 12,
+        borderWidth: 3,
+        borderColor: 'rgba(255,255,255,0.32)',
+        marginRight: 10,
     },
-    modalTitleWrap: {
+    headerTextWrap: {
         flex: 1,
     },
-    modalHeaderTitle: {
-        fontSize: 16,
-        fontWeight: '900',
-        color: theme.surface,
+    headerTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: connectPalette.surface,
     },
-    modalHeaderSub: {
-        fontSize: 10,
-        fontWeight: '500',
-        color: theme.primaryLight,
+    headerSub: {
+        marginTop: 1,
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#e9dcff',
     },
-    modalSubtabsBg: {
-        paddingHorizontal: 8,
-        paddingBottom: 8,
+    tabStrip: {
+        marginHorizontal: 16,
+        padding: 4,
+        borderRadius: 16,
+        backgroundColor: 'rgba(111,46,214,0.42)',
+        flexDirection: 'row',
     },
-    modalSubtabItem: {
+    tabButton: {
+        flex: 1,
+        borderRadius: 12,
         alignItems: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 18,
-        borderRadius: RADIUS.sm,
+        justifyContent: 'center',
+        paddingVertical: 9,
     },
-    modalSubtabItemActive: {
-        backgroundColor: theme.surface,
+    tabButtonActive: {
+        backgroundColor: connectPalette.surface,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 2,
     },
-    modalSubtabText: {
-        fontSize: 10,
-        fontWeight: '900',
-        color: theme.primaryLight,
+    tabText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#f1e6ff',
+        letterSpacing: 0.2,
     },
-    modalSubtabTextActive: {
-        color: theme.primary,
+    tabTextActive: {
+        color: connectPalette.accentDark,
     },
-    modalContent: {
+    contentWrap: {
         flex: 1,
+        backgroundColor: connectPalette.page,
     },
     flex1: {
         flex: 1,
     },
-    chatScrollContent: {
-        padding: 16,
-        paddingBottom: 32,
+    chatContent: {
+        paddingHorizontal: 18,
+        paddingTop: 14,
+        paddingBottom: 16,
     },
-    chatTimeDiv: {
+    todayBadge: {
         alignSelf: 'center',
-        backgroundColor: theme.borderMedium,
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: RADIUS.md,
+        backgroundColor: '#ced6e4',
+        borderRadius: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 6,
         marginBottom: 16,
     },
-    chatTimeText: {
-        fontSize: 10,
-        fontWeight: '900',
-        color: theme.textSecondary,
+    todayText: {
+        color: '#4e5d74',
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.4,
     },
-    chatBubbleRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        marginBottom: 16,
-        gap: 12,
+    messageBlock: {
+        marginBottom: 14,
     },
-    chatBubbleAvatar: {
-        width: 36,
-        height: 36,
-        borderRadius: RADIUS.full,
-        backgroundColor: theme.primaryLight,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    chatBubbleAvatarText: {
-        fontSize: 14,
-        fontWeight: '900',
-        color: theme.primary,
-    },
-    chatBubbleContent: {
-        flex: 1,
-        alignItems: 'flex-start',
-    },
-    chatBubbleMeta: {
+    messageMetaRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        marginBottom: 4,
+        marginBottom: 6,
     },
-    chatBubbleName: {
+    messageName: {
+        color: '#43526a',
         fontSize: 13,
         fontWeight: '800',
-        color: theme.textPrimary,
     },
-    chatBubbleRole: {
-        fontSize: 10,
+    rolePill: {
+        backgroundColor: '#e9eef6',
+        color: '#8ea0b7',
+        fontSize: 11,
         fontWeight: '700',
-        color: theme.textSecondary,
-        backgroundColor: theme.border,
-        paddingHorizontal: 6,
+        borderRadius: 8,
+        paddingHorizontal: 8,
         paddingVertical: 2,
-        borderRadius: RADIUS.sm,
+        overflow: 'hidden',
     },
-    chatBubbleTextBg: {
-        backgroundColor: theme.surface,
-        padding: 12,
-        borderRadius: RADIUS.lg,
-        borderTopLeftRadius: 0,
+    messageBubble: {
+        backgroundColor: connectPalette.surface,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
+        borderRadius: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        ...connectShadow,
     },
-    chatBubbleText: {
+    messageText: {
+        color: '#253246',
         fontSize: 14,
-        color: theme.textSecondary,
-        lineHeight: 20,
+        lineHeight: 22,
+        fontWeight: '500',
     },
-    chatBubbleTime: {
-        fontSize: 10,
-        color: theme.textMuted,
+    messageTime: {
+        marginTop: 6,
+        color: '#8293ad',
+        fontSize: 11,
         fontWeight: '600',
-        marginTop: 4,
-        marginLeft: 4,
     },
-    chatInputRow: {
+    emptyPanel: {
+        backgroundColor: connectPalette.surface,
+        borderWidth: 1,
+        borderColor: connectPalette.line,
+        borderRadius: RADIUS.lg,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        ...connectShadow,
+    },
+    emptyPanelTitle: {
+        color: connectPalette.text,
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    emptyPanelSubtitle: {
+        marginTop: 4,
+        color: connectPalette.muted,
+        fontSize: 12,
+        lineHeight: 18,
+    },
+    inputBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 12,
-        backgroundColor: theme.surface,
+        gap: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
         borderTopWidth: 1,
-        borderTopColor: theme.borderMedium,
-        gap: 12,
+        borderTopColor: connectPalette.line,
+        backgroundColor: connectPalette.surface,
     },
-    chatAttachBtn: {
-        padding: 8,
-        backgroundColor: theme.border,
+    attachButton: {
+        width: 40,
+        height: 40,
         borderRadius: RADIUS.full,
+        backgroundColor: '#e8edf6',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    chatInputText: {
+    chatInput: {
         flex: 1,
-        backgroundColor: theme.background,
-        borderRadius: RADIUS.full,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        fontSize: 14,
+        backgroundColor: '#f0f3f9',
+        borderColor: connectPalette.line,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderRadius: RADIUS.full,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        color: '#364457',
+        fontSize: 14,
     },
     chatInputRecording: {
-        color: theme.error,
+        color: connectPalette.danger,
     },
-    chatSendBtn: {
-        padding: 12,
-        backgroundColor: theme.primary,
+    micSendButton: {
+        width: 46,
+        height: 46,
         borderRadius: RADIUS.full,
+        backgroundColor: connectPalette.accent,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: connectPalette.accentDark,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
-    chatSendBtnRecording: {
-        backgroundColor: theme.error,
+    micSendButtonRecording: {
+        backgroundColor: connectPalette.danger,
     },
-    ratesBox: {
-        padding: 16,
+    sectionContent: {
+        padding: 18,
+        paddingBottom: 24,
     },
     ratesBanner: {
-        backgroundColor: theme.primaryLight,
-        padding: 16,
-        borderRadius: RADIUS.lg,
-        marginBottom: 16,
+        backgroundColor: '#f4efdd',
+        borderColor: '#ecd89f',
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderRadius: RADIUS.xl,
+        padding: 14,
+        marginBottom: 14,
     },
     ratesBannerHead: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 8,
         marginBottom: 4,
-        gap: 6,
     },
     ratesBannerTitle: {
-        fontSize: 14,
-        fontWeight: '900',
-        color: theme.primaryDark,
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#90450d',
     },
     ratesBannerSub: {
-        fontSize: 12,
-        color: theme.textSecondary,
-        lineHeight: 18,
+        fontSize: 13,
+        lineHeight: 20,
+        color: '#b7520f',
     },
     ratesTable: {
-        backgroundColor: theme.surface,
-        borderRadius: RADIUS.lg,
+        backgroundColor: connectPalette.surface,
+        borderColor: connectPalette.lineStrong,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderRadius: RADIUS.xl,
         overflow: 'hidden',
-        marginBottom: 16,
+        marginBottom: 14,
+        ...connectShadow,
     },
     ratesHeader: {
         flexDirection: 'row',
-        backgroundColor: theme.background,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+        backgroundColor: '#edf0f6',
+        paddingHorizontal: 14,
+        paddingVertical: 11,
         borderBottomWidth: 1,
-        borderBottomColor: theme.borderMedium,
+        borderBottomColor: connectPalette.lineStrong,
     },
     ratesHeaderCol1: {
         flex: 1,
-        fontSize: 10,
-        fontWeight: '900',
-        color: theme.textSecondary,
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#637289',
     },
     ratesHeaderCol2: {
-        fontSize: 10,
-        fontWeight: '900',
-        color: theme.textSecondary,
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#637289',
     },
     rateRow: {
         flexDirection: 'row',
-        paddingHorizontal: 16,
-        paddingVertical: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 15,
         borderBottomWidth: 1,
-        borderBottomColor: theme.border,
+        borderBottomColor: connectPalette.line,
+    },
+    rateRowLast: {
+        borderBottomWidth: 0,
     },
     rateCol1: {
         flex: 1,
-        fontSize: 14,
-        fontWeight: '600',
-        color: theme.textPrimary,
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#1c2538',
     },
     rateCol2: {
-        fontSize: 14,
-        fontWeight: '900',
-        color: theme.primary,
+        fontSize: 15,
+        fontWeight: '800',
+        color: connectPalette.accent,
     },
     rateFormBox: {
-        backgroundColor: theme.primaryLight,
+        backgroundColor: '#f3ebff',
         borderWidth: 1,
-        borderColor: theme.borderMedium,
-        borderRadius: RADIUS.lg,
-        padding: 16,
+        borderColor: '#dcc4ff',
+        borderRadius: RADIUS.xl,
+        padding: 14,
     },
     rateFormTitle: {
-        fontSize: 10,
+        fontSize: 11,
         fontWeight: '900',
-        color: theme.primary,
-        letterSpacing: 1,
-        marginBottom: 12,
+        color: connectPalette.accentDark,
+        letterSpacing: 0.8,
+        marginBottom: 10,
     },
     rateFormInput: {
-        backgroundColor: theme.surface,
+        backgroundColor: connectPalette.surface,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.lineStrong,
         borderRadius: RADIUS.md,
-        paddingHorizontal: 14,
+        paddingHorizontal: 12,
         paddingVertical: 10,
         fontSize: 13,
-        color: theme.textPrimary,
+        color: connectPalette.text,
         marginBottom: 10,
     },
     rateActions: {
@@ -526,130 +580,119 @@ const styles = StyleSheet.create({
     },
     rateSubmitBtn: {
         flex: 1,
-        backgroundColor: theme.primary,
-        paddingVertical: 12,
+        backgroundColor: connectPalette.accent,
+        paddingVertical: 11,
         borderRadius: RADIUS.md,
         alignItems: 'center',
     },
     rateSubmitBtnText: {
         fontSize: 12,
         fontWeight: '900',
-        color: theme.surface,
+        color: connectPalette.surface,
     },
     rateCancelBtn: {
         paddingHorizontal: 14,
-        paddingVertical: 12,
-        backgroundColor: theme.surface,
+        paddingVertical: 11,
+        backgroundColor: connectPalette.surface,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.lineStrong,
         borderRadius: RADIUS.md,
         alignItems: 'center',
     },
     rateCancelBtnText: {
         fontSize: 12,
-        fontWeight: '900',
-        color: theme.textSecondary,
+        fontWeight: '800',
+        color: connectPalette.muted,
     },
     suggestRateBtn: {
-        paddingVertical: 14,
-        borderRadius: RADIUS.lg,
         borderWidth: 1,
-        borderColor: theme.primaryLight,
+        borderStyle: 'dashed',
+        borderColor: '#d5b5ff',
+        borderRadius: RADIUS.xl,
         alignItems: 'center',
+        paddingVertical: 14,
     },
     suggestRateBtnText: {
-        fontSize: 12,
-        fontWeight: '900',
-        color: theme.primary,
+        fontSize: 13,
+        fontWeight: '800',
+        color: connectPalette.accent,
     },
     membersHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 16,
+        marginBottom: 14,
     },
     membersTitle: {
-        fontSize: 14,
-        fontWeight: '900',
-        color: theme.textPrimary,
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#182338',
     },
     membersSortBadge: {
-        fontSize: 10,
-        fontWeight: '800',
-        color: theme.textSecondary,
-        backgroundColor: theme.border,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: RADIUS.sm,
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#91a1b8',
+        backgroundColor: '#ebf0f7',
+        borderRadius: RADIUS.md,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
     },
     memberRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.surface,
-        padding: 12,
-        borderRadius: RADIUS.lg,
-        marginBottom: 12,
+        backgroundColor: connectPalette.surface,
         borderWidth: 1,
-        borderColor: theme.borderMedium,
+        borderColor: connectPalette.line,
+        borderRadius: RADIUS.xl,
+        padding: 12,
+        marginBottom: 10,
+        ...connectShadow,
     },
     memberAvatarWrap: {
         position: 'relative',
-        marginRight: 12,
+        marginRight: 10,
     },
     memberAvatar: {
-        width: 40,
-        height: 40,
+        width: 46,
+        height: 46,
         borderRadius: RADIUS.full,
     },
     adminBadge: {
         position: 'absolute',
-        bottom: -2,
-        right: -2,
-        width: 16,
-        height: 16,
-        backgroundColor: theme.warning,
+        right: -3,
+        bottom: -3,
+        width: 18,
+        height: 18,
         borderRadius: RADIUS.full,
+        backgroundColor: '#ffd500',
         borderWidth: 2,
-        borderColor: theme.surface,
-        justifyContent: 'center',
+        borderColor: connectPalette.surface,
         alignItems: 'center',
+        justifyContent: 'center',
     },
     adminBadgeText: {
-        fontSize: 8,
+        fontSize: 9,
     },
     memberMain: {
         flex: 1,
     },
-    memberNameRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        marginBottom: 2,
-    },
     memberName: {
-        fontSize: 14,
+        fontSize: 15,
         fontWeight: '800',
-        color: theme.textPrimary,
+        color: '#172239',
     },
     memberSub: {
-        fontSize: 11,
-        color: theme.textSecondary,
-    },
-    karmaBadge: {
-        backgroundColor: theme.primaryLight,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: RADIUS.md,
-        marginRight: 8,
-    },
-    karmaBadgeText: {
-        fontSize: 10,
-        fontWeight: '900',
-        color: theme.primary,
+        marginTop: 2,
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#61718c',
     },
     memberMsgBtn: {
-        padding: 10,
-        backgroundColor: theme.background,
-        borderRadius: RADIUS.full,
+        width: 38,
+        height: 38,
+        borderRadius: RADIUS.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f5f7fc',
     },
 });

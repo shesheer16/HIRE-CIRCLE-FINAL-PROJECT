@@ -83,6 +83,16 @@ describe('matchRetrainCheck cron', () => {
     });
 
     it('triggers admin alert + webhook under simulated drift', async () => {
+        const makeFindChain = (rows) => ({
+            select: () => ({
+                sort: () => ({
+                    limit: () => ({
+                        lean: async () => rows,
+                    }),
+                }),
+            }),
+        });
+
         MatchPerformanceMetric.countDocuments
             .mockResolvedValueOnce(100) // current applications
             .mockResolvedValueOnce(30) // current interviews
@@ -126,11 +136,9 @@ describe('matchRetrainCheck cron', () => {
             trends: [],
         });
 
-        User.find.mockReturnValue({
-            select: () => ({
-                lean: async () => [{ _id: 'admin-1' }],
-            }),
-        });
+        User.find
+            .mockReturnValueOnce(makeFindChain([{ _id: 'admin-1' }]))
+            .mockReturnValueOnce(makeFindChain([]));
 
         Notification.insertMany.mockResolvedValue([]);
         axios.post.mockResolvedValue({ status: 200 });

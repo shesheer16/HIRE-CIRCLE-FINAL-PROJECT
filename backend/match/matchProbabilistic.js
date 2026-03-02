@@ -47,12 +47,20 @@ const buildContributionMap = ({ featureOrder = [], weights = [], values = [] }) 
     return contributionMap;
 };
 
-const buildExplainability = ({ contributionMap = {}, probability = 0 }) => {
+const buildExplainability = ({ contributionMap = {}, probability = 0, modelKeyUsed = null }) => {
     const skillImpact = Number(contributionMap.skillScore || 0);
     const experienceImpact = Number(contributionMap.experienceScore || 0);
     const salaryImpact = Number(contributionMap.salaryFitScore || 0);
     const distanceImpact = Number(contributionMap.distanceScore || 0);
     const reliabilityImpact = Number(contributionMap.workerReliabilityScore || 0);
+    const key = String(modelKeyUsed || '').trim();
+    const historicalPatternSimilarity = key === '*::*'
+        ? 0.6
+        : key.endsWith('::*')
+            ? 0.75
+            : key
+                ? 0.9
+                : 0.6;
 
     return {
         matchProbability: clamp01(probability),
@@ -65,6 +73,7 @@ const buildExplainability = ({ contributionMap = {}, probability = 0 }) => {
         interviewImpact: Number(contributionMap.interviewCompletion || 0),
         cityRoleImpact: Number(contributionMap.cityRoleClusterHash || 0),
         timeImpact: Number(contributionMap.timestampEpochNormalized || 0),
+        historicalPatternSimilarity,
     };
 };
 
@@ -230,7 +239,7 @@ const scoreSinglePair = async ({
         tierLabel: toLegacyTierLabel(tier),
         modelVersionUsed: modelVersion,
         modelKeyUsed,
-        explainability: buildExplainability({ contributionMap, probability }),
+        explainability: buildExplainability({ contributionMap, probability, modelKeyUsed }),
         featureVector: vector,
     };
 };

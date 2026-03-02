@@ -241,6 +241,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-    console.error('[extractTrainingData] failed:', error.message);
+    console.warn('[extractTrainingData] failed:', error.message);
     process.exit(1);
 });

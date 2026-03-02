@@ -1,0 +1,94 @@
+{
+  "mode": "launch_and_dominate",
+  "generatedAt": "2026-03-02T04:41:45.159Z",
+  "startedAt": "2026-03-02T04:41:34.480Z",
+  "completedAt": "2026-03-02T04:41:45.159Z",
+  "manualPhases": {
+    "phase1": {
+      "status": "manual_required",
+      "note": "Lock system (freeze features, env lock, DB snapshot, monitoring, disable experimental flags)."
+    },
+    "phase7": {
+      "status": "manual_required",
+      "note": "Referral ignition campaign and incentive rollout."
+    },
+    "phase8": {
+      "status": "manual_required",
+      "note": "Reach first 100 active users (interview+apply or job posted)."
+    },
+    "phase9": {
+      "status": "manual_required",
+      "note": "Retention-first observation before scaling decisions."
+    },
+    "phase10": {
+      "status": "manual_required",
+      "note": "Regional expansion only after stability, retention, and money-flow gates pass."
+    }
+  },
+  "automatedPhases": [
+    {
+      "phase": "phase2",
+      "script": "operatorPhase2BehavioralAudit.js",
+      "status": 0,
+      "passed": true,
+      "summary": {
+        "phase": "phase2_behavioral_audit",
+        "pass": true,
+        "reportPath": "/Users/Path/Desktop/Lokesh/HIRE-NEW-V1/backend/reports/operator-phase2-behavioral-audit.json",
+        "frictionPointCount": 0
+      },
+      "stderr": null
+    },
+    {
+      "phase": "phase3",
+      "script": "operatorPhase3MoneyFlowValidation.js",
+      "status": 0,
+      "passed": true,
+      "summary": {
+        "phase": "phase3_money_flow_validation",
+        "pass": true,
+        "mode": "simulation",
+        "reportPath": "/Users/Path/Desktop/Lokesh/HIRE-NEW-V1/backend/reports/operator-phase3-money-flow-validation.json"
+      },
+      "stderr": null
+    },
+    {
+      "phase": "phase4",
+      "script": "operatorPhase4InterviewRealityCheck.js",
+      "status": 0,
+      "passed": true,
+      "summary": {
+        "phase": "phase4_smart_interview_reality_check",
+        "pass": true,
+        "mode": "simulation_fallback",
+        "reportPath": "/Users/Path/Desktop/Lokesh/HIRE-NEW-V1/backend/reports/operator-phase4-smart-interview-reality-check.json"
+      },
+      "stderr": null
+    },
+    {
+      "phase": "phase5",
+      "script": "operatorPhase5TrustTest.js",
+      "status": 0,
+      "passed": true,
+      "summary": {
+        "phase": "phase5_trust_test",
+        "pass": true,
+        "reportPath": "/Users/Path/Desktop/Lokesh/HIRE-NEW-V1/backend/reports/operator-phase5-trust-test.json"
+      },
+      "stderr": null
+    },
+    {
+      "phase": "phase6",
+      "script": "operatorPhase6MicroStress.js",
+      "status": 0,
+      "passed": true,
+      "summary": {
+        "phase": "phase6_micro_stress",
+        "pass": true,
+        "reportPath": "/Users/Path/Desktop/Lokesh/HIRE-NEW-V1/backend/reports/operator-phase6-micro-stress.json"
+      },
+      "stderr": null
+    }
+  ],
+  "overallPass": true
+}

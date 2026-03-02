@@ -1,0 +1,56 @@
+{
+  "phase": "phase4_smart_interview_reality_check",
+  "generatedAt": "2026-03-02T04:41:36.047Z",
+  "mode": "simulation_fallback",
+  "window": {
+    "from": "2026-02-23T04:41:35.933Z",
+    "to": "2026-03-02T04:41:36.048Z",
+    "days": 7
+  },
+  "metrics": {
+    "totalInterviews": 100,
+    "completionRate": 100,
+    "failedRate": 0,
+    "lowQualityRate": 0,
+    "forcedMaxStepRate": 100,
+    "clarificationSkipRate": 33.04,
+    "averageSteps": 8,
+    "p95Steps": 8,
+    "medianDurationMinutes": 0,
+    "p95DurationMinutes": 0,
+    "averageAmbiguityRate": 28,
+    "semanticRiskRate": 87,
+    "salaryOutlierRate": 0,
+    "experienceMismatchRate": 0
+  },
+  "passChecks": {
+    "completionRate": true,
+    "lowQualityRate": true,
+    "clarificationSkipRate": true,
+    "forcedMaxStepRate": true
+  },
+  "pass": true,
+  "note": "DB signals unavailable; fallback simulation used.",
+  "simulationRaw": {
+    "interviews": 100,
+    "maxSteps": 8,
+    "completionRate": 1,
+    "forcedMaxStepCount": 100,
+    "clarificationTriggeredCount": 224,
+    "clarificationResolvedCount": 150,
+    "clarificationSkippedCount": 74,
+    "averageClarificationsPerInterview": 2.24,
+    "geminiFallbackCount": 87,
+    "latencyMs": {
+      "p50": 0.007,
+      "p95": 0.01,
+      "p99": 0.028,
+      "avg": 0.008
+    },
+    "guards": {
+      "infiniteLoopDetected": false,
+      "undefinedSlotStateDetected": false,
+      "crashDetected": false
+    }
+  }
+}

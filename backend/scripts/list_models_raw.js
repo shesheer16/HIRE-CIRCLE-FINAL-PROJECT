@@ -8,7 +8,7 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 const apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
-    console.error("Error: GEMINI_API_KEY not found in .env");
+    console.warn("Error: GEMINI_API_KEY not found in .env");
     process.exit(1);
 }
 
@@ -27,7 +27,7 @@ https.get(url, (res) => {
         try {
             const json = JSON.parse(data);
             if (json.error) {
-                console.error("API Error:", JSON.stringify(json.error, null, 2));
+                console.warn("API Error:", JSON.stringify(json.error, null, 2));
             } else if (json.models) {
                 console.log("Available Models:");
                 json.models.forEach(m => {
@@ -39,11 +39,11 @@ https.get(url, (res) => {
                 console.log("Unexpected response structure:", data);
             }
         } catch (e) {
-            console.error("Parse Error:", e.message);
+            console.warn("Parse Error:", e.message);
             console.log("Raw Data:", data);
         }
     });
 
 }).on('error', (err) => {
-    console.error("Network Error:", err.message);
+    console.warn("Network Error:", err.message);
 });
