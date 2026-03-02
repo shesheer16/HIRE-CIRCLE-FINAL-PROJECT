@@ -3,7 +3,7 @@ const IdempotencyKey = require('../../models/IdempotencyKey');
 
 const LOCK_TTL_MS = Number.parseInt(process.env.PAYMENT_IDEMPOTENCY_LOCK_MS || String(5 * 60 * 1000), 10);
 
-const hashPayload = (payload = {}) => crypto
+const hashRequestPayload = (payload = {}) => crypto
     .createHash('sha256')
     .update(JSON.stringify(payload || {}))
     .digest('hex');
@@ -15,10 +15,11 @@ const beginIdempotentRequest = async ({ key, scope, userId, payload }) => {
         return {
             mode: 'none',
             record: null,
+            requestHash: null,
         };
     }
 
-    const requestHash = hashPayload(payload);
+    const requestHash = hashRequestPayload(payload);
     const compositeKey = buildCompositeKey({ scope, userId, key });
     const now = new Date();
     const lockUntil = new Date(now.getTime() + LOCK_TTL_MS);
@@ -39,6 +40,7 @@ const beginIdempotentRequest = async ({ key, scope, userId, payload }) => {
                     body: existing.responseBody,
                 },
                 record: existing,
+                requestHash,
             };
         }
 
@@ -53,21 +55,69 @@ const beginIdempotentRequest = async ({ key, scope, userId, payload }) => {
         return {
             mode: 'active',
             record: existing,
+            requestHash,
         };
     }
 
-    const created = await IdempotencyKey.create({
-        compositeKey,
-        key,
-        scope,
-        userId,
-        requestHash,
-        lockedUntil: lockUntil,
-    });
+    let created = null;
+    try {
+        created = await IdempotencyKey.create({
+            compositeKey,
+            key,
+            scope,
+            userId,
+            requestHash,
+            lockedUntil: lockUntil,
+        });
+    } catch (error) {
+        if (Number(error?.code) !== 11000) {
+            throw error;
+        }
+
+        const concurrent = await IdempotencyKey.findOne({ compositeKey });
+        if (!concurrent) {
+            const conflict = new Error('Idempotency key conflict');
+            conflict.statusCode = 409;
+            throw conflict;
+        }
+
+        if (concurrent.requestHash !== requestHash) {
+            const mismatchError = new Error('Idempotency key reuse with mismatched payload');
+            mismatchError.statusCode = 409;
+            throw mismatchError;
+        }
+
+        if (concurrent.responseBody !== null && concurrent.responseStatus !== null) {
+            return {
+                mode: 'replay',
+                replayResponse: {
+                    statusCode: concurrent.responseStatus,
+                    body: concurrent.responseBody,
+                },
+                record: concurrent,
+                requestHash,
+            };
+        }
+
+        if (concurrent.lockedUntil && concurrent.lockedUntil > now) {
+            const processingError = new Error('Request with this idempotency key is currently processing');
+            processingError.statusCode = 409;
+            throw processingError;
+        }
+
+        concurrent.lockedUntil = lockUntil;
+        await concurrent.save();
+        return {
+            mode: 'active',
+            record: concurrent,
+            requestHash,
+        };
+    }
 
     return {
         mode: 'active',
         record: created,
+        requestHash,
     };
 };
 
@@ -87,6 +137,7 @@ const clearIdempotentLock = async ({ record }) => {
 };
 
 module.exports = {
+    hashRequestPayload,
     beginIdempotentRequest,
     finalizeIdempotentRequest,
     clearIdempotentLock,

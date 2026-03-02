@@ -11,6 +11,7 @@ const Wallet = require('../models/Wallet');
 const { fundEscrow } = require('../services/financial/escrowService');
 const { raiseDispute, resolveDispute } = require('../services/financial/disputeService');
 const { requestWithdrawal, approveWithdrawal } = require('../services/financial/withdrawalService');
+const { hashRequestPayload } = require('../services/financial/idempotencyService');
 const { settlePendingBalance, updateWalletKycStatus } = require('../services/financial/walletService');
 const { verifyPaymentRecord } = require('../services/financial/paymentOrchestrationService');
 const paymentService = require('../services/payments/paymentService');
@@ -162,14 +163,21 @@ const runSimulationMode = async () => {
             kycStatus: 'verified',
         });
 
-        const withdrawalRequest = await requestWithdrawal({
-            userId: worker._id,
+        const withdrawalPayload = {
             amount: Math.max(100, Math.floor(withdrawAmount || 100)),
             currency: 'INR',
-            actorId: worker._id,
             metadata: {
                 source: 'operator_phase3_simulation',
             },
+        };
+        const withdrawalRequest = await requestWithdrawal({
+            userId: worker._id,
+            amount: withdrawalPayload.amount,
+            currency: withdrawalPayload.currency,
+            actorId: worker._id,
+            metadata: withdrawalPayload.metadata,
+            idempotencyKey: `operator-phase3-withdrawal-${Date.now()}`,
+            requestBodyHash: hashRequestPayload(withdrawalPayload),
         });
 
         const processedWithdrawal = await approveWithdrawal({

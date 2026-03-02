@@ -108,5 +108,12 @@ paymentRecordSchema.index(
         partialFilterExpression: { providerOrderId: { $type: 'string' } },
     }
 );
+paymentRecordSchema.index(
+    { userId: 1, intentType: 1, idempotencyKey: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+    }
+);
 
 module.exports = mongoose.model('PaymentRecord', paymentRecordSchema);

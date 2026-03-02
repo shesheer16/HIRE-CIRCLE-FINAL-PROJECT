@@ -1,5 +1,6 @@
 const { processWebhook, createPaymentIntentRecord } = require('../services/financial/paymentOrchestrationService');
 const { createSubscriptionCheckoutSession } = require('../services/financial/subscriptionBillingService');
+const { executeIdempotent } = require('../services/financial/idempotentRequestExecutor');
 const User = require('../models/userModel');
 const {
     executeWithCircuitBreaker,
@@ -55,6 +56,10 @@ const toPaymentErrorResponse = (res, error, fallbackMessage) => {
     if (error instanceof CircuitOpenError) {
         return res.status(503).json({ message: 'Payment provider is temporarily unavailable. Please retry shortly.' });
     }
+    const statusCode = Number(error?.statusCode || 0);
+    if (statusCode >= 400 && statusCode < 500) {
+        return res.status(statusCode).json({ message: error?.message || fallbackMessage });
+    }
     return res.status(500).json({ message: error?.message || fallbackMessage });
 };
 
@@ -62,25 +67,44 @@ const createCheckoutSession = async (req, res) => {
     if (guardPaymentWrites(res)) return;
 
     try {
-        const user = await User.findById(req.user._id).select('email');
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+        const payload = {
+            successUrl: req.body?.successUrl || null,
+            cancelUrl: req.body?.cancelUrl || null,
+            planId: String(req.body?.planId || 'pro'),
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'payment:create_checkout_session',
+            payload,
+            requireKey: true,
+            handler: async () => {
+                const user = await User.findById(req.user._id).select('email');
+                if (!user) {
+                    const error = new Error('User not found');
+                    error.statusCode = 404;
+                    throw error;
+                }
 
-        const frontendUrl = resolveFrontendUrl();
-        const successUrl = String(req.body?.successUrl || `${frontendUrl}/success`);
-        const cancelUrl = String(req.body?.cancelUrl || `${frontendUrl}/cancel`);
-        const planType = String(req.body?.planId || 'pro');
+                const frontendUrl = resolveFrontendUrl();
+                const successUrl = String(payload.successUrl || `${frontendUrl}/success`);
+                const cancelUrl = String(payload.cancelUrl || `${frontendUrl}/cancel`);
 
-        const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
-            user,
-            planType,
-            successUrl,
-            cancelUrl,
-        }));
+                const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
+                    user,
+                    planType: payload.planId,
+                    successUrl,
+                    cancelUrl,
+                }));
+
+                return {
+                    sessionUrl: session.sessionUrl,
+                    sessionId: session.sessionId,
+                };
+            },
+        });
 
         clearPaymentBlock();
-        return res.json({ sessionUrl: session.sessionUrl, sessionId: session.sessionId });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         await markPaymentFailure(error?.message || 'checkout_session_failed');
         return toPaymentErrorResponse(res, error, 'Payment setup failed');
@@ -110,28 +134,43 @@ const createFeaturedListingSession = async (req, res) => {
     if (guardPaymentWrites(res)) return;
 
     try {
-        const featuredAmount = Number(process.env.FEATURED_LISTING_AMOUNT_INR || 499);
-        const payment = await withPaymentCircuit(async () => createPaymentIntentRecord({
-            userId: req.user._id,
+        const payload = {
             provider: String(req.body?.provider || 'stripe').toLowerCase(),
-            intentType: 'featured_job',
-            amount: featuredAmount,
             currency: String(req.body?.currency || 'INR').toUpperCase(),
-            referenceId: req.body?.jobId ? String(req.body.jobId) : null,
-            metadata: {
-                jobId: req.body?.jobId ? String(req.body.jobId) : null,
-                source: 'featured_listing',
+            jobId: req.body?.jobId ? String(req.body.jobId) : null,
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'payment:featured_listing',
+            payload,
+            requireKey: true,
+            handler: async ({ idempotencyKey }) => {
+                const featuredAmount = Number(process.env.FEATURED_LISTING_AMOUNT_INR || 499);
+                const payment = await withPaymentCircuit(async () => createPaymentIntentRecord({
+                    userId: req.user._id,
+                    provider: payload.provider,
+                    intentType: 'featured_job',
+                    amount: featuredAmount,
+                    currency: payload.currency,
+                    referenceId: payload.jobId,
+                    metadata: {
+                        jobId: payload.jobId,
+                        source: 'featured_listing',
+                    },
+                    idempotencyKey,
+                }));
+
+                return {
+                    paymentRecordId: payment.paymentRecord._id,
+                    providerIntentId: payment.providerResponse.providerIntentId,
+                    providerOrderId: payment.providerResponse.providerOrderId,
+                    clientSecret: payment.providerResponse.clientSecret || null,
+                };
             },
-            idempotencyKey: String(req.headers['idempotency-key'] || '').trim() || null,
-        }));
+        });
 
         clearPaymentBlock();
-        return res.status(200).json({
-            paymentRecordId: payment.paymentRecord._id,
-            providerIntentId: payment.providerResponse.providerIntentId,
-            providerOrderId: payment.providerResponse.providerOrderId,
-            clientSecret: payment.providerResponse.clientSecret || null,
-        });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         await markPaymentFailure(error?.message || 'featured_checkout_failed');
         return toPaymentErrorResponse(res, error, 'Failed to create checkout session for featured listing');
@@ -142,31 +181,47 @@ const subscribeApiTier = async (req, res) => {
     if (guardPaymentWrites(res)) return;
 
     try {
-        const tierId = String(req.body?.tierId || '').trim();
-        if (!tierId) {
-            return res.status(400).json({ message: 'tierId is required' });
-        }
+        const payload = {
+            tierId: String(req.body?.tierId || '').trim(),
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'payment:subscribe_api_tier',
+            payload,
+            requireKey: true,
+            handler: async () => {
+                if (!payload.tierId) {
+                    const error = new Error('tierId is required');
+                    error.statusCode = 400;
+                    throw error;
+                }
 
-        const user = await User.findById(req.user._id).select('email');
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+                const user = await User.findById(req.user._id).select('email');
+                if (!user) {
+                    const error = new Error('User not found');
+                    error.statusCode = 404;
+                    throw error;
+                }
 
-        const frontendUrl = resolveFrontendUrl();
-        const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
-            user,
-            planType: tierId === 'enterprise' ? 'enterprise' : 'pro',
-            successUrl: `${frontendUrl}/billing/success`,
-            cancelUrl: `${frontendUrl}/billing/cancel`,
-        }));
+                const frontendUrl = resolveFrontendUrl();
+                const session = await withPaymentCircuit(async () => createSubscriptionCheckoutSession({
+                    user,
+                    planType: payload.tierId === 'enterprise' ? 'enterprise' : 'pro',
+                    successUrl: `${frontendUrl}/billing/success`,
+                    cancelUrl: `${frontendUrl}/billing/cancel`,
+                }));
+
+                return {
+                    message: 'API Enterprise Billing subscription initiated',
+                    tierId: payload.tierId,
+                    sessionUrl: session.sessionUrl,
+                    sessionId: session.sessionId,
+                };
+            },
+        });
 
         clearPaymentBlock();
-        return res.json({
-            message: 'API Enterprise Billing subscription initiated',
-            tierId,
-            sessionUrl: session.sessionUrl,
-            sessionId: session.sessionId,
-        });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         await markPaymentFailure(error?.message || 'api_tier_subscribe_failed');
         return toPaymentErrorResponse(res, error, 'Failed to subscribe API tier');

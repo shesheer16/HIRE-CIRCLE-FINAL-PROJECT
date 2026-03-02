@@ -1,8 +1,15 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { DEFAULT_BASE_CURRENCY } = require('../config/currencyConfig');
 
 const withdrawalRequestSchema = new mongoose.Schema(
     {
+        withdrawalRequestId: {
+            type: String,
+            required: true,
+            default: () => `wd_${crypto.randomUUID()}`,
+            index: true,
+        },
         userId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
@@ -54,6 +61,15 @@ const withdrawalRequestSchema = new mongoose.Schema(
             type: String,
             default: null,
         },
+        idempotencyKey: {
+            type: String,
+            required: true,
+            index: true,
+        },
+        requestBodyHash: {
+            type: String,
+            required: true,
+        },
         metadata: {
             type: mongoose.Schema.Types.Mixed,
             default: {},
@@ -65,5 +81,19 @@ const withdrawalRequestSchema = new mongoose.Schema(
 );
 
 withdrawalRequestSchema.index({ userId: 1, status: 1, requestedAt: -1 });
+withdrawalRequestSchema.index(
+    { withdrawalRequestId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { withdrawalRequestId: { $type: 'string' } },
+    }
+);
+withdrawalRequestSchema.index(
+    { idempotencyKey: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+    }
+);
 
 module.exports = mongoose.model('WithdrawalRequest', withdrawalRequestSchema);

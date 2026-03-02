@@ -40,6 +40,7 @@ const createPaymentIntent = async (req, res) => {
             req,
             scope: 'payment:create_intent',
             payload,
+            requireKey: true,
             handler: async ({ idempotencyKey }) => {
                 const { provider, intentType, amount, currency = 'INR', referenceId = null, metadata = {} } = payload;
 
@@ -81,6 +82,7 @@ const verifyPayment = async (req, res) => {
             req,
             scope: 'payment:verify',
             payload,
+            requireKey: true,
             handler: async () => {
                 const verified = await verifyPaymentRecord({
                     userId: req.user._id,
@@ -115,6 +117,7 @@ const refundPayment = async (req, res) => {
             req,
             scope: 'payment:refund',
             payload,
+            requireKey: true,
             handler: async () => {
                 const refunded = await refundPaymentRecord({
                     actorId: req.user._id,
@@ -343,15 +346,32 @@ const updateWalletKycController = async (req, res) => {
 
 const requestWithdrawalController = async (req, res) => {
     try {
-        const withdrawal = await requestWithdrawal({
-            userId: req.user._id,
+        const payload = {
             amount: req.body?.amount,
             currency: req.body?.currency || 'INR',
-            actorId: req.user._id,
             metadata: req.body?.metadata || {},
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'withdrawal:request',
+            payload,
+            requireKey: true,
+            handler: async ({ idempotencyKey, requestHash }) => {
+                const withdrawal = await requestWithdrawal({
+                    userId: req.user._id,
+                    amount: payload.amount,
+                    currency: payload.currency,
+                    actorId: req.user._id,
+                    metadata: payload.metadata,
+                    idempotencyKey,
+                    requestBodyHash: requestHash,
+                });
+
+                return { withdrawal };
+            },
         });
 
-        return res.status(200).json({ withdrawal });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         return handleError(res, error, 'Failed to request withdrawal');
     }
@@ -385,13 +405,27 @@ const listAllWithdrawals = async (req, res) => {
 
 const approveWithdrawalController = async (req, res) => {
     try {
-        const withdrawal = await approveWithdrawal({
+        const payload = {
             withdrawalId: req.params.withdrawalId,
-            actorId: req.user._id,
             payoutReferenceId: req.body?.payoutReferenceId || null,
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'withdrawal:approve',
+            payload,
+            requireKey: true,
+            handler: async () => {
+                const withdrawal = await approveWithdrawal({
+                    withdrawalId: payload.withdrawalId,
+                    actorId: req.user._id,
+                    payoutReferenceId: payload.payoutReferenceId,
+                });
+
+                return { withdrawal };
+            },
         });
 
-        return res.status(200).json({ withdrawal });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         return handleError(res, error, 'Failed to approve withdrawal');
     }
@@ -399,13 +433,27 @@ const approveWithdrawalController = async (req, res) => {
 
 const rejectWithdrawalController = async (req, res) => {
     try {
-        const withdrawal = await rejectWithdrawal({
+        const payload = {
             withdrawalId: req.params.withdrawalId,
-            actorId: req.user._id,
             reason: req.body?.reason || 'rejected_by_admin',
+        };
+        const result = await executeIdempotent({
+            req,
+            scope: 'withdrawal:reject',
+            payload,
+            requireKey: true,
+            handler: async () => {
+                const withdrawal = await rejectWithdrawal({
+                    withdrawalId: payload.withdrawalId,
+                    actorId: req.user._id,
+                    reason: payload.reason,
+                });
+
+                return { withdrawal };
+            },
         });
 
-        return res.status(200).json({ withdrawal });
+        return res.status(result.statusCode).json(result.body);
     } catch (error) {
         return handleError(res, error, 'Failed to reject withdrawal');
     }

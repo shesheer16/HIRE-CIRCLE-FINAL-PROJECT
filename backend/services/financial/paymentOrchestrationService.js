@@ -59,40 +59,63 @@ const createPaymentIntentRecord = async ({
         idempotencyKey,
     });
 
-    const record = await PaymentRecord.create({
-        userId,
-        provider,
-        intentType,
-        referenceId: referenceId ? String(referenceId) : null,
-        amount: normalizedAmount,
-        currency: normalizedCurrency,
-        status: providerResponse.status === 'succeeded' ? 'captured' : 'created',
-        providerOrderId: providerResponse.providerOrderId || null,
-        providerPaymentId: providerResponse.providerPaymentId || null,
-        providerIntentId: providerResponse.providerIntentId || null,
-        idempotencyKey,
-        metadata: {
-            ...metadata,
-            providerPayload: providerResponse.raw,
-        },
-    });
-
-    await logFinancialAction({
-        actorId: userId,
-        actionType: 'payment.intent_created',
-        referenceId: String(record._id),
-        previousState: {},
-        newState: {
+    let record = null;
+    let createdFresh = false;
+    try {
+        record = await PaymentRecord.create({
+            userId,
             provider,
             intentType,
+            referenceId: referenceId ? String(referenceId) : null,
             amount: normalizedAmount,
             currency: normalizedCurrency,
-            status: record.status,
-        },
-        metadata: {
-            referenceId: referenceId ? String(referenceId) : null,
-        },
-    });
+            status: providerResponse.status === 'succeeded' ? 'captured' : 'created',
+            providerOrderId: providerResponse.providerOrderId || null,
+            providerPaymentId: providerResponse.providerPaymentId || null,
+            providerIntentId: providerResponse.providerIntentId || null,
+            idempotencyKey,
+            metadata: {
+                ...metadata,
+                providerPayload: providerResponse.raw,
+            },
+        });
+        createdFresh = true;
+    } catch (error) {
+        if (Number(error?.code) !== 11000 || !idempotencyKey) {
+            throw error;
+        }
+
+        record = await PaymentRecord.findOne({
+            userId,
+            intentType,
+            idempotencyKey: String(idempotencyKey),
+        });
+
+        if (!record) {
+            const conflict = new Error('Payment intent idempotency conflict');
+            conflict.statusCode = 409;
+            throw conflict;
+        }
+    }
+
+    if (createdFresh) {
+        await logFinancialAction({
+            actorId: userId,
+            actionType: 'payment.intent_created',
+            referenceId: String(record._id),
+            previousState: {},
+            newState: {
+                provider,
+                intentType,
+                amount: normalizedAmount,
+                currency: normalizedCurrency,
+                status: record.status,
+            },
+            metadata: {
+                referenceId: referenceId ? String(referenceId) : null,
+            },
+        });
+    }
 
     return {
         paymentRecord: record,

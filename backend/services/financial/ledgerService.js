@@ -21,7 +21,7 @@ const ensureObjectId = (value) => {
     throw new Error('Invalid user id for wallet transaction');
 };
 
-const ensureWallet = async ({ userId, currency = 'INR' }) => Wallet.findOneAndUpdate(
+const ensureWallet = async ({ userId, currency = 'INR', session = null }) => Wallet.findOneAndUpdate(
     { userId: ensureObjectId(userId) },
     {
         $setOnInsert: {
@@ -38,6 +38,7 @@ const ensureWallet = async ({ userId, currency = 'INR' }) => Wallet.findOneAndUp
     {
         returnDocument: 'after',
         upsert: true,
+        ...(session ? { session } : {}),
     }
 );
 
@@ -55,25 +56,35 @@ const createTransaction = async ({
     pendingBalanceAfter,
     metadata = {},
     idempotencyKey = null,
-}) => FinancialTransaction.create({
-    userId,
-    type,
-    source,
-    referenceId: String(referenceId || ''),
-    amount,
-    currency: String(currency || 'INR').toUpperCase(),
-    status,
-    balanceBefore,
-    balanceAfter,
-    pendingBalanceBefore,
-    pendingBalanceAfter,
-    metadata,
-    idempotencyKey,
-});
+    session = null,
+}) => {
+    const payload = {
+        userId,
+        type,
+        source,
+        referenceId: String(referenceId || ''),
+        amount,
+        currency: String(currency || 'INR').toUpperCase(),
+        status,
+        balanceBefore,
+        balanceAfter,
+        pendingBalanceBefore,
+        pendingBalanceAfter,
+        metadata,
+        idempotencyKey,
+    };
 
-const creditAvailable = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null }) => {
+    if (!session) {
+        return FinancialTransaction.create(payload);
+    }
+
+    const [row] = await FinancialTransaction.create([payload], { session });
+    return row;
+};
+
+const creditAvailable = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null, session = null }) => {
     const normalizedAmount = normalizeAmount(amount);
-    await ensureWallet({ userId, currency });
+    await ensureWallet({ userId, currency, session });
 
     const wallet = await Wallet.findOneAndUpdate(
         { userId: ensureObjectId(userId) },
@@ -81,7 +92,7 @@ const creditAvailable = async ({ userId, amount, source, referenceId, currency =
             $inc: { balance: normalizedAmount },
             $set: { updatedAt: new Date() },
         },
-        { returnDocument: 'after' }
+        { returnDocument: 'after', ...(session ? { session } : {}) }
     );
 
     const balanceAfter = Number(wallet.balance || 0);
@@ -100,6 +111,7 @@ const creditAvailable = async ({ userId, amount, source, referenceId, currency =
         pendingBalanceAfter: Number(wallet.pendingBalance || 0),
         metadata,
         idempotencyKey,
+        session,
     });
 
     return {
@@ -108,9 +120,9 @@ const creditAvailable = async ({ userId, amount, source, referenceId, currency =
     };
 };
 
-const debitAvailable = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null }) => {
+const debitAvailable = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null, session = null }) => {
     const normalizedAmount = normalizeAmount(amount);
-    await ensureWallet({ userId, currency });
+    await ensureWallet({ userId, currency, session });
 
     const wallet = await Wallet.findOneAndUpdate(
         {
@@ -121,7 +133,7 @@ const debitAvailable = async ({ userId, amount, source, referenceId, currency = 
             $inc: { balance: -normalizedAmount },
             $set: { updatedAt: new Date() },
         },
-        { returnDocument: 'after' }
+        { returnDocument: 'after', ...(session ? { session } : {}) }
     );
 
     if (!wallet) {
@@ -146,6 +158,7 @@ const debitAvailable = async ({ userId, amount, source, referenceId, currency = 
         pendingBalanceAfter: Number(wallet.pendingBalance || 0),
         metadata,
         idempotencyKey,
+        session,
     });
 
     return {
@@ -154,9 +167,9 @@ const debitAvailable = async ({ userId, amount, source, referenceId, currency = 
     };
 };
 
-const creditPending = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null }) => {
+const creditPending = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null, session = null }) => {
     const normalizedAmount = normalizeAmount(amount);
-    await ensureWallet({ userId, currency });
+    await ensureWallet({ userId, currency, session });
 
     const wallet = await Wallet.findOneAndUpdate(
         { userId: ensureObjectId(userId) },
@@ -164,7 +177,7 @@ const creditPending = async ({ userId, amount, source, referenceId, currency = '
             $inc: { pendingBalance: normalizedAmount },
             $set: { updatedAt: new Date() },
         },
-        { returnDocument: 'after' }
+        { returnDocument: 'after', ...(session ? { session } : {}) }
     );
 
     const pendingAfter = Number(wallet.pendingBalance || 0);
@@ -183,6 +196,7 @@ const creditPending = async ({ userId, amount, source, referenceId, currency = '
         pendingBalanceAfter: pendingAfter,
         metadata,
         idempotencyKey,
+        session,
     });
 
     return {
@@ -191,9 +205,9 @@ const creditPending = async ({ userId, amount, source, referenceId, currency = '
     };
 };
 
-const debitPending = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null }) => {
+const debitPending = async ({ userId, amount, source, referenceId, currency = 'INR', metadata = {}, idempotencyKey = null, session = null }) => {
     const normalizedAmount = normalizeAmount(amount);
-    await ensureWallet({ userId, currency });
+    await ensureWallet({ userId, currency, session });
 
     const wallet = await Wallet.findOneAndUpdate(
         {
@@ -204,7 +218,7 @@ const debitPending = async ({ userId, amount, source, referenceId, currency = 'I
             $inc: { pendingBalance: -normalizedAmount },
             $set: { updatedAt: new Date() },
         },
-        { returnDocument: 'after' }
+        { returnDocument: 'after', ...(session ? { session } : {}) }
     );
 
     if (!wallet) {
@@ -229,6 +243,7 @@ const debitPending = async ({ userId, amount, source, referenceId, currency = 'I
         pendingBalanceAfter: pendingAfter,
         metadata,
         idempotencyKey,
+        session,
     });
 
     return {
@@ -237,7 +252,7 @@ const debitPending = async ({ userId, amount, source, referenceId, currency = 'I
     };
 };
 
-const movePendingToAvailable = async ({ userId, amount, referenceId, currency = 'INR', metadata = {} }) => {
+const movePendingToAvailable = async ({ userId, amount, referenceId, currency = 'INR', metadata = {}, session = null }) => {
     const normalizedAmount = normalizeAmount(amount);
 
     const debit = await debitPending({
@@ -250,6 +265,7 @@ const movePendingToAvailable = async ({ userId, amount, referenceId, currency = 
             ...metadata,
             movement: 'pending_to_available',
         },
+        session,
     });
 
     const credit = await creditAvailable({
@@ -262,6 +278,7 @@ const movePendingToAvailable = async ({ userId, amount, referenceId, currency = 
             ...metadata,
             movement: 'pending_to_available',
         },
+        session,
     });
 
     return {
@@ -271,7 +288,7 @@ const movePendingToAvailable = async ({ userId, amount, referenceId, currency = 
     };
 };
 
-const getWalletSnapshot = async ({ userId, currency = 'INR' }) => ensureWallet({ userId, currency });
+const getWalletSnapshot = async ({ userId, currency = 'INR', session = null }) => ensureWallet({ userId, currency, session });
 
 const getTransactions = async ({ userId, limit = 100, offset = 0 }) => FinancialTransaction.find({ userId: ensureObjectId(userId) })
     .sort({ createdAt: -1 })
