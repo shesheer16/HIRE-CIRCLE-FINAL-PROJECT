@@ -7,11 +7,15 @@ import './src/i18n'; // Load translations
 
 // Screens
 import RoleSelectionScreen from './src/screens/RoleSelectionScreen';
+import OnboardingScreen from './src/screens/OnboardingScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import BasicProfileSetupScreen from './src/screens/BasicProfileSetupScreen';
 import AccountSetupDetailsScreen from './src/screens/AccountSetupDetailsScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import OTPVerificationScreen from './src/screens/OTPVerificationScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
+import VerificationRequiredScreen from './src/screens/VerificationRequiredScreen';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
 import VideoRecordScreen from './src/screens/VideoRecordScreen';
 import SmartInterviewContainer from './src/containers/SmartInterviewContainer';
@@ -27,6 +31,13 @@ import ProfileSetupWizardScreen from './src/screens/ProfileSetupWizardScreen';
 import ApplicantTimelineScreen from './src/screens/ApplicantTimelineScreen';
 import SubscriptionScreen from './src/screens/SubscriptionScreen';
 import NotificationsScreen from './src/screens/NotificationsScreen';
+import ProfilesScreen from './src/screens/ProfilesScreen';
+import WalletScreen from './src/screens/WalletScreen';
+import TransactionHistoryScreen from './src/screens/TransactionHistoryScreen';
+import FundEscrowScreen from './src/screens/FundEscrowScreen';
+import EscrowDetailScreen from './src/screens/EscrowDetailScreen';
+import WithdrawRequestScreen from './src/screens/WithdrawRequestScreen';
+import DisputeFormScreen from './src/screens/DisputeFormScreen';
 
 
 import { AuthProvider, AuthContext } from './src/context/AuthContext';
@@ -46,6 +57,7 @@ import { AppStoreProvider, useAppStore } from './src/store/AppStore';
 import { trackEvent } from './src/services/analytics';
 import client, { setApiErrorHandler, setUnauthorizedHandler } from './src/api/client';
 import { ThemeProvider } from './src/theme/ThemeProvider';
+import { getNormalizedProfileReadiness, isProfileRoleGateError } from './src/utils/profileReadiness';
 
 let SplashScreenApi = {
   preventAutoHideAsync: async () => { },
@@ -88,7 +100,17 @@ const normalizeObjectId = (value) => {
 };
 
 const AppNav = () => {
-  const { isLoading, userToken, userInfo, updateUserInfo, logout } = useContext(AuthContext);
+  const {
+    isLoading,
+    userToken,
+    userInfo,
+    updateUserInfo,
+    logout,
+    hasCompletedOnboarding,
+    authEntryRole,
+    pendingPostAuthSetup,
+    consumePendingPostAuthSetup,
+  } = useContext(AuthContext);
   const { role, setSocketStatus, incrementNotificationsCount, setNotificationsCount } = useAppStore();
   const notificationListener = useRef();
   const responseListener = useRef();
@@ -106,11 +128,24 @@ const AppNav = () => {
     message: '',
     retry: null,
   });
-  const hasActiveSession = AUTH_BYPASS_FOR_QA ? true : Boolean(userToken);
-  const requiresRoleSelection = AUTH_BYPASS_FOR_QA
-    ? !Boolean(userInfo?.hasSelectedRole)
-    : !Boolean(userInfo?.hasSelectedRole);
-  const shouldShowProfileSetup = !AUTH_BYPASS_FOR_QA && profileGateState.requiresSetup;
+  const hasActiveSession = Boolean(userToken);
+  const isAuthenticated = Boolean(userToken);
+  const authInitialRouteName = !hasCompletedOnboarding
+    ? 'Onboarding'
+    : (authEntryRole ? 'Login' : 'RoleSelection');
+  const authInitialLoginParams = authEntryRole ? { selectedRole: authEntryRole } : undefined;
+  const shouldShowPendingPostAuthSetup = isAuthenticated && Boolean(pendingPostAuthSetup);
+  const shouldShowProfileSetup = !shouldShowPendingPostAuthSetup && !AUTH_BYPASS_FOR_QA && profileGateState.requiresSetup;
+  const navigatorInitialRouteName = !isAuthenticated
+    ? authInitialRouteName
+    : shouldShowPendingPostAuthSetup
+      ? (pendingPostAuthSetup === 'worker_profile' ? 'ProfileSetupWizard' : 'EmployerProfileCreate')
+      : (shouldShowProfileSetup ? 'ProfileSetupWizard' : 'MainTab');
+  const navigatorKey = !isAuthenticated
+    ? `auth:${authInitialRouteName}:${authEntryRole || 'none'}:${hasCompletedOnboarding ? '1' : '0'}`
+    : shouldShowPendingPostAuthSetup
+      ? `pending:${pendingPostAuthSetup}`
+      : (shouldShowProfileSetup ? 'profile-setup' : 'main-app');
 
   const resolveBootstrapRole = useCallback(() => {
     const roleFromStore = String(role || '').trim().toLowerCase();
@@ -218,15 +253,6 @@ const AppNav = () => {
 
   useEffect(() => {
     const onApiError = (apiError) => {
-      const errorMessage = String(apiError?.message || '').toLowerCase();
-      const isProfileRoleGateError = (
-        errorMessage.includes('worker profile requires at least one role profile')
-        || errorMessage.includes('role profile')
-        || errorMessage.includes('profile requires')
-        || errorMessage.includes('profile_incomplete_role')
-        || errorMessage.includes('employer profile incomplete')
-      );
-
       if (apiError?.type === 'network') {
         // Keep UI clean in QA/launch-preview mode; feature screens already provide empty states.
         return;
@@ -234,7 +260,7 @@ const AppNav = () => {
 
       if (apiError?.type === 'permission') {
         // Role/profile gate errors are handled at screen-level with empty-state UX.
-        if (isProfileRoleGateError || AUTH_BYPASS_FOR_QA) return;
+        if (isProfileRoleGateError(apiError) || AUTH_BYPASS_FOR_QA) return;
         return;
       }
 
@@ -444,8 +470,13 @@ const AppNav = () => {
         });
 
         if (completion) {
-          await updateUserInfo?.({
+          const readiness = getNormalizedProfileReadiness({
             hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
+            profileComplete: Boolean(completion?.meetsProfileCompleteThreshold),
+          });
+          await updateUserInfo?.({
+            hasCompletedProfile: readiness.hasCompletedProfile,
+            profileComplete: readiness.profileComplete,
             profileCompletion: completion,
           });
         }
@@ -463,7 +494,7 @@ const AppNav = () => {
     return () => {
       cancelled = true;
     };
-  }, [userInfo?.activeRole, userInfo?.hasCompletedProfile, userToken, updateUserInfo]);
+  }, [userInfo?.activeRole, userInfo?.hasCompletedProfile, userInfo?.profileComplete, userToken, updateUserInfo]);
 
   const handleProfileWizardCompleted = useCallback(async (completion) => {
     setProfileGateState({
@@ -472,12 +503,31 @@ const AppNav = () => {
       completion: completion || null,
     });
     if (completion) {
-      await updateUserInfo?.({
+      const readiness = getNormalizedProfileReadiness({
         hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
+        profileComplete: Boolean(completion?.meetsProfileCompleteThreshold),
+      });
+      await updateUserInfo?.({
+        hasCompletedProfile: readiness.hasCompletedProfile,
+        profileComplete: readiness.profileComplete,
         profileCompletion: completion,
       });
     }
   }, [updateUserInfo]);
+
+  const handlePendingWorkerSetupCompleted = useCallback(async (completion) => {
+    await handleProfileWizardCompleted(completion || null);
+    await consumePendingPostAuthSetup?.();
+  }, [consumePendingPostAuthSetup, handleProfileWizardCompleted]);
+
+  const handlePendingEmployerSetupCompleted = useCallback(async () => {
+    setProfileGateState((prev) => ({
+      checking: false,
+      requiresSetup: false,
+      completion: prev.completion,
+    }));
+    await consumePendingPostAuthSetup?.();
+  }, [consumePendingPostAuthSetup]);
 
   useEffect(() => {
     let active = true;
@@ -549,19 +599,52 @@ const AppNav = () => {
   return (
     <NavigationContainer ref={navigationRef} theme={APP_NAV_THEME}>
       <Stack.Navigator
+        key={navigatorKey}
+        initialRouteName={navigatorInitialRouteName}
         screenOptions={{
           headerShown: false,
           cardStyle: { backgroundColor: APP_BACKGROUND }
         }}
       >
-        {requiresRoleSelection ? (
+        {!isAuthenticated ? (
           <>
+            <Stack.Screen name="Onboarding" component={OnboardingScreen} />
             <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
-            <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Screen
+              name="Login"
+              component={LoginScreen}
+              initialParams={authInitialLoginParams}
+            />
             <Stack.Screen name="Register" component={RegisterScreen} />
             <Stack.Screen name="BasicProfileSetup" component={BasicProfileSetupScreen} />
             <Stack.Screen name="AccountSetupDetails" component={AccountSetupDetailsScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="OTPVerification" component={OTPVerificationScreen} />
+            <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+            <Stack.Screen name="VerificationRequired" component={VerificationRequiredScreen} />
+          </>
+        ) : shouldShowPendingPostAuthSetup ? (
+          <>
+            {pendingPostAuthSetup === 'worker_profile' ? (
+              <Stack.Screen name="ProfileSetupWizard">
+                {(props) => (
+                  <ProfileSetupWizardScreen
+                    {...props}
+                    completionSnapshot={profileGateState.completion}
+                    onCompleted={handlePendingWorkerSetupCompleted}
+                  />
+                )}
+              </Stack.Screen>
+            ) : (
+              <Stack.Screen name="EmployerProfileCreate">
+                {(props) => (
+                  <EmployerProfileCreateScreen
+                    {...props}
+                    onCompleted={handlePendingEmployerSetupCompleted}
+                  />
+                )}
+              </Stack.Screen>
+            )}
           </>
         ) : shouldShowProfileSetup ? (
           <>
@@ -602,9 +685,17 @@ const AppNav = () => {
             <Stack.Screen name="Chat" component={ChatContainer} />
             <Stack.Screen name="ContactInfo" component={CompanyDetailsScreen} />
             <Stack.Screen name="EmployerProfileCreate" component={EmployerProfileCreateScreen} />
+            <Stack.Screen name="ProfileSetupWizard" component={ProfileSetupWizardScreen} />
             <Stack.Screen name="ApplicantTimeline" component={ApplicantTimelineScreen} />
             <Stack.Screen name="Subscription" component={SubscriptionScreen} />
             <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ title: 'Notifications', headerBackTitle: 'Back' }} />
+            <Stack.Screen name="Profiles" component={ProfilesScreen} />
+            <Stack.Screen name="Wallet" component={WalletScreen} />
+            <Stack.Screen name="TransactionHistory" component={TransactionHistoryScreen} />
+            <Stack.Screen name="FundEscrow" component={FundEscrowScreen} />
+            <Stack.Screen name="EscrowDetail" component={EscrowDetailScreen} />
+            <Stack.Screen name="WithdrawRequest" component={WithdrawRequestScreen} />
+            <Stack.Screen name="DisputeForm" component={DisputeFormScreen} />
           </>
         )}
       </Stack.Navigator>

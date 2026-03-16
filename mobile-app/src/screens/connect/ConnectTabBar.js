@@ -1,7 +1,9 @@
 import React, { memo, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { MOTION } from '../../theme/motion';
+import { SCREEN_CHROME } from '../../theme/theme';
 
 const TAB_META = {
     Feed: { icon: 'newspaper-outline', iconActive: 'newspaper' },
@@ -36,15 +38,35 @@ function TabButton({ tab, active, onPress }) {
 
     return (
         <TouchableOpacity
-            style={[styles.tabButton, active && styles.tabButtonActive]}
+            style={styles.tabButtonPressable}
             onPress={onPress}
             activeOpacity={0.82}
         >
-            <Animated.View style={{ transform: [{ scale }], opacity, alignItems: 'center' }}>
-                <Ionicons name={iconName} size={16} color={active ? '#ffffff' : '#5b4b7c'} />
-                <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
-                    {tab}
-                </Text>
+            <Animated.View style={[styles.tabButton, active && styles.tabButtonActive, { transform: [{ scale }], opacity }]}>
+                {active ? (
+                    <LinearGradient
+                        colors={['#9f5cff', '#7c3aed', '#5b48f2']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.tabButtonGradient}
+                    >
+                        <View style={styles.tabIconBubbleActive}>
+                            <Ionicons name={iconName} size={15} color="#ffffff" />
+                        </View>
+                        <Text style={[styles.tabText, styles.tabTextActive]} numberOfLines={1}>
+                            {tab}
+                        </Text>
+                    </LinearGradient>
+                ) : (
+                    <>
+                        <View style={styles.tabIconBubble}>
+                            <Ionicons name={iconName} size={15} color="#6f5b98" />
+                        </View>
+                        <Text style={styles.tabText} numberOfLines={1}>
+                            {tab}
+                        </Text>
+                    </>
+                )}
             </Animated.View>
         </TouchableOpacity>
     );
@@ -74,51 +96,85 @@ export default memo(ConnectTabBarComponent);
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: '#f4edff',
+        backgroundColor: '#fbf8ff',
         paddingHorizontal: 12,
-        paddingTop: 6,
-        paddingBottom: 10,
+        paddingTop: 8,
+        paddingBottom: 12,
     },
     tabRow: {
         flexDirection: 'row',
         alignItems: 'stretch',
-        borderRadius: 18,
-        backgroundColor: '#efe5ff',
-        borderWidth: 1,
-        borderColor: '#e1d0ff',
-        paddingHorizontal: 5,
+        borderRadius: 22,
+        ...SCREEN_CHROME.contentCard,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        paddingHorizontal: 6,
         paddingVertical: 6,
-        gap: 4,
+        gap: 6,
         shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
+        shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.08,
-        shadowRadius: 9,
-        elevation: 1,
+        shadowRadius: 16,
+        elevation: 3,
     },
     tabSlot: {
         flex: 1,
     },
+    tabButtonPressable: {
+        borderRadius: 16,
+    },
     tabButton: {
-        minHeight: 50,
-        borderRadius: 13,
+        minHeight: 54,
+        borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 6,
+        overflow: 'hidden',
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     tabButtonActive: {
-        backgroundColor: '#7c3aed',
         shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
+        shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.16,
-        shadowRadius: 8,
-        elevation: 3,
+        shadowRadius: 14,
+        elevation: 4,
+    },
+    tabButtonGradient: {
+        minHeight: 54,
+        width: '100%',
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 7,
+        paddingHorizontal: 6,
+    },
+    tabIconBubble: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f4edff',
+        borderWidth: 1,
+        borderColor: '#e4d9ff',
+        marginBottom: 4,
+    },
+    tabIconBubbleActive: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.18)',
+        marginBottom: 4,
     },
     tabText: {
-        marginTop: 4,
-        color: '#5b4b7c',
+        color: '#5f4f82',
         fontSize: 10.5,
-        fontWeight: '700',
-        letterSpacing: 0.1,
+        fontWeight: '800',
+        letterSpacing: 0.15,
     },
     tabTextActive: {
         color: '#ffffff',

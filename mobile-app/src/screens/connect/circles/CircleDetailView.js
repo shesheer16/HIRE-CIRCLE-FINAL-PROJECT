@@ -271,8 +271,8 @@ function CircleDetailViewComponent({
                     {circleDetailTab === 'MEMBERS' ? (
                         <ScrollView contentContainerStyle={styles.sectionContent} showsVerticalScrollIndicator={false}>
                             <View style={styles.membersHeader}>
-                                <Text style={styles.membersTitle}>Community Leaders</Text>
-                                <Text style={styles.membersSortBadge}>Sorted by Karma</Text>
+                                <Text style={styles.membersTitle}>Members</Text>
+                                <Text style={styles.membersSortBadge}>Active in this community</Text>
                             </View>
 
                             {memberRows.length > 0 ? memberRows : (

@@ -17,12 +17,13 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconPlus, IconSearch } from '../../../components/Icons';
-import EmptyState from '../../../components/EmptyState';
 import MyCommunitiesSection from './MyCommunitiesSection';
 import CircleCard from './CircleCard';
 import client from '../../../api/client';
 import { RADIUS } from '../../../theme/theme';
 import { connectPalette, connectShadow } from '../connectPalette';
+import { ConnectSkeletonList } from '../ConnectSkeletons';
+import ConnectEmptyStateCard from '../ConnectEmptyState';
 
 function CirclesTabComponent({
     circles,
@@ -189,35 +190,40 @@ function CirclesTabComponent({
                 })}
             </View>
 
-            {errorMessage ? (
-                <View style={styles.errorBanner}>
-                    <Text style={styles.errorBannerText}>{errorMessage}</Text>
-                    <TouchableOpacity
-                        style={styles.errorBannerRetryButton}
-                        activeOpacity={0.85}
-                        onPress={onRefreshCircles}
-                    >
-                        <Text style={styles.errorBannerRetryText}>Retry</Text>
-                    </TouchableOpacity>
-                </View>
+            {errorMessage && explore.length > 0 ? (
+                <ConnectEmptyStateCard
+                    title="Communities are showing your last saved view"
+                    subtitle={errorMessage}
+                    actionLabel="Retry"
+                    onAction={onRefreshCircles}
+                    tone="info"
+                    inline
+                    style={styles.inlineStatusCard}
+                />
             ) : null}
 
         </>
-    ), [exploreQuery, joined, normalizedExploreQuery, onOpenCircle, exploreCategories, normalizedActiveCategory, errorMessage, onRefreshCircles]);
+    ), [explore.length, exploreQuery, joined, normalizedExploreQuery, onOpenCircle, exploreCategories, normalizedActiveCategory, errorMessage, onRefreshCircles]);
 
     const listEmpty = useMemo(() => (
-        <EmptyState
-            icon="👥"
-            title={normalizedExploreQuery ? 'No matching communities' : 'No communities yet'}
-            subtitle={normalizedExploreQuery ? 'Try a different search term.' : 'Circles appear here once created'}
-        />
-    ), [normalizedExploreQuery]);
+        errorMessage && explore.length === 0 ? (
+            <ConnectEmptyStateCard
+                title="Communities are unavailable right now"
+                subtitle={errorMessage}
+                actionLabel="Retry"
+                onAction={onRefreshCircles}
+                tone="error"
+            />
+        ) : (
+            <ConnectEmptyStateCard
+                title={normalizedExploreQuery ? 'No matching communities' : 'No communities yet'}
+                subtitle={normalizedExploreQuery ? 'Try a different search term.' : 'Circles appear here once created'}
+            />
+        )
+    ), [errorMessage, explore.length, normalizedExploreQuery, onRefreshCircles]);
 
     const loadingState = useMemo(() => (
-        <View style={styles.loaderCard}>
-            <ActivityIndicator size="small" color={connectPalette.accent} />
-            <Text style={styles.loaderText}>Loading communities...</Text>
-        </View>
+        <ConnectSkeletonList count={3} />
     ), []);
 
     const closeActionMenu = useCallback(() => {
@@ -323,7 +329,7 @@ function CirclesTabComponent({
                         colors={[connectPalette.accent]}
                     />
                 )}
-                removeClippedSubviews
+                removeClippedSubviews={Platform.OS === 'android'}
                 windowSize={10}
                 maxToRenderPerBatch={8}
                 initialNumToRender={8}
@@ -562,6 +568,9 @@ const styles = StyleSheet.create({
     categoryChipTextActive: {
         color: connectPalette.accentDark,
     },
+    inlineStatusCard: {
+        marginBottom: 12,
+    },
     errorBanner: {
         borderRadius: RADIUS.md,
         borderWidth: 1,
@@ -588,23 +597,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '800',
         color: '#ffffff',
-    },
-    loaderCard: {
-        borderRadius: RADIUS.xl,
-        borderWidth: 1,
-        borderColor: connectPalette.line,
-        backgroundColor: connectPalette.surface,
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 10,
-    },
-    loaderText: {
-        fontSize: 12,
-        color: connectPalette.muted,
-        fontWeight: '600',
     },
     circlesFab: {
         position: 'absolute',

@@ -34,6 +34,11 @@ const { explainMatchDecision, explainRankingDecision } = require('../services/de
 const { isCrossBorderAllowed, filterJobsByGeo, filterWorkersByGeo } = require('../services/geoMatchService');
 const { buildNearQuery } = require('../services/geoDiscoveryService');
 const { compute_match } = require('../services/computeMatchService');
+const {
+    evaluateProfileCompletion,
+    isUserProfileMarkedComplete,
+} = require('../services/profileCompletionService');
+const { enrichJobsWithEmployerBranding } = require('../services/employerBrandingService');
 
 const matchCache = new Map();
 const CACHE_TTL_SEC = 604800;
@@ -44,7 +49,6 @@ const clamp = (value, min, max) => {
     return Math.min(max, Math.max(min, parsed));
 };
 const clamp01 = (value) => clamp(value, 0, 1);
-const isProfileCompleted = (user = null) => Boolean(user && (user.profileComplete || user.hasCompletedProfile));
 const normalizeObjectIdHex = (value) => {
     const normalized = String(value || '').trim();
     if (!normalized || !mongoose.Types.ObjectId.isValid(normalized)) return null;
@@ -327,8 +331,8 @@ const getMatchesForEmployer = async (req, res) => {
         }
 
         const employer = await User.findById(employerUserId).select('hasCompletedProfile profileComplete').lean();
-        if (!isProfileCompleted(employer)) {
-            return res.status(403).json({ message: 'Please complete your profile first' });
+        if (!isUserProfileMarkedComplete(employer)) {
+            return res.status(403).json({ message: 'Complete your Employer profile to continue hiring actions.' });
         }
 
         const job = await Job.findById(jobId).lean();
@@ -352,7 +356,7 @@ const getMatchesForEmployer = async (req, res) => {
         const applicationByWorkerId = new Map(applications.map((application) => [String(application.worker), application]));
 
         const workers = await WorkerProfile.find({ _id: { $in: workerIds } })
-            .populate('user', 'name hasCompletedProfile profileComplete isVerified privacyPreferences country globalPreferences')
+            .populate('user', 'name hasCompletedProfile profileComplete isVerified privacyPreferences country globalPreferences avatar profilePicture profileImage')
             .lean();
         const workerById = new Map(
             workers.map((worker) => [String(worker?._id || ''), worker])
@@ -382,7 +386,7 @@ const getMatchesForEmployer = async (req, res) => {
             const trustMetrics = workerReputationMap.get(String(worker?.user?._id || worker?.user)) || null;
             const hasRoleProfiles = Array.isArray(worker.roleProfiles) && worker.roleProfiles.length > 0;
             const isWorkerProfileReady = Boolean(worker?.user)
-                && isProfileCompleted(worker?.user)
+                && isUserProfileMarkedComplete(worker?.user)
                 && hasRoleProfiles;
 
             const matchResult = isWorkerProfileReady
@@ -438,6 +442,9 @@ const getMatchesForEmployer = async (req, res) => {
             matchScore: Number(row.matchScore || 0),
             matchPercentage: Number(row.matchPercentage || 0),
             matchProbability: Number(row.matchProbability || 0),
+            matchScoreSource: 'match_engine',
+            matchModelVersionUsed: null,
+            probabilisticFallbackUsed: false,
             tier: toModelTierLabel(row.tier),
             tierCode: row.tier,
             trustScore: Number(row?.trustMetrics?.trustScore || 0),
@@ -533,16 +540,21 @@ const getMatchesForCandidate = async (req, res) => {
             return res.status(200).json([]);
         }
 
-        if (!isProfileCompleted(user)) {
-            // Completion flags can drift; if worker profile is valid, self-heal flags
-            // so matching remains available without requiring re-entry.
-            await User.updateOne(
-                { _id: req.user._id },
-                { $set: { profileComplete: true, hasCompletedProfile: true } }
-            ).catch(() => { });
-            if (user) {
-                user.profileComplete = true;
-                user.hasCompletedProfile = true;
+        if (!isUserProfileMarkedComplete(user)) {
+            const completion = evaluateProfileCompletion({
+                user,
+                workerProfile: worker,
+                roleOverride: 'worker',
+            });
+            if (completion?.meetsProfileCompleteThreshold) {
+                await User.updateOne(
+                    { _id: req.user._id },
+                    { $set: { profileComplete: true, hasCompletedProfile: true } }
+                ).catch(() => { });
+                if (user) {
+                    user.profileComplete = true;
+                    user.hasCompletedProfile = true;
+                }
             }
         }
         const baseQuery = {
@@ -712,6 +724,14 @@ const getMatchesForCandidate = async (req, res) => {
             whyThisMatchesYou: row.whyYouFit,
             workDnaVersionId,
         }));
+        const brandedJobs = await enrichJobsWithEmployerBranding(transparentRows.map((row) => row.job));
+        const brandedJobMap = new Map(
+            brandedJobs.map((job) => [String(job?._id || ''), job])
+        );
+        const transparentRowsWithBranding = transparentRows.map((row) => ({
+            ...row,
+            job: brandedJobMap.get(String(row?.job?._id || '')) || row.job,
+        }));
 
         setImmediate(() => {
             logMatchRun({
@@ -721,13 +741,13 @@ const getMatchesForCandidate = async (req, res) => {
                 modelVersionUsed: null,
                 stats: {
                     totalConsidered: jobs.length,
-                    totalReturned: transparentRows.length,
-                    avgScore: transparentRows.length
-                        ? transparentRows.reduce((sum, row) => sum + Number(row.matchProbability || 0), 0) / transparentRows.length
+                    totalReturned: transparentRowsWithBranding.length,
+                    avgScore: transparentRowsWithBranding.length
+                        ? transparentRowsWithBranding.reduce((sum, row) => sum + Number(row.matchProbability || 0), 0) / transparentRowsWithBranding.length
                         : 0,
                     rejectReasonCounts: {},
                 },
-                rows: transparentRows.map((row) => ({
+                rows: transparentRowsWithBranding.map((row) => ({
                     workerId: worker._id,
                     jobId: row.job?._id,
                     finalScore: Number(row.matchProbability || 0),
@@ -745,8 +765,8 @@ const getMatchesForCandidate = async (req, res) => {
         });
 
         try {
-            if (transparentRows.length > 0) {
-                const topJob = transparentRows[0]?.job;
+            if (transparentRowsWithBranding.length > 0) {
+                const topJob = transparentRowsWithBranding[0]?.job;
                 const matchMessage = topJob?.title ? `${topJob.title} could be a fit for you.` : 'A new role matches your profile.';
                 await createAndSendBehaviorNotification({
                     userId: req.user._id,
@@ -770,12 +790,12 @@ const getMatchesForCandidate = async (req, res) => {
                 userId: req.user._id,
                 featureKey: 'match_feed_viewed',
                 metadata: {
-                    results: transparentRows.length,
+                    results: transparentRowsWithBranding.length,
                 },
             }).catch(() => { });
         });
 
-        return res.json(transparentRows);
+        return res.json(transparentRowsWithBranding);
     } catch (error) {
         console.warn('Candidate match failed:', error);
         return res.status(500).json({ message: 'Candidate match failed' });
@@ -944,6 +964,16 @@ const getMatchProbability = async (req, res) => {
             tier: resolvedTier,
             matchModelVersionUsed,
             fallbackUsed,
+            probabilisticFallbackUsed: fallbackUsed,
+            matchScoreSource: matchModelVersionUsed
+                ? 'probabilistic_model'
+                : (fallbackUsed ? 'deterministic_fallback' : 'match_engine'),
+            timelineTransparency: {
+                jobPostedAt: job.createdAt || null,
+                jobUpdatedAt: job.updatedAt || null,
+                workerLastActiveAt: worker?.lastActiveAt || worker?.updatedAt || null,
+                scoredAt: new Date().toISOString(),
+            },
             explainability: resolvedExplainability,
             aiInsight: matchResult.aiInsight || null,
             ai_insight: matchResult.aiInsight || null,

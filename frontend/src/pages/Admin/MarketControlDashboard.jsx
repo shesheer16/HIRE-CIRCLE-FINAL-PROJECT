@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import AdminShell from './AdminShell';
+import { buildApiUrl } from '../../config/api';
+import { clearAdminSession, getAdminToken } from '../../utils/adminSession';
 
 const cardStyle = {
   background: '#ffffff',
@@ -20,24 +24,19 @@ const liquidityColor = (workersPerJob) => {
 };
 
 const MarketControlDashboard = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
   const [alerts, setAlerts] = useState([]);
 
-  const userInfo = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem('userInfo') || '{}');
-    } catch (e) {
-      return {};
-    }
-  }, []);
+  const adminToken = useMemo(() => getAdminToken(), []);
 
   const authConfig = useMemo(() => ({
     headers: {
-      Authorization: `Bearer ${userInfo?.token || ''}`,
+      Authorization: `Bearer ${adminToken}`,
     },
-  }), [userInfo?.token]);
+  }), [adminToken]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -45,18 +44,24 @@ const MarketControlDashboard = () => {
 
     try {
       const [marketRes, alertsRes] = await Promise.all([
-        axios.get('/api/admin/market-control', authConfig),
-        axios.get('/api/admin/market-alerts', authConfig),
+        axios.get(buildApiUrl('/api/admin/market-control'), authConfig),
+        axios.get(buildApiUrl('/api/admin/market-alerts'), authConfig),
       ]);
 
       setData(marketRes.data?.data || null);
       setAlerts(alertsRes.data?.data || []);
     } catch (loadError) {
+      if ([401, 403].includes(loadError?.response?.status)) {
+        clearAdminSession();
+        navigate('/admin/login', { replace: true });
+        return;
+      }
+
       setError(loadError?.response?.data?.message || 'Failed to load market control data');
     } finally {
       setLoading(false);
     }
-  }, [authConfig]);
+  }, [authConfig, navigate]);
 
   useEffect(() => {
     loadData();
@@ -72,12 +77,11 @@ const MarketControlDashboard = () => {
   const underSuppliedCities = cityLiquidity.filter((row) => row.marketBand === 'under_supplied').length;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: 24 }}>
+    <AdminShell
+      title="Market Control Dashboard"
+      subtitle="City liquidity, expansion readiness, employer tiering, and market anomalies."
+    >
       <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-        <h1 style={{ margin: 0, color: '#0f172a' }}>Market Control Dashboard</h1>
-        <p style={{ color: '#475569', marginTop: 8 }}>
-          City liquidity, expansion readiness, employer tiering, and market anomalies.
-        </p>
 
         <div style={{ ...cardStyle, marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ color: '#64748b' }}>Generated: {data?.generatedAt || '--'}</div>
@@ -183,7 +187,7 @@ const MarketControlDashboard = () => {
           </>
         )}
       </div>
-    </div>
+    </AdminShell>
   );
 };
 

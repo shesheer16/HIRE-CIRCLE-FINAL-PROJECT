@@ -14,12 +14,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
 
 export default function ForgotPasswordScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const selectedRole = String(route?.params?.selectedRole || 'worker').toLowerCase() === 'employer'
-        ? 'employer'
-        : 'worker';
+    const selectedRole = normalizeSelectedRole(route?.params?.selectedRole || 'worker');
     const [stage, setStage] = useState('identity');
     const [identityMode, setIdentityMode] = useState('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -57,8 +57,13 @@ export default function ForgotPasswordScreen({ navigation, route }) {
         }
         if (navigation.canGoBack()) {
             navigation.goBack();
+            return;
         }
-    }, [navigation, stage]);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Login',
+        });
+    }, [navigation, selectedRole, stage]);
 
     const sendOtp = useCallback(async () => {
         if (loading || !canSendOtp) return;

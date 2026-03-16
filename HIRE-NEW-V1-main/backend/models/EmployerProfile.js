@@ -22,6 +22,20 @@ const employerProfileSchema = mongoose.Schema(
             type: String,
             required: true
         },
+        district: {
+            type: String,
+            default: null,
+            index: true,
+        },
+        mandal: {
+            type: String,
+            default: null,
+            index: true,
+        },
+        locationLabel: {
+            type: String,
+            default: null,
+        },
         contactPerson: {
             type: String,
             default: '',
@@ -50,6 +64,7 @@ const employerProfileSchema = mongoose.Schema(
 );
 
 employerProfileSchema.index({ user: 1 });
+employerProfileSchema.index({ district: 1, mandal: 1 });
 
 const EmployerProfile = mongoose.model('EmployerProfile', employerProfileSchema);
 

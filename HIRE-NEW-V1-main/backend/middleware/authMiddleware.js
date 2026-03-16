@@ -3,6 +3,7 @@ const { isRecruiter } = require('../utils/roleGuards');
 const { applyRoleContractToUser } = require('../utils/userRoleContract');
 const logger = require('../utils/logger');
 const { verifyAccessToken } = require('../utils/tokenService');
+const { isUserProfileMarkedComplete } = require('../services/profileCompletionService');
 
 const PROFILE_GATED_ROUTE_PREFIXES = [
     '/api/jobs',
@@ -91,7 +92,7 @@ const protect = async (req, res, next) => {
         const reqPath = normalizePathname(req.originalUrl);
         const isExempt = exemptPaths.some((ep) => matchesPrefix(reqPath, ep));
         const profileGatedRoute = PROFILE_GATED_ROUTE_PREFIXES.some((prefix) => matchesPrefix(reqPath, prefix));
-        const hasCompletedProfile = Boolean(user.profileComplete || user.hasCompletedProfile);
+        const hasCompletedProfile = isUserProfileMarkedComplete(user);
 
         if (!isExempt) {
             if (user.otpVerified === false) {
@@ -106,7 +107,12 @@ const protect = async (req, res, next) => {
                 const isWorkerJobsRoute = String(activeRole || '').toLowerCase() === 'worker'
                     && matchesPrefix(reqPath, '/api/jobs');
                 if (!isEmployerJobsRoute && !isWorkerJobsRoute && !hasCompletedProfile) {
-                    return res.status(403).json({ message: 'Profile completion required', code: 'PROFILE_INCOMPLETE' });
+                    return res.status(403).json({
+                        message: activeRole === 'employer'
+                            ? 'Complete your Employer profile to continue hiring actions.'
+                            : 'Complete your Job Seeker profile to unlock matches and applications.',
+                        code: 'PROFILE_INCOMPLETE',
+                    });
                 }
 
                 // Role-Specific Validations for profile-gated flows.
@@ -114,13 +120,19 @@ const protect = async (req, res, next) => {
                     const EmployerProfile = require('../models/EmployerProfile');
                     const empProfile = await EmployerProfile.findOne({ user: user._id });
                     if (!empProfile || !empProfile.companyName) {
-                        return res.status(403).json({ message: 'Employer profile incomplete', code: 'PROFILE_INCOMPLETE_ROLE' });
+                        return res.status(403).json({
+                            message: 'Complete your Employer profile to continue hiring actions.',
+                            code: 'PROFILE_INCOMPLETE_ROLE',
+                        });
                     }
                 } else if (activeRole === 'worker') {
                     const WorkerProfile = require('../models/WorkerProfile');
                     const workerProfile = await WorkerProfile.findOne({ user: user._id });
                     if (!workerProfile || !workerProfile.roleProfiles || workerProfile.roleProfiles.length === 0) {
-                        return res.status(403).json({ message: 'Worker profile requires at least one role profile.', code: 'PROFILE_INCOMPLETE_ROLE' });
+                        return res.status(403).json({
+                            message: 'Add at least one Job Seeker role profile to unlock matches and applications.',
+                            code: 'PROFILE_INCOMPLETE_ROLE',
+                        });
                     }
                 }
             }

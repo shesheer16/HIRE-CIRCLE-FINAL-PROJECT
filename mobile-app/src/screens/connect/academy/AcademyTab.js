@@ -1,9 +1,11 @@
 import React, { memo, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { IconAward, IconBookOpen, IconSparkles } from '../../../components/Icons';
 import MentorCard from './MentorCard';
 import { RADIUS } from '../../../theme/theme';
 import { connectPalette, connectShadow } from '../connectPalette';
+import { ConnectSkeletonBlock, ConnectSkeletonCard } from '../ConnectSkeletons';
+import ConnectEmptyStateCard from '../ConnectEmptyState';
 
 const getLevelStyle = (level) => {
     if (level === 'Beginner') {
@@ -85,6 +87,39 @@ function CourseCardComponent({ course, isEnrolled, onEnrollCourse }) {
 }
 
 const CourseCard = memo(CourseCardComponent);
+
+const CourseSkeleton = memo(function CourseSkeletonComponent() {
+    return (
+        <ConnectSkeletonCard style={styles.skeletonCard}>
+            <View style={styles.skeletonRow}>
+                <ConnectSkeletonBlock width={90} height={64} radius={12} />
+                <View style={styles.skeletonColumn}>
+                    <ConnectSkeletonBlock width="70%" height={12} radius={7} />
+                    <ConnectSkeletonBlock width="52%" height={10} radius={6} style={styles.skeletonLine} />
+                    <ConnectSkeletonBlock width="60%" height={10} radius={6} style={styles.skeletonLine} />
+                </View>
+            </View>
+        </ConnectSkeletonCard>
+    );
+});
+
+const MentorSkeleton = memo(function MentorSkeletonComponent() {
+    return (
+        <ConnectSkeletonCard style={styles.skeletonCard}>
+            <View style={styles.skeletonRow}>
+                <ConnectSkeletonBlock width={48} height={48} radius={24} />
+                <View style={styles.skeletonColumn}>
+                    <ConnectSkeletonBlock width="46%" height={12} radius={7} />
+                    <ConnectSkeletonBlock width="64%" height={10} radius={6} style={styles.skeletonLine} />
+                </View>
+            </View>
+            <View style={styles.skeletonChipRow}>
+                <ConnectSkeletonBlock width={72} height={24} radius={12} />
+                <ConnectSkeletonBlock width={88} height={24} radius={12} />
+            </View>
+        </ConnectSkeletonCard>
+    );
+});
 
 function AcademyTabComponent({
     academyCourses,
@@ -177,6 +212,7 @@ function AcademyTabComponent({
     const mentorRefreshLabel = isMentorRefreshing ? 'Running Match...' : 'Run AI Mentor Match';
     const showCourseLoading = Boolean(isLoading) && courseCards.length === 0;
     const showMentorLoading = Boolean(isLoading || isMentorRefreshing) && mentorCards.length === 0;
+    const showFullAcademyError = Boolean(academyError) && !showCourseLoading && !showMentorLoading && courseCards.length === 0 && mentorCards.length === 0;
 
     return (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={contentContainerStyle}>
@@ -200,72 +236,89 @@ function AcademyTabComponent({
                 </Text>
             </View>
 
-            {academyError ? (
-                <View style={styles.statusCard}>
-                    <Text style={styles.statusText}>{academyError}</Text>
-                    <TouchableOpacity
-                        style={styles.statusRetryButton}
-                        activeOpacity={0.85}
-                        onPress={onRetryAcademy}
-                    >
-                        <Text style={styles.statusRetryButtonText}>Retry</Text>
-                    </TouchableOpacity>
-                </View>
+            {academyError && !showFullAcademyError ? (
+                <ConnectEmptyStateCard
+                    title="Academy is showing your last saved view"
+                    subtitle={academyError}
+                    actionLabel="Retry"
+                    onAction={onRetryAcademy}
+                    tone="info"
+                    inline
+                    style={styles.inlineStatusCard}
+                />
             ) : null}
 
-            <View style={styles.sectionHeaderRow}>
-                <IconAward size={16} color={connectPalette.accent} />
-                <Text style={styles.sectionTitle}>TOP COURSES FOR YOU</Text>
-            </View>
-
-            {showCourseLoading ? (
-                <View style={styles.statusCard}>
-                    <ActivityIndicator size="small" color={connectPalette.accent} />
-                    <Text style={styles.statusText}>Loading academy courses...</Text>
-                </View>
+            {showFullAcademyError ? (
+                <ConnectEmptyStateCard
+                    title="Academy is unavailable right now"
+                    subtitle={academyError}
+                    actionLabel="Retry"
+                    onAction={onRetryAcademy}
+                    tone="error"
+                    style={styles.emptyStateCard}
+                />
             ) : null}
 
-            {!showCourseLoading && (courseCards.length > 0 ? courseCards : (
-                <View style={styles.emptyCard}>
-                    <Text style={styles.emptyTitle}>No courses yet.</Text>
-                    <Text style={styles.emptySubtitle}>Academy courses will appear here once published.</Text>
-                </View>
-            ))}
-
-            <View style={styles.academyCard}>
-                <View style={styles.headerRow}>
-                    <IconSparkles size={16} color={connectPalette.accent} />
-                    <Text style={styles.headerTitle}>AI MENTOR MATCH</Text>
-                </View>
-                <View style={styles.mentorActionRow}>
-                    <TouchableOpacity
-                        style={styles.mentorRefreshButton}
-                        onPress={onRefreshMentors}
-                        activeOpacity={0.85}
-                        disabled={isMentorRefreshing}
-                    >
-                        <Text style={styles.mentorRefreshButtonText}>{mentorRefreshLabel}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.mentorBecomeButton}
-                        onPress={onBecomeMentor}
-                        activeOpacity={0.85}
-                    >
-                        <Text style={styles.mentorBecomeButtonText}>Become a Mentor</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {showMentorLoading ? (
-                    <View style={styles.statusCard}>
-                        <ActivityIndicator size="small" color={connectPalette.accent} />
-                        <Text style={styles.statusText}>Matching mentors for you...</Text>
+            {!showFullAcademyError ? (
+                <>
+                    <View style={styles.sectionHeaderRow}>
+                        <IconAward size={16} color={connectPalette.accent} />
+                        <Text style={styles.sectionTitle}>TOP COURSES FOR YOU</Text>
                     </View>
-                ) : (mentorCards.length > 0 ? mentorCards : (
-                    <View style={styles.mentorEmptyWrap}>
-                        <Text style={styles.emptySubtitle}>No mentors available yet. Run the AI match to fetch mentors.</Text>
+
+                    {showCourseLoading ? (
+                        <>
+                            <CourseSkeleton />
+                            <CourseSkeleton />
+                        </>
+                    ) : null}
+
+                    {!showCourseLoading && (courseCards.length > 0 ? courseCards : (
+                        <ConnectEmptyStateCard
+                            title="No courses yet"
+                            subtitle="Academy courses will appear here once published."
+                            style={styles.emptyStateCard}
+                        />
+                    ))}
+
+                    <View style={styles.academyCard}>
+                        <View style={styles.headerRow}>
+                            <IconSparkles size={16} color={connectPalette.accent} />
+                            <Text style={styles.headerTitle}>AI MENTOR MATCH</Text>
+                        </View>
+                        <View style={styles.mentorActionRow}>
+                            <TouchableOpacity
+                                style={styles.mentorRefreshButton}
+                                onPress={onRefreshMentors}
+                                activeOpacity={0.85}
+                                disabled={isMentorRefreshing}
+                            >
+                                <Text style={styles.mentorRefreshButtonText}>{mentorRefreshLabel}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.mentorBecomeButton}
+                                onPress={onBecomeMentor}
+                                activeOpacity={0.85}
+                            >
+                                <Text style={styles.mentorBecomeButtonText}>Become a Mentor</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {showMentorLoading ? (
+                            <>
+                                <MentorSkeleton />
+                                <MentorSkeleton />
+                            </>
+                        ) : (mentorCards.length > 0 ? mentorCards : (
+                            <ConnectEmptyStateCard
+                                title="No mentors yet"
+                                subtitle="No mentors available yet. Run the AI match to fetch mentors."
+                                style={styles.emptyStateCard}
+                            />
+                        ))}
                     </View>
-                ))}
-            </View>
+                </>
+            ) : null}
 
             <View style={styles.academyCard}>
                 <View style={styles.headerRow}>
@@ -495,25 +548,16 @@ const styles = StyleSheet.create({
     bottomSpace: {
         height: 32,
     },
-    emptyCard: {
-        borderRadius: RADIUS.xl,
-        borderWidth: 1,
-        borderColor: connectPalette.line,
-        backgroundColor: connectPalette.surface,
-        paddingHorizontal: 16,
-        paddingVertical: 18,
-        marginBottom: 12,
-    },
-    emptyTitle: {
-        fontSize: 14,
-        fontWeight: '800',
-        color: connectPalette.text,
-        marginBottom: 6,
-    },
     emptySubtitle: {
         fontSize: 12,
         color: connectPalette.muted,
         lineHeight: 18,
+    },
+    emptyStateCard: {
+        marginBottom: 12,
+    },
+    inlineStatusCard: {
+        marginBottom: 12,
     },
     statusCard: {
         borderRadius: RADIUS.xl,
@@ -545,8 +589,26 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         letterSpacing: 0.2,
     },
-    mentorEmptyWrap: {
-        gap: 10,
+    skeletonRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    skeletonCard: {
+        marginHorizontal: 0,
+    },
+    skeletonColumn: {
+        flex: 1,
+        minWidth: 0,
+    },
+    skeletonLine: {
+        marginTop: 8,
+    },
+    skeletonChipRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 12,
     },
     mentorActionRow: {
         flexDirection: 'row',

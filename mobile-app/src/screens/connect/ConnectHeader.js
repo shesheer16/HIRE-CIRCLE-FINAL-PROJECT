@@ -1,48 +1,50 @@
 import React, { memo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { IconBell } from '../../components/Icons';
-import { RADIUS, SHADOWS, SPACING } from '../../theme/theme';
+import { RADIUS, SCREEN_CHROME, SPACING } from '../../theme/theme';
 import { connectPalette } from './connectPalette';
 
+function BrandMark() {
+    return (
+        <View style={styles.logoMark}>
+            <View style={styles.logoRingOuter} />
+            <View style={styles.logoRingMiddle} />
+            <View style={styles.logoRingInner} />
+        </View>
+    );
+}
+
 function ConnectHeaderComponent({
-    avatar,
     onNotificationsPress,
-    onProfilePress,
+    onComposePress,
     notificationsCount = 0,
     activeTab = 'Feed',
 }) {
     const hasUnread = Number(notificationsCount || 0) > 0;
-    const safeAlertsCount = Math.max(0, Number(notificationsCount || 0));
     const unreadLabel = Number(notificationsCount || 0) > 99 ? '99+' : String(Math.max(0, Number(notificationsCount || 0)));
     const activeTabLabel = String(activeTab || 'Feed').trim() || 'Feed';
-    const isFeedTheme = activeTabLabel.toLowerCase() === 'feed';
-    return (
-        <View style={[styles.headerShell, isFeedTheme && styles.headerShellFeed]}>
-            {!isFeedTheme ? <View style={styles.accentOrbOne} /> : null}
-            {!isFeedTheme ? <View style={styles.accentOrbTwo} /> : null}
 
+    return (
+        <View style={styles.headerShell}>
             <View style={styles.headerTopRow}>
                 <View style={styles.headerLeft}>
-                    {!isFeedTheme ? (
-                        <View style={styles.logoBox}>
-                            <Text style={styles.logoH}>H</Text>
-                        </View>
-                    ) : null}
+                    <BrandMark />
                     <View style={styles.brandTextWrap}>
-                        {isFeedTheme ? (
-                            <Text style={styles.logoWordmark}>
-                                <Text style={styles.logoWordmarkDark}>HIRE</Text>
-                                <Text style={styles.logoWordmarkAccent}>CIRCLE</Text>
-                            </Text>
-                        ) : (
-                            <Text style={styles.logoTitle}>HireCircle</Text>
-                        )}
-                        {!isFeedTheme ? <Text style={styles.logoSubtitle}>Explore: {activeTabLabel}</Text> : null}
+                        <Text style={styles.logoWordmark}>
+                            <Text style={styles.logoWordmarkDark}>HIRE</Text>
+                            <Text style={styles.logoWordmarkAccent}>CIRCLE</Text>
+                        </Text>
                     </View>
                 </View>
                 <View style={styles.headerRight}>
-                    <TouchableOpacity style={[styles.bellButton, isFeedTheme && styles.bellButtonFeed]} onPress={onNotificationsPress} activeOpacity={0.82}>
-                        <IconBell size={18} color={isFeedTheme ? '#4c1d95' : connectPalette.darkSoft} />
+                    {activeTabLabel && activeTabLabel.toLowerCase() !== 'feed' ? (
+                        <View style={styles.tabPill}>
+                            <Text style={styles.tabPillText}>{activeTabLabel}</Text>
+                        </View>
+                    ) : null}
+                    <TouchableOpacity style={styles.bellButton} onPress={onNotificationsPress} activeOpacity={0.82}>
+                        <IconBell size={18} color={connectPalette.darkSoft} />
                         {hasUnread ? (
                             Number(notificationsCount || 0) > 9 ? (
                                 <View style={styles.bellCountBadge}>
@@ -53,26 +55,11 @@ function ConnectHeaderComponent({
                             )
                         ) : null}
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.avatarButton, isFeedTheme && styles.avatarButtonFeed]} onPress={onProfilePress} activeOpacity={0.85}>
-                        <Image source={{ uri: avatar }} style={styles.avatarImage} />
+                    <TouchableOpacity style={styles.composeButton} onPress={onComposePress} activeOpacity={0.85}>
+                        <Ionicons name="add" size={18} color="#ffffff" />
                     </TouchableOpacity>
                 </View>
             </View>
-
-            {!isFeedTheme ? (
-                <View style={styles.metaRow}>
-                    <View style={[styles.metaPill, isFeedTheme && styles.metaPillFeed]}>
-                        <Text style={[styles.metaPillText, isFeedTheme && styles.metaPillTextFeed]}>
-                            Community live
-                        </Text>
-                    </View>
-                    <View style={[styles.metaPillAlt, isFeedTheme && styles.metaPillAltFeed]}>
-                        <Text style={[styles.metaPillAltText, isFeedTheme && styles.metaPillAltTextFeed]}>
-                            {safeAlertsCount} alerts
-                        </Text>
-                    </View>
-                </View>
-            ) : null}
         </View>
     );
 }
@@ -81,44 +68,15 @@ export default memo(ConnectHeaderComponent);
 
 const styles = StyleSheet.create({
     headerShell: {
-        overflow: 'hidden',
+        ...SCREEN_CHROME.headerSurface,
         paddingHorizontal: SPACING.md,
         paddingTop: SPACING.sm + 4,
         paddingBottom: SPACING.sm,
-        backgroundColor: connectPalette.surface,
-        borderBottomWidth: 0,
-        borderBottomColor: 'transparent',
-        position: 'relative',
-        ...SHADOWS.sm,
-    },
-    headerShellFeed: {
-        backgroundColor: '#f4edff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e7d7ff',
         shadowColor: '#7c3aed',
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 14,
         elevation: 2,
-    },
-    accentOrbOne: {
-        position: 'absolute',
-        top: -42,
-        right: -18,
-        width: 110,
-        height: 110,
-        borderRadius: 999,
-        backgroundColor: '#ede9fe',
-        opacity: 0.78,
-    },
-    accentOrbTwo: {
-        position: 'absolute',
-        bottom: -55,
-        left: -40,
-        width: 120,
-        height: 120,
-        borderRadius: 999,
-        backgroundColor: '#dbeafe',
-        opacity: 0.45,
     },
     headerTopRow: {
         flexDirection: 'row',
@@ -131,39 +89,48 @@ const styles = StyleSheet.create({
     },
     brandTextWrap: {
         justifyContent: 'center',
+        flexShrink: 1,
     },
-    logoBox: {
-        width: 38,
-        height: 38,
-        borderRadius: 12,
-        backgroundColor: connectPalette.accent,
-        justifyContent: 'center',
-        alignItems: 'center',
+    logoMark: {
+        width: 32,
+        height: 32,
         marginRight: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+        borderRadius: 16,
+        backgroundColor: '#f6f2ff',
         borderWidth: 1,
-        borderColor: '#a78bfa',
-        ...SHADOWS.sm,
+        borderColor: '#e5dcff',
     },
-    logoBoxFeed: {
-        backgroundColor: '#111111',
-        borderColor: '#111111',
+    logoRingOuter: {
+        position: 'absolute',
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: '#8b5cf6',
     },
-    logoH: {
-        color: connectPalette.surface,
-        fontSize: 17,
-        fontWeight: '900',
+    logoRingMiddle: {
+        position: 'absolute',
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        borderWidth: 2,
+        borderColor: '#b9a3ff',
     },
-    logoTitle: {
-        fontSize: 18,
-        fontWeight: '800',
-        color: connectPalette.text,
-        letterSpacing: -0.2,
+    logoRingInner: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        borderWidth: 2,
+        borderColor: '#e2d7ff',
+        backgroundColor: '#ffffff',
     },
     logoWordmark: {
-        fontSize: 24,
-        lineHeight: 28,
+        fontSize: 19,
         fontWeight: '900',
-        letterSpacing: -0.8,
+        letterSpacing: -0.5,
     },
     logoWordmarkDark: {
         color: '#121726',
@@ -171,34 +138,33 @@ const styles = StyleSheet.create({
     logoWordmarkAccent: {
         color: '#8b3dff',
     },
-    logoSubtitle: {
-        marginTop: 1,
-        fontSize: 12,
-        fontWeight: '700',
-        color: connectPalette.muted,
-    },
     headerRight: {
         flexDirection: 'row',
         alignItems: 'center',
     },
-    bellButton: {
-        width: 36,
-        height: 36,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderRadius: 18,
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
+    tabPill: {
+        marginRight: 8,
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
     },
-    bellButtonFeed: {
-        backgroundColor: '#ede2ff',
-        borderColor: '#d8c2ff',
+    tabPillText: {
+        color: '#6a41d8',
+        fontSize: 10.5,
+        fontWeight: '800',
+    },
+    bellButton: {
+        ...SCREEN_CHROME.actionButton,
+        borderRadius: 20,
+        shadowColor: '#a855f7',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 2,
     },
     bellDot: {
         position: 'absolute',
-        top: 6,
-        right: 6,
+        top: 7,
+        right: 7,
         width: 7,
         height: 7,
         borderRadius: RADIUS.full,
@@ -208,7 +174,7 @@ const styles = StyleSheet.create({
     },
     bellCountBadge: {
         position: 'absolute',
-        top: -3,
+        top: -4,
         right: -5,
         minWidth: 17,
         height: 17,
@@ -226,71 +192,16 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         lineHeight: 10,
     },
-    avatarButton: {
-        marginLeft: 7,
+    composeButton: {
+        marginLeft: 8,
+        ...SCREEN_CHROME.actionButton,
+        ...SCREEN_CHROME.actionButtonPrimary,
         borderRadius: RADIUS.full,
-        borderWidth: 2,
-        borderColor: connectPalette.accentSoftAlt,
-        width: 38,
-        height: 38,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: connectPalette.surface,
-        ...SHADOWS.sm,
-    },
-    avatarButtonFeed: {
-        borderColor: '#bca2fb',
-        backgroundColor: '#f8f4ff',
-    },
-    avatarImage: {
-        width: 31,
-        height: 31,
-        borderRadius: RADIUS.full,
-    },
-    metaRow: {
-        marginTop: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    metaPill: {
-        backgroundColor: '#eef2ff',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#c7d2fe',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-    },
-    metaPillFeed: {
-        backgroundColor: '#f3f4f6',
-        borderColor: '#d1d5db',
-    },
-    metaPillText: {
-        color: '#4338ca',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    metaPillTextFeed: {
-        color: '#374151',
-    },
-    metaPillAlt: {
-        backgroundColor: '#ecfeff',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#bae6fd',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-    },
-    metaPillAltFeed: {
-        backgroundColor: '#f3f4f6',
-        borderColor: '#d1d5db',
-    },
-    metaPillAltText: {
-        color: '#0f766e',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    metaPillAltTextFeed: {
-        color: '#374151',
+        backgroundColor: '#6f4cf6',
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 12,
+        elevation: 4,
     },
 });

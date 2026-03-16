@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useContext, useRef, useState } from 'react';
 import {
     Animated,
     Easing,
@@ -8,7 +8,10 @@ import {
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
+import { GLASS_GRADIENTS, GLASS_PALETTE, GLASS_SHADOWS, GLASS_SURFACES } from '../theme/glass';
 import { triggerHaptic } from '../utils/haptics';
 
 const SELECTION_DELAY_MS = 260;
@@ -30,6 +33,7 @@ const ROLE_CARDS = [
 
 export default function RoleSelectionScreen({ navigation }) {
     const insets = useSafeAreaInsets();
+    const { rememberAuthEntryRole } = useContext(AuthContext);
     const [activeRole, setActiveRole] = useState(null);
     const cardAnimationsRef = useRef({
         worker: new Animated.Value(0),
@@ -54,14 +58,16 @@ export default function RoleSelectionScreen({ navigation }) {
         setActiveRole(roleKey);
         animateRoleSelection(roleKey);
         triggerHaptic.light();
+        void rememberAuthEntryRole?.(roleKey);
         setTimeout(() => {
             navigation.navigate('Login', { selectedRole: roleKey });
         }, SELECTION_DELAY_MS);
-    }, [animateRoleSelection, navigation]);
+    }, [animateRoleSelection, navigation, rememberAuthEntryRole]);
 
     return (
-        <View style={styles.container}>
+        <LinearGradient colors={GLASS_GRADIENTS.screen} style={styles.container}>
             <View style={styles.bgGlowTop} />
+            <View style={styles.bgGlowMid} />
             <View style={styles.bgGlowBottom} />
 
             <View
@@ -71,6 +77,10 @@ export default function RoleSelectionScreen({ navigation }) {
                 ]}
             >
                 <View style={styles.header}>
+                    <View style={styles.headerPill}>
+                        <Ionicons name="sparkles-outline" size={14} color={GLASS_PALETTE.accentText} />
+                        <Text style={styles.headerPillText}>Choose your clean workspace</Text>
+                    </View>
                     <View style={styles.logoBadge}>
                         <View style={styles.logoGlyph}>
                             <View style={styles.logoRingOuter} />
@@ -91,11 +101,11 @@ export default function RoleSelectionScreen({ navigation }) {
                         const animatedCardStyle = {
                             borderColor: animationValue.interpolate({
                                 inputRange: [0, 1],
-                                outputRange: ['#E2E8F0', '#9C5AF7'],
+                                outputRange: [GLASS_PALETTE.borderStrong, '#9C5AF7'],
                             }),
                             backgroundColor: animationValue.interpolate({
                                 inputRange: [0, 1],
-                                outputRange: ['#FFFFFF', '#F7F1FF'],
+                                outputRange: ['rgba(255,255,255,0.76)', 'rgba(255,255,255,0.92)'],
                             }),
                             transform: [
                                 {
@@ -109,7 +119,7 @@ export default function RoleSelectionScreen({ navigation }) {
                         const animatedIconStyle = {
                             backgroundColor: animationValue.interpolate({
                                 inputRange: [0, 1],
-                                outputRange: ['#F3E8FF', '#EFE3FF'],
+                                outputRange: ['rgba(255,255,255,0.72)', GLASS_PALETTE.accentSoft],
                             }),
                         };
 
@@ -135,6 +145,13 @@ export default function RoleSelectionScreen({ navigation }) {
                                         <Text style={styles.cardSubtitle}>{card.subtitle}</Text>
                                     </View>
 
+                                    <View style={[styles.cardArrow, isActive && styles.cardArrowActive]}>
+                                        <Ionicons
+                                            name="arrow-forward"
+                                            size={16}
+                                            color={isActive ? '#ffffff' : GLASS_PALETTE.accentText}
+                                        />
+                                    </View>
                                     <View style={styles.decorCircle} />
                                 </Animated.View>
                             </TouchableOpacity>
@@ -142,14 +159,13 @@ export default function RoleSelectionScreen({ navigation }) {
                     })}
                 </View>
             </View>
-        </View>
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
     },
     bgGlowTop: {
         position: 'absolute',
@@ -158,7 +174,16 @@ const styles = StyleSheet.create({
         width: 260,
         height: 260,
         borderRadius: 130,
-        backgroundColor: 'rgba(167,139,250,0.14)',
+        backgroundColor: GLASS_PALETTE.glowLavender,
+    },
+    bgGlowMid: {
+        position: 'absolute',
+        top: '34%',
+        right: -60,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: GLASS_PALETTE.glowBlue,
     },
     bgGlowBottom: {
         position: 'absolute',
@@ -167,7 +192,7 @@ const styles = StyleSheet.create({
         width: 220,
         height: 220,
         borderRadius: 110,
-        backgroundColor: 'rgba(196,181,253,0.16)',
+        backgroundColor: GLASS_PALETTE.glowRose,
     },
     content: {
         flex: 1,
@@ -178,11 +203,30 @@ const styles = StyleSheet.create({
         marginBottom: 36,
         alignItems: 'center',
     },
+    headerPill: {
+        ...GLASS_SURFACES.softPanel,
+        ...GLASS_SHADOWS.soft,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 999,
+        marginBottom: 18,
+    },
+    headerPillText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '700',
+        color: GLASS_PALETTE.accentText,
+        letterSpacing: 0.1,
+    },
     logoBadge: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
         width: 84,
         height: 84,
         borderRadius: 24,
-        backgroundColor: '#ECE1FF',
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 18,
@@ -199,7 +243,7 @@ const styles = StyleSheet.create({
         height: 52,
         borderRadius: 26,
         borderWidth: 3,
-        borderColor: '#7C3AED',
+        borderColor: GLASS_PALETTE.accent,
     },
     logoRingMid: {
         position: 'absolute',
@@ -207,7 +251,7 @@ const styles = StyleSheet.create({
         height: 34,
         borderRadius: 17,
         borderWidth: 3,
-        borderColor: '#7C3AED',
+        borderColor: GLASS_PALETTE.accent,
     },
     logoRingInner: {
         position: 'absolute',
@@ -215,51 +259,46 @@ const styles = StyleSheet.create({
         height: 18,
         borderRadius: 9,
         borderWidth: 3,
-        borderColor: '#7C3AED',
+        borderColor: GLASS_PALETTE.accent,
     },
     mainTitle: {
         fontSize: 44,
         lineHeight: 46,
         fontWeight: '800',
-        color: '#0F172A',
+        color: GLASS_PALETTE.textStrong,
         marginBottom: 10,
         letterSpacing: -1.2,
     },
     mainTitleAccent: {
-        color: '#7C3AED',
+        color: GLASS_PALETTE.accent,
     },
     subtitle: {
         fontSize: 14,
         lineHeight: 20,
         fontWeight: '600',
-        color: '#61728F',
+        color: GLASS_PALETTE.textMuted,
         textAlign: 'center',
     },
     cardStack: {
         gap: 18,
     },
     cardWrapper: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
         minHeight: 124,
         borderRadius: 24,
         borderWidth: 1.8,
-        borderColor: '#E2E8F0',
-        backgroundColor: '#FFFFFF',
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingVertical: 22,
         overflow: 'hidden',
-        shadowColor: '#7C3AED',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.08,
-        shadowRadius: 16,
-        elevation: 3,
     },
     iconContainer: {
+        ...GLASS_SURFACES.softPanel,
         width: 56,
         height: 56,
         borderRadius: 28,
-        backgroundColor: '#F3E8FF',
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 16,
@@ -272,18 +311,31 @@ const styles = StyleSheet.create({
     cardTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#1E293B',
+        color: GLASS_PALETTE.text,
         marginBottom: 6,
         letterSpacing: -0.15,
     },
     cardTitleActive: {
-        color: '#7C3AED',
+        color: GLASS_PALETTE.accentText,
     },
     cardSubtitle: {
         fontSize: 13,
         lineHeight: 18,
         fontWeight: '500',
-        color: '#607089',
+        color: GLASS_PALETTE.textMuted,
+    },
+    cardArrow: {
+        ...GLASS_SURFACES.softPanel,
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2,
+    },
+    cardArrowActive: {
+        backgroundColor: GLASS_PALETTE.accent,
+        borderColor: 'rgba(111, 78, 246, 0.2)',
     },
     decorCircle: {
         position: 'absolute',
@@ -292,7 +344,7 @@ const styles = StyleSheet.create({
         width: 108,
         height: 108,
         borderRadius: 54,
-        backgroundColor: 'rgba(211, 187, 242, 0.28)',
+        backgroundColor: GLASS_PALETTE.accentTint,
         transform: [{ translateY: -54 }],
     },
 });

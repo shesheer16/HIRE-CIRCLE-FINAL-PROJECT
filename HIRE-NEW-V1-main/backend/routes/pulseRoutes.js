@@ -3,7 +3,11 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const Post = require('../models/Post');
 const Job = require('../models/Job');
+const WorkerProfile = require('../models/WorkerProfile');
+const EmployerProfile = require('../models/EmployerProfile');
 const { fetchRankedPosts, normalizePostTypeList } = require('../services/feedRankingService');
+const { resolveStructuredLocationFields } = require('../utils/locationFields');
+const { rankPulseItemsByViewerLocation } = require('../services/pulseRankingService');
 
 const MAX_LIMIT = 30;
 
@@ -19,15 +23,65 @@ const normalizePage = (value) => {
     return parsed;
 };
 
-const toPulseItemFromPost = (post = {}) => ({
+const buildRankingWindow = (page, limit) => Math.min(
+    MAX_LIMIT,
+    Math.max(limit, Math.min(MAX_LIMIT, page * limit * 3), 20)
+);
+
+const paginateItems = (items = [], page = 1, limit = 20) => {
+    const safeItems = Array.isArray(items) ? items : [];
+    const start = Math.max(0, (page - 1) * limit);
+    return safeItems.slice(start, start + limit);
+};
+
+const resolvePulseViewerLocation = async (user = {}) => {
+    const safeUserId = user?._id;
+    if (!safeUserId) {
+        return resolveStructuredLocationFields({});
+    }
+
+    const activeRole = String(user?.activeRole || '').trim().toLowerCase();
+    const workerQuery = WorkerProfile.findOne({ user: safeUserId })
+        .select('district mandal city panchayat locationLabel')
+        .lean();
+    const employerQuery = EmployerProfile.findOne({ user: safeUserId })
+        .select('district mandal location locationLabel')
+        .lean();
+
+    const [workerProfile, employerProfile] = await Promise.all([workerQuery, employerQuery]);
+    const primaryProfile = activeRole === 'employer'
+        ? (employerProfile || workerProfile)
+        : (workerProfile || employerProfile);
+
+    return resolveStructuredLocationFields({
+        district: primaryProfile?.district,
+        mandal: primaryProfile?.mandal,
+        city: primaryProfile?.city || user?.city,
+        locality: primaryProfile?.mandal,
+        panchayat: primaryProfile?.panchayat,
+        location: primaryProfile?.location,
+        locationLabel: primaryProfile?.locationLabel,
+    });
+};
+
+const buildPulseLocationLabel = (job = {}) => [String(job?.mandal || '').trim(), String(job?.district || '').trim()]
+    .filter(Boolean)
+    .join(', ')
+    || String(job?.locationLabel || job?.location || '').trim();
+
+const toPulseItemFromPost = (post = {}, job = null) => ({
     id: String(post._id),
     postId: String(post._id),
     jobId: String(post?.meta?.jobId || '').trim(),
     postType: post.postType || 'status',
-    title: post.content || 'Update',
-    employer: post?.author?.name || post?.user?.name || 'Member',
-    distance: 'Nearby',
-    pay: post.postType === 'job' ? 'See details' : null,
+    title: job?.title || post.content || 'Update',
+    employer: job?.companyName || post?.author?.name || post?.user?.name || 'Member',
+    distance: buildPulseLocationLabel(job) || 'Nearby',
+    location: buildPulseLocationLabel(job) || 'Nearby',
+    district: String(job?.district || '').trim(),
+    mandal: String(job?.mandal || '').trim(),
+    locationLabel: buildPulseLocationLabel(job) || 'Nearby',
+    pay: post.postType === 'job' ? (job?.salaryRange || 'See details') : null,
     urgent: post.postType === 'job',
     timePosted: post.createdAt,
     category: String(post.postType || 'status').toUpperCase(),
@@ -57,7 +111,11 @@ const toPulseItemFromJob = (job = {}) => {
         postType: 'job',
         title: job.title || 'Open role',
         employer: job.companyName || 'Employer',
-        distance: job.location || 'Nearby',
+        distance: buildPulseLocationLabel(job) || 'Nearby',
+        location: buildPulseLocationLabel(job) || 'Nearby',
+        district: String(job?.district || '').trim(),
+        mandal: String(job?.mandal || '').trim(),
+        locationLabel: buildPulseLocationLabel(job) || 'Nearby',
         pay: job.salaryRange || 'Negotiable',
         urgent: Boolean(job.isPulse),
         timePosted: job.createdAt,
@@ -74,15 +132,17 @@ router.get('/', protect, async (req, res) => {
     try {
         const page = normalizePage(req.query.page);
         const limit = normalizeLimit(req.query.limit, 20);
+        const rankingWindow = buildRankingWindow(page, limit);
         const requestedTypes = normalizePostTypeList(req.query.types || []);
         const pulseTypes = requestedTypes.length > 0
             ? requestedTypes
             : ['job', 'bounty', 'community', 'academy', 'status'];
+        const viewerLocation = await resolvePulseViewerLocation(req.user);
 
         const ranked = await fetchRankedPosts({
             viewerId: req.user?._id,
-            page,
-            limit,
+            page: 1,
+            limit: rankingWindow,
             visibility: 'public',
             postTypes: pulseTypes,
         });
@@ -96,11 +156,27 @@ router.get('/', protect, async (req, res) => {
                 const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
                 return Boolean(jobId);
             });
+            const jobIds = filteredPosts
+                .map((post) => String(post?.meta?.jobId || post?.jobId || '').trim())
+                .filter(Boolean);
+            const jobsById = new Map(
+                (await Job.find({ _id: { $in: jobIds } })
+                    .select('_id title companyName location district mandal locationLabel salaryRange isPulse createdAt viewCount')
+                    .lean())
+                    .map((job) => [String(job?._id || ''), job])
+            );
+            const rankedItems = rankPulseItemsByViewerLocation({
+                items: filteredPosts.map((post) => {
+                    const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
+                    return toPulseItemFromPost(post, jobsById.get(jobId) || null);
+                }),
+                viewerLocation,
+            });
             return res.json({
-                items: filteredPosts.map(toPulseItemFromPost),
-                page: ranked.page,
-                limit: ranked.limit,
-                hasMore: ranked.hasMore,
+                items: paginateItems(rankedItems, page, limit),
+                page,
+                limit,
+                hasMore: (page * limit) < ranked.total,
                 total: ranked.total,
                 source: 'posts',
             });
@@ -111,17 +187,19 @@ router.get('/', protect, async (req, res) => {
             status: 'active',
         })
             .sort({ createdAt: -1, _id: 1 })
-            .skip((page - 1) * limit)
-            .limit(limit)
+            .limit(rankingWindow)
             .lean();
 
         const totalFallback = await Job.countDocuments({ isOpen: true, status: 'active' });
         const fallbackHasMore = (page * limit) < totalFallback;
-        const fallbackItems = fallbackJobs.map(toPulseItemFromJob);
+        const fallbackItems = rankPulseItemsByViewerLocation({
+            items: fallbackJobs.map(toPulseItemFromJob),
+            viewerLocation,
+        });
 
         // Persist derived job posts so future pulse fetches remain deterministic on PostModel.
         const existingPostIds = new Set(
-            (await Post.find({ postType: 'job', 'meta.jobId': { $in: fallbackItems.map((item) => item.id) } })
+            (await Post.find({ postType: 'job', 'meta.jobId': { $in: fallbackJobs.map((job) => String(job._id)) } })
                 .select('meta.jobId')
                 .lean())
                 .map((row) => String(row?.meta?.jobId || ''))
@@ -151,7 +229,7 @@ router.get('/', protect, async (req, res) => {
         }
 
         return res.json({
-            items: fallbackItems,
+            items: paginateItems(fallbackItems, page, limit),
             page,
             limit,
             hasMore: fallbackHasMore,

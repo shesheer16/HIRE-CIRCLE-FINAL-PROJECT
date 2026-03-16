@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, FlatList,
-    StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Animated, Image, Modal, Alert, Linking, Pressable, ActivityIndicator
+    StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Animated, Image, Modal, Alert, Linking, Pressable, ActivityIndicator, Keyboard
 } from 'react-native';
 import { logger } from '../utils/logger';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,19 +26,14 @@ import { trackEvent } from '../services/analytics';
 import { MOTION } from '../theme/motion';
 import { RADIUS, SHADOWS, SPACING, theme } from '../theme/theme';
 import { API_BASE_URL } from '../config';
-
-const TIMELINE_MILESTONES = [
-    { key: 'applied', label: 'Applied', icon: '📝' },
-    { key: 'shortlisted', label: 'Shortlisted', icon: '⭐' },
-    { key: 'interview_scheduled', label: 'Interview Scheduled', icon: '📅' },
-    { key: 'interview_completed', label: 'Interview Completed', icon: '🎤' },
-    { key: 'offer_sent', label: 'Offer Sent', icon: '📬' },
-    { key: 'offer_accepted', label: 'Offer Accepted', icon: '✅' },
-    { key: 'escrow_funded', label: 'Escrow Funded', icon: '🔐' },
-    { key: 'work_started', label: 'Work Started', icon: '🚀' },
-    { key: 'work_completed', label: 'Work Completed', icon: '🏁' },
-    { key: 'payment_released', label: 'Payment Released', icon: '💸' },
-];
+import {
+    APPLICATION_TIMELINE_MILESTONES,
+    findTimelineEventForMilestone,
+    getApplicationStatusLabel,
+    isChatReadyForApplicationStatus,
+    normalizeApplicationStatus,
+} from '../utils/applicationPresentation';
+import { getProfileTitleForRole } from '../utils/profileReadiness';
 
 const CHAT_ACCENT = '#7c3aed';
 const CHAT_ACCENT_DARK = '#6d28d9';
@@ -65,37 +60,13 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
     'image/png',
     'image/webp',
 ]);
-const CHAT_ENABLED_STATUSES = new Set([
-    'shortlisted',
-    'interview_requested',
-    'interview_completed',
-    'offer_sent',
-    'offer_accepted',
-    'hired',
-]);
-const LEGACY_STATUS_ALIASES = {
-    requested: 'applied',
-    pending: 'applied',
-    accepted: 'interview_requested',
-    interview: 'interview_requested',
-    offer_proposed: 'offer_sent',
-};
-
 const isPlaceholderApiHost = (hostname = '') => {
     const normalized = String(hostname || '').trim().toLowerCase();
     if (!normalized) return false;
     return normalized === 'example.com' || normalized.endsWith('.example.com');
 };
 
-const normalizeStatus = (value) => {
-    const normalized = String(value || '').toLowerCase().trim();
-    if (!normalized) return 'applied';
-    return LEGACY_STATUS_ALIASES[normalized] || normalized;
-};
-
-const isChatEnabledStatus = (status) => {
-    return CHAT_ENABLED_STATUSES.has(normalizeStatus(status));
-};
+const isChatEnabledStatus = (status) => isChatReadyForApplicationStatus(status);
 
 const normalizeRoleForChatSide = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
@@ -160,19 +131,6 @@ const isChatLockedByStatusError = (error) => {
         || message.includes('available after shortlisting')
         || message.includes('shortlist')
     );
-};
-
-const getStatusLabel = (status) => {
-    const normalized = normalizeStatus(status);
-    if (normalized === 'interview_requested') return 'Interview';
-    if (normalized === 'interview_completed') return 'Interview Done';
-    if (normalized === 'offer_sent') return 'Offer Sent';
-    if (normalized === 'offer_accepted') return 'Offer Accepted';
-    if (normalized === 'hired') return 'Hired';
-    if (normalized === 'shortlisted') return 'Shortlisted';
-    if (normalized === 'rejected') return 'Rejected';
-    if (normalized === 'withdrawn') return 'Withdrawn';
-    return 'Waiting';
 };
 
 const toPercent = (value) => {
@@ -379,9 +337,9 @@ const buildChatFallbackProfile = ({
             otherPartyName,
             [worker?.firstName, worker?.lastName].filter(Boolean).join(' ').trim(),
             worker?.name,
-            'Candidate'
+            'Job Seeker'
         );
-        const preferredRole = firstNonEmptyText(jobTitle, job?.title, worker?.headline, worker?.preferredRole, 'Candidate Profile');
+        const preferredRole = firstNonEmptyText(jobTitle, job?.title, worker?.headline, worker?.preferredRole, 'Job Seeker Profile');
         const expectedSalaryValue = Number(worker?.expectedSalary);
         const expectedSalary = Number.isFinite(expectedSalaryValue) && expectedSalaryValue > 0
             ? `₹${expectedSalaryValue.toLocaleString()}`
@@ -390,12 +348,12 @@ const buildChatFallbackProfile = ({
         return {
             name: candidateName,
             headline: preferredRole,
-            industryTag: 'CANDIDATE PROFILE',
+            industryTag: 'JOB SEEKER PROFILE',
             summary: firstNonEmptyText(
                 worker?.summary,
                 worker?.about,
                 worker?.bio,
-                'Candidate details are syncing. You can continue chat and view updates in real time.'
+                'Job seeker details are syncing. You can continue chat and view updates in real time.'
             ),
             experienceYears: Number(worker?.totalExperience || worker?.experienceYears || 0),
             skills: skills.length ? skills : ['Communication', 'Ownership'],
@@ -579,7 +537,7 @@ export default function ChatScreen({ route, navigation }) {
     const [lastReadByOther, setLastReadByOther] = useState(null);
     const [showProfileModal, setShowProfileModal] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
-    const [isScreenReady, setIsScreenReady] = useState(false);
+    const [isScreenReady] = useState(true);
     const [uploadingFile, setUploadingFile] = useState(false);
     const [isUploadingVoiceNote, setIsUploadingVoiceNote] = useState(false);
     const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -599,9 +557,10 @@ export default function ChatScreen({ route, navigation }) {
     const [playingAudioMessageId, setPlayingAudioMessageId] = useState('');
     const [playingAudioPositionMs, setPlayingAudioPositionMs] = useState(0);
     const [playingAudioDurationMs, setPlayingAudioDurationMs] = useState(0);
+    const [keyboardInset, setKeyboardInset] = useState(0);
     const [chatMeta, setChatMeta] = useState(() => {
         const profileMode = routeProfileModeSeed;
-        const otherPartyName = routeOtherPartyNameSeed || (profileMode === 'candidate' ? 'Candidate' : 'Employer');
+        const otherPartyName = routeOtherPartyNameSeed || (profileMode === 'candidate' ? 'Job Seeker' : 'Employer');
         const jobTitle = routeJobTitleSeed || 'Opportunity';
         return {
             otherPartyName,
@@ -886,9 +845,26 @@ export default function ChatScreen({ route, navigation }) {
     }, [canChat]);
 
     useEffect(() => {
-        const timeout = setTimeout(() => setIsScreenReady(true), 50);
-        return () => clearTimeout(timeout);
-    }, []);
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+        const handleKeyboardShow = (event) => {
+            const keyboardHeight = Number(event?.endCoordinates?.height || 0);
+            const resolvedInset = Math.max(0, keyboardHeight - (Platform.OS === 'ios' ? 0 : insets.bottom));
+            setKeyboardInset(resolvedInset);
+        };
+        const handleKeyboardHide = () => {
+            setKeyboardInset(0);
+        };
+
+        const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
+        const hideSubscription = Keyboard.addListener(hideEvent, handleKeyboardHide);
+
+        return () => {
+            showSubscription.remove();
+            hideSubscription.remove();
+        };
+    }, [insets.bottom]);
 
     useEffect(() => {
         setAiReplySuggestions([]);
@@ -1068,7 +1044,7 @@ export default function ChatScreen({ route, navigation }) {
                 const candidatePanel = chatProfile?.candidate || {};
                 const employerPanel = chatProfile?.employer || {};
 
-                const workerName = [worker?.firstName, worker?.lastName].filter(Boolean).join(' ').trim() || worker?.name || 'Candidate';
+                const workerName = [worker?.firstName, worker?.lastName].filter(Boolean).join(' ').trim() || worker?.name || 'Job Seeker';
                 const employerName = employer?.companyName || employer?.name || job?.companyName || 'Employer';
                 const currentRole = getPrimaryRoleFromUser(userInfo);
                 const fallbackViewerSide = normalizeRoleForChatSide(currentRole || userInfo?.activeRole || userInfo?.primaryRole || userInfo?.role);
@@ -1158,13 +1134,13 @@ export default function ChatScreen({ route, navigation }) {
                     buildChatFallbackProfile({
                         profileMode: 'candidate',
                         otherPartyName: workerName,
-                        jobTitle: job?.title || 'Candidate Profile',
+                        jobTitle: job?.title || 'Job Seeker Profile',
                         application,
                     }),
                     {
                         name: candidatePanel?.name || workerName,
-                        headline: job?.title || 'Candidate Profile',
-                        industryTag: 'CANDIDATE PROFILE',
+                        headline: job?.title || 'Job Seeker Profile',
+                        industryTag: 'JOB SEEKER PROFILE',
                         summary: candidatePanel?.smartInterviewSummary || worker?.videoIntroduction?.transcript || 'No interview summary available yet.',
                         experienceYears: Number(worker?.totalExperience || 0),
                         skills: workerSkills.length ? workerSkills : ['Profile incomplete'],
@@ -1199,7 +1175,7 @@ export default function ChatScreen({ route, navigation }) {
                 );
 
                 if (isActive) {
-                    setApplicationStatus(normalizeStatus(application?.status));
+                    setApplicationStatus(normalizeApplicationStatus(application?.status));
                     setChatParticipants({
                         employerId: employerUserIdValue,
                         workerUserId: workerUserIdValue,
@@ -1284,7 +1260,7 @@ export default function ChatScreen({ route, navigation }) {
         const handleApplicationStatusUpdated = ({ applicationId: updatedApplicationId, status }) => {
             if (String(updatedApplicationId || '') !== String(applicationId || '')) return;
             if (status) {
-                setApplicationStatus(normalizeStatus(status));
+                setApplicationStatus(normalizeApplicationStatus(status));
             }
         };
 
@@ -2202,12 +2178,8 @@ export default function ChatScreen({ route, navigation }) {
             <Text style={styles.hubPanelSubtitle}>Immutable record of hiring milestones for this application.</Text>
 
             <View style={styles.timelineTrack}>
-                {TIMELINE_MILESTONES.map((milestone, idx) => {
-                    const event = hiringTimeline.find((e) => (
-                        e.eventType === milestone.key
-                        || e.type === milestone.key
-                        || e.event === milestone.key
-                    ));
+                {APPLICATION_TIMELINE_MILESTONES.map((milestone, idx) => {
+                    const event = findTimelineEventForMilestone(hiringTimeline, milestone);
                     const isComplete = Boolean(event);
                     return (
                         <View key={milestone.key} style={styles.tlRow}>
@@ -2215,7 +2187,7 @@ export default function ChatScreen({ route, navigation }) {
                                 <View style={[styles.tlDot, isComplete ? styles.tlDotComplete : styles.tlDotPending]}>
                                     <Text style={styles.tlDotIcon}>{isComplete ? '✓' : milestone.icon}</Text>
                                 </View>
-                                {idx < TIMELINE_MILESTONES.length - 1 && (
+                                {idx < APPLICATION_TIMELINE_MILESTONES.length - 1 && (
                                     <View style={[styles.tlConnector, isComplete && styles.tlConnectorComplete]} />
                                 )}
                             </View>
@@ -2254,7 +2226,7 @@ export default function ChatScreen({ route, navigation }) {
     const renderProfilePanel = () => (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.hubPanelContainer} showsVerticalScrollIndicator={false}>
             <Text style={styles.hubPanelTitle}>
-                {chatMeta.profileMode === 'candidate' ? '👤 Candidate Intelligence' : '🏢 Employer Intelligence'}
+                {chatMeta.profileMode === 'candidate' ? '👤 Job Seeker Intelligence' : '🏢 Employer Intelligence'}
             </Text>
             <View style={styles.hubCard}>
                 <Text style={styles.hubCardTitle}>{resolvedProfileData.name || chatMeta.otherPartyName}</Text>
@@ -2516,7 +2488,7 @@ export default function ChatScreen({ route, navigation }) {
         return null;
     }, [isMessageFromViewer, messages]);
 
-    const headerStatusText = [chatMeta.jobTitle, getStatusLabel(applicationStatus), chatMeta.responseTag, chatMeta.trustTag]
+    const headerStatusText = [chatMeta.jobTitle, getApplicationStatusLabel(applicationStatus), chatMeta.responseTag, chatMeta.trustTag]
         .filter(Boolean)
         .join(' • ');
     const resolvedProfileData = useMemo(() => {
@@ -2801,10 +2773,6 @@ export default function ChatScreen({ route, navigation }) {
         </View>
     );
 
-    if (!isScreenReady) {
-        return <View style={styles.container} />;
-    }
-
     if (!applicationId) {
         return (
             <View style={styles.container}>
@@ -2871,7 +2839,16 @@ export default function ChatScreen({ route, navigation }) {
                     keyExtractor={keyExtractor}
                     renderItem={renderMessage}
                     style={styles.messagesSurface}
-                    contentContainerStyle={styles.messagesList}
+                    contentContainerStyle={[
+                        styles.messagesList,
+                        {
+                            paddingBottom: SPACING.lg
+                                + 72
+                                + (sendError ? 44 : 0)
+                                + (showAiRepliesBar ? 64 : 0)
+                                + ((isVoiceRecording || isUploadingVoiceNote) ? 60 : 0),
+                        },
+                    ]}
                     showsVerticalScrollIndicator={false}
                     maxToRenderPerBatch={10}
                     windowSize={10}
@@ -2976,9 +2953,16 @@ export default function ChatScreen({ route, navigation }) {
             ) : null}
 
             <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
+                enabled={Platform.OS === 'ios'}
+                behavior="padding"
+                keyboardVerticalOffset={insets.top + 6}
             >
+                <View
+                    style={[
+                        styles.composerWrap,
+                        Platform.OS === 'android' && keyboardInset > 0 ? { marginBottom: keyboardInset } : null,
+                    ]}
+                >
                 <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
                     <TouchableOpacity
                         style={[styles.attachBtn, showAttachments && styles.attachBtnActive]}
@@ -3038,6 +3022,7 @@ export default function ChatScreen({ route, navigation }) {
                             )}
                         </TouchableOpacity>
                     )}
+                </View>
                 </View>
             </KeyboardAvoidingView>
 
@@ -3110,14 +3095,14 @@ export default function ChatScreen({ route, navigation }) {
                             <Text style={styles.hubOverlayBackIcon}>‹</Text>
                         </TouchableOpacity>
                         <Text style={styles.hubOverlayTitle}>
-                            {chatMeta.profileMode === 'candidate' ? 'Candidate Profile' : 'Employer Profile'}
+                            {chatMeta.profileMode === 'candidate' ? getProfileTitleForRole('worker') : getProfileTitleForRole('employer')}
                         </Text>
                     </View>
                     <ContactInfoView
                         hideHeader
                         presentation="modal"
                         mode={chatMeta.profileMode}
-                        title={chatMeta.profileMode === 'candidate' ? 'Candidate Profile' : 'Employer Profile'}
+                        title={chatMeta.profileMode === 'candidate' ? getProfileTitleForRole('worker') : getProfileTitleForRole('employer')}
                         data={resolvedProfileData}
                         onBack={() => setShowProfileModal(false)}
                         onVideoPress={handleStartVideoCall}
@@ -3720,6 +3705,9 @@ const styles = StyleSheet.create({
     },
 
     // Input Bar
+    composerWrap: {
+        backgroundColor: '#ffffff',
+    },
     inputBar: {
         backgroundColor: '#ffffff',
         borderTopWidth: 1,

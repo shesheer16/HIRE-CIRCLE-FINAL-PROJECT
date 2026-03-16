@@ -2,9 +2,14 @@ const AnalyticsEvent = require('../models/AnalyticsEvent');
 const logger = require('../utils/logger');
 const { appendPlatformAuditLog } = require('../services/platformAuditService');
 const {
+    extractApiKeyFromRequest,
     findApiKeyByRawValue,
     toRateLimitPerHour,
 } = require('../services/externalApiKeyService');
+const {
+    resolveApiKeyFromWidgetToken,
+    resolveWidgetRequestDomain,
+} = require('../services/widgetTokenService');
 
 const toStartOfDayUtc = (date = new Date()) => {
     const d = new Date(date);
@@ -29,12 +34,11 @@ const normalizeHost = (value = '') => {
     }
 };
 
-const getApiKeyFromRequest = (req) => (
-    req.headers['x-api-key']
-    || req.query.apiKey
-    || req.query.api_key
-    || req.body?.apiKey
-    || req.body?.api_key
+const getApiKeyFromRequest = (req) => extractApiKeyFromRequest(req);
+const getWidgetTokenFromRequest = (req = {}) => (
+    req.headers?.['x-widget-token']
+    || req.query?.widget_token
+    || req.query?.widgetToken
     || null
 );
 
@@ -59,24 +63,64 @@ const applyPlatformCorsHeaders = (req, res) => {
     if (!origin) return;
     res.set('Vary', 'Origin');
     res.set('Access-Control-Allow-Origin', origin);
-    res.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Widget-Token, Authorization');
     res.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+};
+
+const resolvePlatformCredential = async (req) => {
+    const rawKey = getApiKeyFromRequest(req);
+    if (rawKey) {
+        const apiKeyDoc = await findApiKeyByRawValue(rawKey);
+        return {
+            apiKeyDoc,
+            authSource: 'api_key',
+            rawCredential: rawKey,
+            widgetTokenPayload: null,
+        };
+    }
+
+    const widgetToken = getWidgetTokenFromRequest(req);
+    if (!widgetToken) {
+        return {
+            apiKeyDoc: null,
+            authSource: 'none',
+            rawCredential: null,
+            widgetTokenPayload: null,
+        };
+    }
+
+    const requestDomain = resolveWidgetRequestDomain(req);
+    const { apiKeyDoc, tokenPayload } = await resolveApiKeyFromWidgetToken({
+        token: widgetToken,
+        requestDomain,
+    });
+
+    return {
+        apiKeyDoc,
+        authSource: 'widget_token',
+        rawCredential: widgetToken,
+        widgetTokenPayload: tokenPayload,
+    };
 };
 
 const platformApiKeyGuard = async (req, res, next) => {
     try {
-        const rawKey = getApiKeyFromRequest(req);
-        if (!rawKey) {
-            return res.status(401).json({ message: 'Platform API key is required' });
-        }
+        const {
+            apiKeyDoc,
+            authSource,
+            rawCredential,
+            widgetTokenPayload,
+        } = await resolvePlatformCredential(req);
 
-        const apiKeyDoc = await findApiKeyByRawValue(rawKey);
+        if (!rawCredential) {
+            return res.status(401).json({ message: 'Platform API credential is required' });
+        }
 
         if (!apiKeyDoc || apiKeyDoc.isActive === false || apiKeyDoc.revoked) {
-            return res.status(401).json({ message: 'Invalid platform API key' });
+            return res.status(401).json({ message: 'Invalid platform API credential' });
         }
 
-        if (!isOriginAllowedForKey(apiKeyDoc, req.headers.origin)) {
+        if (authSource !== 'widget_token' && !isOriginAllowedForKey(apiKeyDoc, req.headers.origin)) {
             return res.status(403).json({ message: 'Origin not allowed for this API key' });
         }
 
@@ -104,18 +148,22 @@ const platformApiKeyGuard = async (req, res, next) => {
 
         req.platformClient = {
             apiKeyId: apiKeyDoc._id,
-            keyMasked: maskKey(apiKeyDoc.key || apiKeyDoc.keyPattern || rawKey),
+            keyMasked: maskKey(apiKeyDoc.key || apiKeyDoc.keyPattern || rawCredential),
             organization: apiKeyDoc.organization || null,
             employerId: apiKeyDoc.employerId || null,
             planType,
             rateLimit: resolvedRateLimit,
             usageCount: apiKeyDoc.usageCount,
+            authSource,
         };
         req.tenantContext = {
             tenantId: apiKeyDoc.organization || null,
             ownerId: apiKeyDoc.ownerId || apiKeyDoc.employerId || null,
             mode: apiKeyDoc.organization ? 'organization' : 'owner',
         };
+        if (widgetTokenPayload) {
+            req.widgetTokenPayload = widgetTokenPayload;
+        }
 
         if (typeof res.on === 'function') {
             res.on('finish', () => {
@@ -133,6 +181,7 @@ const platformApiKeyGuard = async (req, res, next) => {
                         planType,
                         rateLimit: resolvedRateLimit,
                         origin: req.headers.origin || null,
+                        authSource,
                     },
                 });
             });
@@ -149,6 +198,7 @@ const platformApiKeyGuard = async (req, res, next) => {
                     method: req.method,
                     organizationId: apiKeyDoc.organization ? String(apiKeyDoc.organization) : null,
                     origin: req.headers.origin || null,
+                    authSource,
                 },
             }).catch((error) => {
                 logger.warn(`platform api usage log failed: ${error.message}`);
@@ -164,18 +214,16 @@ const platformApiKeyGuard = async (req, res, next) => {
 };
 
 const platformApiOptionsHandler = async (req, res) => {
-    const rawKey = getApiKeyFromRequest(req);
-    if (!rawKey) {
-        return res.status(401).json({ message: 'Platform API key is required' });
+    const { apiKeyDoc, rawCredential, authSource } = await resolvePlatformCredential(req);
+    if (!rawCredential) {
+        return res.status(401).json({ message: 'Platform API credential is required' });
     }
-
-    const apiKeyDoc = await findApiKeyByRawValue(rawKey);
 
     if (!apiKeyDoc || apiKeyDoc.isActive === false || apiKeyDoc.revoked) {
-        return res.status(401).json({ message: 'Invalid platform API key' });
+        return res.status(401).json({ message: 'Invalid platform API credential' });
     }
 
-    if (!isOriginAllowedForKey(apiKeyDoc, req.headers.origin)) {
+    if (authSource !== 'widget_token' && !isOriginAllowedForKey(apiKeyDoc, req.headers.origin)) {
         return res.status(403).json({ message: 'Origin not allowed for this API key' });
     }
 

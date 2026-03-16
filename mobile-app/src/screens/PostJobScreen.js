@@ -1,267 +1,167 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    View,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Keyboard,
+    KeyboardAvoidingView,
+    LayoutAnimation,
+    Modal,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
-    StyleSheet,
-    ScrollView,
-    KeyboardAvoidingView,
-    Alert,
-    ActivityIndicator,
-    Switch,
-    LayoutAnimation,
-    Platform,
     UIManager,
+    View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import client from '../api/client';
 import { logger } from '../utils/logger';
+import {
+    AP_LANGUAGE_OPTIONS,
+    getApDistrictOptions,
+    getApLocalityHints,
+} from '../config/apProfileCatalog';
+import {
+    getRoleCategories,
+    getRoleDefaults,
+    getRoleTitlesForCategory,
+    hasExactRoleMatch,
+} from '../config/workerRoleCatalog';
+import { SCREEN_CHROME, SHADOWS } from '../theme/theme';
 
-const SHIFT_OPTIONS = ['Day', 'Night', 'Flexible'];
-const ROLE_TYPE_OPTIONS = [
-    'Student',
-    'Fresher',
-    'Delivery / Logistics',
-    'Skilled Trades',
-    'Construction / Civil',
-    'Manufacturing / Factory',
-    'Retail / Hospitality',
-    'Healthcare / Care',
-    'Security / Facility',
-    'Software / Tech',
-    'Finance / Admin',
-    'Sales / Marketing',
-    'Support / Service',
-    'Other',
+const SHIFT_OPTIONS = [
+    { value: 'Day', icon: 'sunny-outline', hint: 'Day operations' },
+    { value: 'Night', icon: 'moon-outline', hint: 'Night coverage' },
+    { value: 'Flexible', icon: 'time-outline', hint: 'Shift rotation' },
 ];
-const ROLE_TYPE_META = {
-    Student: { icon: 'school-outline', hint: 'Internships, part-time and campus roles' },
-    Fresher: { icon: 'rocket-outline', hint: 'Entry-level full-time opportunities' },
-    'Delivery / Logistics': { icon: 'bicycle-outline', hint: 'Last-mile, warehouse and dispatch roles' },
-    'Skilled Trades': { icon: 'construct-outline', hint: 'Plumber, electrician, carpenter and field trades' },
-    'Construction / Civil': { icon: 'hammer-outline', hint: 'Site execution, civil and project work' },
-    'Manufacturing / Factory': { icon: 'settings-outline', hint: 'Production, machine and quality operations' },
-    'Retail / Hospitality': { icon: 'storefront-outline', hint: 'Frontline retail, food and guest services' },
-    'Healthcare / Care': { icon: 'medical-outline', hint: 'Clinic, care and allied health support' },
-    'Security / Facility': { icon: 'shield-outline', hint: 'Security, surveillance and facility upkeep' },
-    'Software / Tech': { icon: 'code-slash-outline', hint: 'Engineering, product and QA roles' },
-    'Finance / Admin': { icon: 'calculator-outline', hint: 'Accounts, MIS and office operations' },
-    'Sales / Marketing': { icon: 'megaphone-outline', hint: 'Revenue, growth and outreach roles' },
-    'Support / Service': { icon: 'headset-outline', hint: 'Customer service and operations support' },
-    Other: { icon: 'grid-outline', hint: 'Any role not listed in the categories above' },
+
+const STEP_TITLES = [
+    { key: 'basics', label: 'Basics', title: 'Role and employer' },
+    { key: 'setup', label: 'AP Setup', title: 'Where and how this role runs' },
+    { key: 'fit', label: 'Job Fit', title: 'Signals that guide matching' },
+    { key: 'review', label: 'Review', title: 'Questions and publish' },
+];
+
+const STEP_META = {
+    basics: { icon: 'briefcase-outline', label: 'Basics', hint: 'Family, role, employer' },
+    setup: { icon: 'location-outline', label: 'AP Setup', hint: 'District, locality, shift' },
+    fit: { icon: 'options-outline', label: 'Job Fit', hint: 'Salary, skills, proofs' },
+    review: { icon: 'checkmark-done-outline', label: 'Review', hint: 'Questions and publish' },
 };
-const ROLE_TYPE_CONFIG = {
-    Student: {
-        titles: ['Intern', 'Campus Trainee', 'Library Assistant', 'Lab Assistant', 'Part-time Associate'],
-        skills: ['Communication', 'Basic computer use', 'Teamwork', 'Documentation', 'Problem solving'],
-        licenses: [],
-    },
-    Fresher: {
-        titles: ['Junior Associate', 'Trainee', 'Assistant', 'Data Entry Operator', 'Operations Executive'],
-        skills: ['Customer handling', 'Basic computer use', 'Documentation', 'Time management', 'Follow-through'],
-        licenses: [],
-    },
-    'Delivery / Logistics': {
-        titles: ['Delivery Executive', 'Warehouse Associate', 'Inventory Assistant', 'Picker and Packer', 'Dispatch Coordinator', 'Fleet Associate'],
-        skills: ['Delivery support', 'Inventory checks', 'Packing', 'Route knowledge', 'Scanner usage', 'Dispatch handling'],
-        licenses: ['Two-wheeler license', 'Light motor vehicle license'],
-    },
-    'Skilled Trades': {
-        titles: ['Plumber', 'Electrician', 'Carpenter', 'Welder', 'HVAC Technician', 'Refrigeration Technician'],
-        skills: ['Troubleshooting', 'Repair work', 'Installation', 'Safety compliance', 'Tool handling'],
-        licenses: ['Trade certification', 'Electrical license', 'Safety certification'],
-    },
-    'Construction / Civil': {
-        titles: ['Site Supervisor', 'Civil Technician', 'Mason', 'Bar Bender', 'Scaffolding Technician', 'Survey Assistant'],
-        skills: ['Blueprint reading', 'Site safety', 'Concrete work', 'Material estimation', 'Team coordination'],
-        licenses: ['Safety pass', 'Trade certification'],
-    },
-    'Manufacturing / Factory': {
-        titles: ['Machine Operator', 'Production Associate', 'Quality Inspector', 'Assembly Technician', 'Maintenance Technician'],
-        skills: ['Machine handling', 'SOP compliance', 'Quality checks', 'Line discipline', '5S practices'],
-        licenses: ['Forklift certification', 'Machine safety certification'],
-    },
-    'Retail / Hospitality': {
-        titles: ['Retail Associate', 'Cashier', 'Store Supervisor', 'Steward', 'Barista', 'Kitchen Assistant'],
-        skills: ['POS billing', 'Customer interaction', 'Stock handling', 'Upselling', 'Service etiquette'],
-        licenses: ['Food safety certification'],
-    },
-    'Healthcare / Care': {
-        titles: ['Nursing Assistant', 'Patient Care Assistant', 'Pharmacy Assistant', 'Lab Technician', 'Ward Assistant'],
-        skills: ['Patient support', 'Hygiene protocol', 'Vitals support', 'Record handling', 'Empathy'],
-        licenses: ['BLS certification', 'Nursing registration', 'Lab certification'],
-    },
-    'Security / Facility': {
-        titles: ['Security Guard', 'CCTV Operator', 'Facility Executive', 'Housekeeping Supervisor', 'Maintenance Assistant'],
-        skills: ['Access control', 'Incident reporting', 'Patrolling', 'Vendor coordination', 'Emergency response'],
-        licenses: ['PSARA certification', 'Fire safety certification'],
-    },
-    'Software / Tech': {
-        titles: ['Frontend Developer', 'Backend Developer', 'QA Engineer', 'DevOps Engineer', 'Support Engineer', 'Data Analyst'],
-        skills: ['JavaScript', 'React', 'Node.js', 'Testing', 'SQL', 'API integration'],
-        licenses: [],
-    },
-    'Finance / Admin': {
-        titles: ['Account Assistant', 'MIS Executive', 'Back Office Executive', 'HR Coordinator', 'Office Administrator'],
-        skills: ['Excel', 'Tally or ERP', 'Data validation', 'Payroll support', 'Documentation'],
-        licenses: [],
-    },
-    'Sales / Marketing': {
-        titles: ['Sales Executive', 'Field Sales Associate', 'Inside Sales Executive', 'Business Development Executive', 'Marketing Associate'],
-        skills: ['Lead generation', 'Client communication', 'Follow-ups', 'CRM updates', 'Negotiation'],
-        licenses: [],
-    },
-    'Support / Service': {
-        titles: ['Customer Support Executive', 'Service Coordinator', 'Operations Associate', 'Helpdesk Executive', 'Process Associate'],
-        skills: ['Customer handling', 'Escalation handling', 'Ticket resolution', 'Documentation', 'SLA adherence'],
-        licenses: [],
-    },
-    Other: {
-        titles: [],
-        skills: [],
-        licenses: [],
-    },
-};
-const COMMON_SKILLS = [
-    'Communication',
-    'Customer handling',
-    'Inventory checks',
-    'Packing',
-    'Quality checks',
-    'Delivery support',
-    'Machine handling',
-    'POS billing',
-    'Basic computer use',
-    'Excel',
-    'Team leadership',
-    'Team coordination',
-    'Safety compliance',
-    'Problem solving',
-];
-const COMMON_LICENSES = [
-    'Two-wheeler license',
-    'Light motor vehicle license',
-    'Commercial driving license',
-    'Forklift certification',
-    'Food safety certification',
-    'PSARA certification',
-    'Trade certification',
-    'Electrical license',
-];
-const COMMON_SCREENING_QUESTIONS = [
-    'Can you start within 7 days?',
-    'Are you comfortable with the selected shift?',
-    'Do you have direct experience in this role?',
-];
-const QUICK_LOCATION_OPTIONS = ['Hyderabad', 'Bengaluru', 'Mumbai', 'Delhi NCR', 'Chennai', 'Pune'];
-const QUICK_LANGUAGE_OPTIONS = ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada'];
+
+const ROLE_FAMILY_OPTIONS = getRoleCategories();
+const ROLE_FAMILY_VISUALS = Object.freeze({
+    'Delivery & Logistics': { emoji: '🛵', tint: 'rgba(96, 165, 250, 0.18)' },
+    'Sales & Voice': { emoji: '🎧', tint: 'rgba(251, 191, 36, 0.22)' },
+    'Agriculture & Rural Work': { emoji: '🌾', tint: 'rgba(74, 222, 128, 0.20)' },
+    'Skilled Trades': { emoji: '🛠️', tint: 'rgba(251, 146, 60, 0.20)' },
+    'Construction & Infra': { emoji: '🏗️', tint: 'rgba(248, 113, 113, 0.18)' },
+    'Manufacturing & Factory': { emoji: '⚙️', tint: 'rgba(125, 211, 252, 0.20)' },
+    'Retail & Hospitality': { emoji: '🛍️', tint: 'rgba(244, 114, 182, 0.18)' },
+    'Support & Back Office': { emoji: '💼', tint: 'rgba(192, 132, 252, 0.16)' },
+    'Healthcare & Care': { emoji: '🩺', tint: 'rgba(52, 211, 153, 0.16)' },
+    'Security & Facilities': { emoji: '🛡️', tint: 'rgba(148, 163, 184, 0.20)' },
+    'Technology & Digital': { emoji: '💻', tint: 'rgba(99, 102, 241, 0.18)' },
+    'Finance & Admin': { emoji: '📊', tint: 'rgba(45, 212, 191, 0.18)' },
+});
+const getRoleFamilyVisual = (family = '') => (
+    ROLE_FAMILY_VISUALS[String(family || '').trim()] || { emoji: '💼', tint: 'rgba(111, 78, 246, 0.12)' }
+);
+
+const COMPANY_SUGGESTIONS = [];
+const JOB_STUDIO_DRAFT_KEY = '@employer_job_studio_draft';
+const JOB_POST_TIMEOUT_MS = 9000;
+const JOB_POST_VERIFY_ATTEMPTS = 2;
+const JOB_POST_VERIFY_DELAY_MS = 700;
+const JOB_POST_VERIFY_REQUEST_TIMEOUT_MS = 3000;
+
 const QUICK_SALARY_PRESETS = [
     { label: '15k-20k', min: '15000', max: '20000' },
     { label: '20k-30k', min: '20000', max: '30000' },
     { label: '30k-45k', min: '30000', max: '45000' },
     { label: '45k-60k', min: '45000', max: '60000' },
 ];
+
 const QUICK_EXPERIENCE_PRESETS = [
     { label: '0-1 yrs', min: '0', max: '1' },
     { label: '1-3 yrs', min: '1', max: '3' },
     { label: '3-5 yrs', min: '3', max: '5' },
     { label: '5+ yrs', min: '5', max: '8' },
 ];
-const COMMON_COMPANY_OPTIONS = [
-    'My Company',
-    'Hiring Team',
-    'Construction Firm',
-    'Factory Unit',
-    'Retail Outlet',
-    'Clinic or Hospital',
-    'Facility Management Team',
-    'Local Business',
-    'Startup Team',
-    'Enterprise Team',
-];
-const GENERIC_ROLE_TITLES = [
-    'Operations Associate',
-    'Field Executive',
-    'Support Associate',
-    'Sales Associate',
-    'Technician',
-    'Supervisor',
-    'Assistant',
-];
+
 const OPENING_OPTIONS = [1, 2, 3, 5, 10];
-const STEP_TITLES = ['Role', 'Setup', 'Fit', 'Review'];
-const PRIORITY_ROLE_TYPES = [
-    'Fresher',
-    'Delivery / Logistics',
-    'Skilled Trades',
-    'Retail / Hospitality',
-    'Software / Tech',
-    'Support / Service',
+const COMMON_QUESTIONS = [
+    'Can you start within 7 days?',
+    'Are you comfortable with the selected shift?',
+    'Do you have direct experience in this role?',
 ];
+
+const normalizeText = (value = '') => String(value || '').trim().toLowerCase();
+
+const clampText = (value = '', maxLength = 120) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return '';
+    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+};
+
+const isLocalAssetUri = (value = '') => /^(file|content|ph|assets-library):/i.test(String(value || '').trim());
 
 const parseCommaList = (value = '', maxItems = 50, maxLength = 120) => (
     String(value || '')
         .split(',')
-        .map((item) => String(item || '').trim())
+        .map((item) => clampText(item, maxLength))
         .filter(Boolean)
-        .map((item) => (item.length > maxLength ? item.slice(0, maxLength) : item))
         .slice(0, maxItems)
 );
 
 const parseLineList = (value = '', maxItems = 20, maxLength = 250) => (
     String(value || '')
         .split('\n')
-        .map((item) => String(item || '').trim())
+        .map((item) => clampText(item, maxLength))
         .filter(Boolean)
-        .map((item) => (item.length > maxLength ? item.slice(0, maxLength) : item))
         .slice(0, maxItems)
 );
 
-const toggleLineToken = (currentValue = '', token = '') => {
-    const nextToken = String(token || '').trim();
-    if (!nextToken) return String(currentValue || '');
-    const existing = parseLineList(currentValue, 40, 250);
-    const hasValue = existing.some((item) => normalizeText(item) === normalizeText(nextToken));
-    if (hasValue) {
-        return existing.filter((item) => normalizeText(item) !== normalizeText(nextToken)).join('\n');
-    }
-    return [...existing, nextToken].join('\n');
+const toggleCommaToken = (currentValue = '', token = '') => {
+    const normalized = clampText(token, 120);
+    if (!normalized) return String(currentValue || '');
+    const items = parseCommaList(currentValue, 80, 120);
+    const hasValue = items.some((item) => normalizeText(item) === normalizeText(normalized));
+    if (hasValue) return items.filter((item) => normalizeText(item) !== normalizeText(normalized)).join(', ');
+    return [...items, normalized].join(', ');
 };
 
 const appendCommaToken = (currentValue = '', token = '') => {
-    const nextToken = String(token || '').trim();
-    if (!nextToken) return String(currentValue || '');
-    const existing = parseCommaList(currentValue);
-    if (existing.includes(nextToken)) return String(currentValue || '');
-    return [...existing, nextToken].join(', ');
+    const normalized = clampText(token, 120);
+    if (!normalized) return String(currentValue || '');
+    const items = parseCommaList(currentValue, 80, 120);
+    if (items.some((item) => normalizeText(item) === normalizeText(normalized))) return String(currentValue || '');
+    return [...items, normalized].join(', ');
 };
 
-const toggleCommaToken = (currentValue = '', token = '') => {
-    const nextToken = String(token || '').trim();
-    if (!nextToken) return String(currentValue || '');
-    const existing = parseCommaList(currentValue);
-    if (existing.includes(nextToken)) {
-        return existing.filter((item) => item !== nextToken).join(', ');
-    }
-    return [...existing, nextToken].join(', ');
-};
-
-const parseSalaryRange = (salaryRange = '') => {
-    const matches = String(salaryRange || '').match(/\d[\d,]*/g) || [];
-    if (!matches.length) return { min: '', max: '' };
-    const normalized = matches.map((token) => token.replace(/,/g, ''));
-    if (normalized.length === 1) {
-        return { min: normalized[0], max: '' };
-    }
-    return { min: normalized[0], max: normalized[1] };
+const toggleLineToken = (currentValue = '', token = '') => {
+    const normalized = clampText(token, 200);
+    if (!normalized) return String(currentValue || '');
+    const items = parseLineList(currentValue, 40, 250);
+    const hasValue = items.some((item) => normalizeText(item) === normalizeText(normalized));
+    if (hasValue) return items.filter((item) => normalizeText(item) !== normalizeText(normalized)).join('\n');
+    return [...items, normalized].join('\n');
 };
 
 const clampNonNegativeInt = (value) => {
-    const normalized = String(value || '').replace(/[^\d]/g, '');
-    if (!normalized) return null;
-    const numeric = Number.parseInt(normalized, 10);
+    const digits = String(value || '').replace(/[^\d]/g, '');
+    if (!digits) return null;
+    const numeric = Number.parseInt(digits, 10);
     if (!Number.isFinite(numeric) || numeric < 0) return null;
     return numeric;
 };
@@ -272,39 +172,41 @@ const formatNumberWithCommas = (value) => {
     return numeric.toLocaleString('en-IN');
 };
 
-const clampText = (value = '', maxLength = 120) => {
-    const normalized = String(value || '').trim();
-    if (!normalized) return '';
-    return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withTimeout = (promise, timeoutMs, timeoutMessage = 'Request timed out.') => {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 };
 
-const normalizeText = (value = '') => String(value || '').trim().toLowerCase();
-
-const focusChoices = (options = [], selected = [], limit = 6) => {
-    const normalized = [...new Set((Array.isArray(options) ? options : []).filter(Boolean))];
-    if (normalized.length <= limit) return normalized;
-    const selectedSet = new Set((Array.isArray(selected) ? selected : [selected]).map(normalizeText).filter(Boolean));
-    const selectedItems = normalized.filter((item) => selectedSet.has(normalizeText(item)));
-    const topItems = normalized.slice(0, limit);
-    return [...new Set([...selectedItems, ...topItems])];
+const parseSalaryRange = (salaryRange = '') => {
+    const matches = String(salaryRange || '').match(/\d[\d,]*/g) || [];
+    if (!matches.length) return { min: '', max: '' };
+    const normalized = matches.map((entry) => entry.replace(/,/g, ''));
+    if (normalized.length === 1) return { min: normalized[0], max: '' };
+    return { min: normalized[0], max: normalized[1] };
 };
 
-const hasCsvToken = (csvValue = '', token = '') => (
-    parseCommaList(csvValue, 80, 120).some((item) => normalizeText(item) === normalizeText(token))
-);
-
-const hasLineToken = (lineValue = '', token = '') => (
-    parseLineList(lineValue, 80, 250).some((item) => normalizeText(item) === normalizeText(token))
-);
+const buildAutocompleteOptions = (query = '', options = [], limit = 6) => {
+    const source = [...new Set((Array.isArray(options) ? options : []).map((item) => String(item || '').trim()).filter(Boolean))];
+    const normalizedQuery = normalizeText(query);
+    if (!normalizedQuery) return source.slice(0, limit);
+    const startsWith = source.filter((option) => normalizeText(option).startsWith(normalizedQuery));
+    const contains = source.filter((option) => (
+        normalizeText(option).includes(normalizedQuery) && !startsWith.includes(option)
+    ));
+    return [...startsWith, ...contains].slice(0, limit);
+};
 
 const extractApiErrorMessage = (error, fallbackMessage = 'Please review the form and try again.') => {
     const payload = error?.response?.data || error?.originalError?.response?.data || {};
     const directMessage = String(payload?.message || '').trim();
     if (directMessage) return directMessage;
-
     const nestedMessage = String(payload?.error?.message || '').trim();
     if (nestedMessage) return nestedMessage;
-
     const details = Array.isArray(payload?.error?.details) ? payload.error.details : [];
     if (details.length > 0) {
         const first = details[0] || {};
@@ -313,11 +215,180 @@ const extractApiErrorMessage = (error, fallbackMessage = 'Please review the form
         if (path && message) return `${path}: ${message}`;
         if (message) return message;
     }
-
     const genericMessage = String(error?.message || '').trim();
-    if (genericMessage) return genericMessage;
+    return genericMessage || fallbackMessage;
+};
 
-    return fallbackMessage;
+const StudioChip = ({ label, selected, onPress, accent = false, icon = null }) => (
+    <TouchableOpacity
+        style={[
+            styles.choiceChip,
+            selected ? styles.choiceChipActive : null,
+            accent && !selected ? styles.choiceChipAccent : null,
+        ]}
+        onPress={onPress}
+        activeOpacity={0.84}
+    >
+        {icon ? <Ionicons name={icon} size={14} color={selected ? '#ffffff' : accent ? '#6d28d9' : '#475569'} /> : null}
+        <Text style={[
+            styles.choiceChipText,
+            selected ? styles.choiceChipTextActive : null,
+            accent && !selected ? styles.choiceChipTextAccent : null,
+        ]}>
+            {label}
+        </Text>
+    </TouchableOpacity>
+);
+
+const ReviewRow = ({ label, value }) => (
+    <View style={styles.reviewRow}>
+        <Text style={styles.reviewLabel}>{label}</Text>
+        <Text style={styles.reviewValue}>{value || 'Not set'}</Text>
+    </View>
+);
+
+const TypeaheadInput = ({
+    value = '',
+    onChangeText,
+    placeholder = '',
+    suggestions = [],
+    onSelectSuggestion,
+    pickerTitle = '',
+    pickerHint = 'Pick one or type your own.',
+    disabled = false,
+    emptyStateText = 'Nothing listed yet. Type your own value.',
+}) => {
+    const [visible, setVisible] = useState(false);
+    const inputRef = useRef(null);
+    const safeSuggestions = Array.isArray(suggestions)
+        ? Array.from(new Set(suggestions.map((item) => String(item || '').trim()).filter(Boolean)))
+        : [];
+    const normalizedValue = String(value || '').trim();
+    const customValue = normalizedValue && !safeSuggestions.some((item) => normalizeText(item) === normalizeText(normalizedValue))
+        ? normalizedValue
+        : '';
+
+    const commitSelection = (nextValue) => {
+        if (typeof onSelectSuggestion === 'function') {
+            onSelectSuggestion(nextValue);
+            return;
+        }
+        onChangeText?.(nextValue);
+    };
+
+    const openPicker = () => {
+        if (disabled) return;
+        Keyboard.dismiss();
+        setVisible(true);
+        requestAnimationFrame(() => inputRef.current?.focus?.());
+    };
+
+    const closePicker = () => {
+        inputRef.current?.blur?.();
+        Keyboard.dismiss();
+        setVisible(false);
+    };
+
+    return (
+        <View>
+            <TouchableOpacity
+                style={[styles.typeaheadShell, disabled && styles.typeaheadShellDisabled]}
+                activeOpacity={disabled ? 1 : 0.88}
+                onPress={openPicker}
+                disabled={disabled}
+            >
+                <Text style={normalizedValue ? styles.typeaheadDisplayText : styles.typeaheadPlaceholderText} numberOfLines={1}>
+                    {normalizedValue || placeholder}
+                </Text>
+                <Text style={styles.typeaheadChevron}>{visible ? '▲' : '▼'}</Text>
+            </TouchableOpacity>
+
+            <Modal
+                visible={visible}
+                transparent
+                animationType="fade"
+                presentationStyle="overFullScreen"
+                onRequestClose={closePicker}
+            >
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 18 : 0}
+                    style={styles.typeaheadPickerOverlay}
+                >
+                    <TouchableOpacity style={styles.typeaheadPickerBackdrop} activeOpacity={1} onPress={closePicker} />
+                    <View style={styles.typeaheadPickerSheet}>
+                        <View style={styles.typeaheadPickerHandle} />
+                        <View style={styles.typeaheadPickerHeader}>
+                            <View style={styles.typeaheadPickerHeaderCopy}>
+                                <Text style={styles.typeaheadPickerTitle}>{pickerTitle || placeholder}</Text>
+                                <Text style={styles.typeaheadPickerHint}>{pickerHint}</Text>
+                            </View>
+                            <TouchableOpacity onPress={closePicker} style={styles.typeaheadPickerCloseBtn} activeOpacity={0.85}>
+                                <Ionicons name="close" size={18} color="#6b7280" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={[styles.typeaheadShell, styles.typeaheadPickerSearchShell]}>
+                            <TextInput
+                                ref={inputRef}
+                                value={value}
+                                onChangeText={onChangeText}
+                                style={styles.typeaheadInput}
+                                placeholder={placeholder}
+                                placeholderTextColor="#94a3b8"
+                                autoCapitalize="words"
+                                autoCorrect={false}
+                                returnKeyType="done"
+                            />
+                        </View>
+
+                        <ScrollView
+                            style={styles.typeaheadPickerList}
+                            contentContainerStyle={styles.typeaheadPickerListContent}
+                            keyboardShouldPersistTaps="always"
+                            showsVerticalScrollIndicator={false}
+                        >
+                            {safeSuggestions.map((item, index) => (
+                                <TouchableOpacity
+                                    key={`typeahead-${item}-${index}`}
+                                    style={styles.typeaheadPickerItem}
+                                    activeOpacity={0.82}
+                                    onPress={() => {
+                                        commitSelection(item);
+                                        closePicker();
+                                    }}
+                                >
+                                    <Text style={styles.typeaheadItemText}>{item}</Text>
+                                </TouchableOpacity>
+                            ))}
+                            {customValue ? (
+                                <TouchableOpacity
+                                    style={[styles.typeaheadPickerItem, styles.typeaheadPickerItemPrimary]}
+                                    activeOpacity={0.82}
+                                    onPress={() => {
+                                        commitSelection(customValue);
+                                        closePicker();
+                                    }}
+                                >
+                                    <Text style={[styles.typeaheadItemText, styles.typeaheadPickerItemPrimaryText]}>
+                                        {`Use "${customValue}"`}
+                                    </Text>
+                                    <Text style={[styles.typeaheadItemMeta, styles.typeaheadPickerItemPrimaryMeta]}>
+                                        Type your own and continue
+                                    </Text>
+                                </TouchableOpacity>
+                            ) : null}
+                            {safeSuggestions.length === 0 && !customValue ? (
+                                <View style={styles.typeaheadPickerEmptyState}>
+                                    <Text style={styles.typeaheadPickerEmptyText}>{emptyStateText}</Text>
+                                </View>
+                            ) : null}
+                        </ScrollView>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
+        </View>
+    );
 };
 
 export default function PostJobScreen({ navigation, route }) {
@@ -326,91 +397,133 @@ export default function PostJobScreen({ navigation, route }) {
     const [roleType, setRoleType] = useState('');
     const [title, setTitle] = useState('');
     const [companyName, setCompanyName] = useState('');
-    const [location, setLocation] = useState('');
-    const [showAllRoleTypes, setShowAllRoleTypes] = useState(false);
-    const [showAllRoleTitles, setShowAllRoleTitles] = useState(false);
-    const [showAllCompanies, setShowAllCompanies] = useState(false);
-    const [showCustomRoleInput, setShowCustomRoleInput] = useState(false);
-    const [showCustomCompanyInput, setShowCustomCompanyInput] = useState(false);
-    const [showCustomLocationInput, setShowCustomLocationInput] = useState(false);
-    const [showAllMustHaveSkills, setShowAllMustHaveSkills] = useState(false);
-    const [showAllGoodToHaveSkills, setShowAllGoodToHaveSkills] = useState(false);
-    const [showAllLicenses, setShowAllLicenses] = useState(false);
-    const [showAllQuestions, setShowAllQuestions] = useState(false);
-    const [showCustomSkillInput, setShowCustomSkillInput] = useState(false);
-    const [showCustomLicenseInput, setShowCustomLicenseInput] = useState(false);
-    const [showCustomQuestionInput, setShowCustomQuestionInput] = useState(false);
-    const [customSkillInput, setCustomSkillInput] = useState('');
-    const [customLicenseInput, setCustomLicenseInput] = useState('');
-    const [customQuestionInput, setCustomQuestionInput] = useState('');
+    const [companyBrandPhoto, setCompanyBrandPhoto] = useState('');
+    const [district, setDistrict] = useState('');
+    const [locality, setLocality] = useState('');
     const [remoteAllowed, setRemoteAllowed] = useState(false);
     const [shift, setShift] = useState('Flexible');
+    const [openings, setOpenings] = useState('');
     const [salaryMin, setSalaryMin] = useState('');
     const [salaryMax, setSalaryMax] = useState('');
     const [salaryRangeFallback, setSalaryRangeFallback] = useState('');
     const [experienceMin, setExperienceMin] = useState('');
     const [experienceMax, setExperienceMax] = useState('');
-    const [openings, setOpenings] = useState('');
     const [mustHaveSkills, setMustHaveSkills] = useState('');
     const [goodToHaveSkills, setGoodToHaveSkills] = useState('');
     const [languages, setLanguages] = useState('');
     const [mandatoryLicensesText, setMandatoryLicensesText] = useState('');
     const [screeningQuestionsText, setScreeningQuestionsText] = useState('');
+    const [customSkillInput, setCustomSkillInput] = useState('');
+    const [customLicenseInput, setCustomLicenseInput] = useState('');
+    const [customQuestionInput, setCustomQuestionInput] = useState('');
     const [videoUrl, setVideoUrl] = useState(null);
     const [aiLoading, setAiLoading] = useState(false);
     const [aiQuestionsLoading, setAiQuestionsLoading] = useState(false);
     const [saving, setSaving] = useState(false);
-    const roleTemplate = useMemo(() => ROLE_TYPE_CONFIG[roleType] || ROLE_TYPE_CONFIG.Other, [roleType]);
+    const [verifyingPost, setVerifyingPost] = useState(false);
+    const [uploadingCompanyBrand, setUploadingCompanyBrand] = useState(false);
+    const [draftHydrated, setDraftHydrated] = useState(false);
+    const draftPersistencePausedRef = useRef(false);
+    const contentScrollRef = useRef(null);
+
+    const apDistrictOptions = useMemo(() => getApDistrictOptions(), []);
+    const roleFamilyOptions = useMemo(() => ROLE_FAMILY_OPTIONS, []);
     const roleTitleOptions = useMemo(
-        () => [...new Set([...(roleTemplate.titles || []), ...GENERIC_ROLE_TITLES])],
-        [roleTemplate.titles]
+        () => buildAutocompleteOptions(title, getRoleTitlesForCategory(roleType), 10),
+        [roleType, title]
     );
+    const exactRoleDefaults = useMemo(() => getRoleDefaults(title), [title]);
+    const hasExactRoleTitle = useMemo(() => hasExactRoleMatch(title), [title]);
     const companyOptions = useMemo(
-        () => [...new Set([String(companyName || '').trim(), ...COMMON_COMPANY_OPTIONS].filter(Boolean))],
+        () => [...new Set([String(companyName || '').trim(), ...COMPANY_SUGGESTIONS].filter(Boolean))].slice(0, 6),
         [companyName]
     );
-    const selectedMustHaveSkills = useMemo(() => parseCommaList(mustHaveSkills, 40, 120), [mustHaveSkills]);
-    const selectedGoodToHaveSkills = useMemo(() => parseCommaList(goodToHaveSkills, 40, 120), [goodToHaveSkills]);
-    const selectedLanguages = useMemo(() => parseCommaList(languages, 20, 60), [languages]);
-    const selectedLicenses = useMemo(() => parseCommaList(mandatoryLicensesText, 40, 120), [mandatoryLicensesText]);
-    const selectedQuestions = useMemo(() => parseLineList(screeningQuestionsText, 40, 250), [screeningQuestionsText]);
-    const currentStepTitle = STEP_TITLES[stepIndex] || STEP_TITLES[0];
-    const visibleRoleTypeOptions = useMemo(
-        () => (showAllRoleTypes ? ROLE_TYPE_OPTIONS : focusChoices([...PRIORITY_ROLE_TYPES, ...ROLE_TYPE_OPTIONS], [roleType], 6)),
-        [roleType, showAllRoleTypes]
-    );
-    const visibleRoleTitleOptions = useMemo(
-        () => (showAllRoleTitles ? roleTitleOptions : focusChoices(roleTitleOptions, [title], 6)),
-        [roleTitleOptions, showAllRoleTitles, title]
-    );
-    const visibleCompanyOptions = useMemo(
-        () => (showAllCompanies ? companyOptions : focusChoices(companyOptions, [companyName], 5)),
-        [companyName, companyOptions, showAllCompanies]
-    );
-    const fitSkillOptions = useMemo(
-        () => [...new Set([...(roleTemplate.skills || []), ...COMMON_SKILLS])],
-        [roleTemplate.skills]
-    );
-    const visibleMustHaveSkills = useMemo(
-        () => (showAllMustHaveSkills ? fitSkillOptions : focusChoices(fitSkillOptions, selectedMustHaveSkills, 8)),
-        [fitSkillOptions, selectedMustHaveSkills, showAllMustHaveSkills]
-    );
-    const visibleGoodToHaveSkills = useMemo(
-        () => (showAllGoodToHaveSkills ? fitSkillOptions : focusChoices(fitSkillOptions, selectedGoodToHaveSkills, 8)),
-        [fitSkillOptions, selectedGoodToHaveSkills, showAllGoodToHaveSkills]
+    const skillOptions = useMemo(
+        () => hasExactRoleTitle ? [...new Set((exactRoleDefaults.skills || []).filter(Boolean))].slice(0, 8) : [],
+        [exactRoleDefaults.skills, hasExactRoleTitle]
     );
     const licenseOptions = useMemo(
-        () => [...new Set([...(roleTemplate.licenses || []), ...COMMON_LICENSES])],
-        [roleTemplate.licenses]
+        () => hasExactRoleTitle ? [...new Set((exactRoleDefaults.certifications || []).filter(Boolean))].slice(0, 8) : [],
+        [exactRoleDefaults.certifications, hasExactRoleTitle]
     );
-    const visibleLicenseOptions = useMemo(
-        () => (showAllLicenses ? licenseOptions : focusChoices(licenseOptions, selectedLicenses, 6)),
-        [licenseOptions, selectedLicenses, showAllLicenses]
+    const districtSuggestions = useMemo(
+        () => buildAutocompleteOptions(district, apDistrictOptions, 6),
+        [apDistrictOptions, district]
     );
-    const visibleQuestions = useMemo(
-        () => (showAllQuestions ? COMMON_SCREENING_QUESTIONS : focusChoices(COMMON_SCREENING_QUESTIONS, selectedQuestions, 2)),
-        [selectedQuestions, showAllQuestions]
+    const localityHints = useMemo(
+        () => getApLocalityHints(district),
+        [district]
     );
+    const localitySuggestions = useMemo(
+        () => buildAutocompleteOptions(locality, localityHints, 6),
+        [locality, localityHints]
+    );
+    const selectedMustHaveSkills = useMemo(() => parseCommaList(mustHaveSkills, 40, 120), [mustHaveSkills]);
+    const selectedGoodToHaveSkills = useMemo(() => parseCommaList(goodToHaveSkills, 30, 120), [goodToHaveSkills]);
+    const selectedLanguages = useMemo(() => parseCommaList(languages, 12, 60), [languages]);
+    const selectedLicenses = useMemo(() => parseCommaList(mandatoryLicensesText, 20, 120), [mandatoryLicensesText]);
+    const selectedQuestions = useMemo(() => parseLineList(screeningQuestionsText, 20, 250), [screeningQuestionsText]);
+    const readinessCount = [
+        Boolean(roleType),
+        Boolean(clampText(title, 120)),
+        Boolean(clampText(companyName, 120)),
+        Boolean(clampText(district, 120)),
+        Boolean(computedSalaryRange),
+        selectedMustHaveSkills.length > 0,
+    ].filter(Boolean).length;
+    const studioSignalCount = selectedMustHaveSkills.length + selectedLicenses.length + selectedQuestions.length;
+    const hasDraftContent = useMemo(() => ([
+        roleType,
+        title,
+        companyName,
+        companyBrandPhoto,
+        district,
+        locality,
+        remoteAllowed ? 'remote' : '',
+        shift,
+        openings,
+        salaryMin,
+        salaryMax,
+        salaryRangeFallback,
+        experienceMin,
+        experienceMax,
+        mustHaveSkills,
+        goodToHaveSkills,
+        languages,
+        mandatoryLicensesText,
+        screeningQuestionsText,
+        customSkillInput,
+        customLicenseInput,
+        customQuestionInput,
+        videoUrl,
+    ].some((item) => {
+        if (typeof item === 'boolean') return item;
+        return Boolean(String(item || '').trim());
+    })), [
+        companyBrandPhoto,
+        companyName,
+        customLicenseInput,
+        customQuestionInput,
+        customSkillInput,
+        district,
+        experienceMax,
+        experienceMin,
+        goodToHaveSkills,
+        languages,
+        locality,
+        mandatoryLicensesText,
+        mustHaveSkills,
+        openings,
+        remoteAllowed,
+        roleType,
+        salaryMax,
+        salaryMin,
+        salaryRangeFallback,
+        screeningQuestionsText,
+        shift,
+        title,
+        videoUrl,
+    ]);
 
     useEffect(() => {
         if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -419,22 +532,143 @@ export default function PostJobScreen({ navigation, route }) {
     }, []);
 
     useEffect(() => {
+        if (!draftHydrated) return;
+        requestAnimationFrame(() => {
+            contentScrollRef.current?.scrollTo?.({ x: 0, y: 0, animated: true });
+        });
+    }, [draftHydrated, stepIndex]);
+
+    useEffect(() => {
+        let mounted = true;
+        const hydrateDraft = async () => {
+            if (route.params?.jobData || route.params?.videoUrl) {
+                if (mounted) setDraftHydrated(true);
+                return;
+            }
+            try {
+                const rawDraft = await AsyncStorage.getItem(JOB_STUDIO_DRAFT_KEY);
+                if (!rawDraft || !mounted) {
+                    setDraftHydrated(true);
+                    return;
+                }
+                const draft = JSON.parse(rawDraft);
+                if (!draft || typeof draft !== 'object') {
+                    setDraftHydrated(true);
+                    return;
+                }
+                setStepIndex(Number.isFinite(Number(draft.stepIndex)) ? Math.max(0, Math.min(Number(draft.stepIndex), STEP_TITLES.length - 1)) : 0);
+                setRoleType(clampText(draft.roleType || '', 120));
+                setTitle(clampText(draft.title || '', 120));
+                setCompanyName(clampText(draft.companyName || '', 120));
+                setCompanyBrandPhoto(clampText(draft.companyBrandPhoto || '', 500));
+                setDistrict(clampText(draft.district || '', 120));
+                setLocality(clampText(draft.locality || '', 120));
+                setRemoteAllowed(Boolean(draft.remoteAllowed));
+                setShift(SHIFT_OPTIONS.some((option) => option.value === draft.shift) ? draft.shift : 'Flexible');
+                setOpenings(clampText(draft.openings || '', 20));
+                setSalaryMin(clampText(draft.salaryMin || '', 20));
+                setSalaryMax(clampText(draft.salaryMax || '', 20));
+                setSalaryRangeFallback(clampText(draft.salaryRangeFallback || '', 120));
+                setExperienceMin(clampText(draft.experienceMin || '', 20));
+                setExperienceMax(clampText(draft.experienceMax || '', 20));
+                setMustHaveSkills(String(draft.mustHaveSkills || ''));
+                setGoodToHaveSkills(String(draft.goodToHaveSkills || ''));
+                setLanguages(String(draft.languages || ''));
+                setMandatoryLicensesText(String(draft.mandatoryLicensesText || ''));
+                setScreeningQuestionsText(String(draft.screeningQuestionsText || ''));
+                setVideoUrl(clampText(draft.videoUrl || '', 500));
+            } catch (_error) {
+                // Ignore draft restore issues and keep the studio open.
+            } finally {
+                if (mounted) setDraftHydrated(true);
+            }
+        };
+        hydrateDraft();
+        return () => {
+            mounted = false;
+        };
+    }, [route.params?.jobData, route.params?.videoUrl]);
+
+    useEffect(() => {
+        if (!draftHydrated || draftPersistencePausedRef.current) return;
+        const draftPayload = {
+            stepIndex,
+            roleType,
+            title,
+            companyName,
+            companyBrandPhoto,
+            district,
+            locality,
+            remoteAllowed,
+            shift,
+            openings,
+            salaryMin,
+            salaryMax,
+            salaryRangeFallback,
+            experienceMin,
+            experienceMax,
+            mustHaveSkills,
+            goodToHaveSkills,
+            languages,
+            mandatoryLicensesText,
+            screeningQuestionsText,
+            videoUrl,
+        };
+        const persistDraft = async () => {
+            try {
+                if (hasDraftContent) {
+                    await AsyncStorage.setItem(JOB_STUDIO_DRAFT_KEY, JSON.stringify(draftPayload));
+                } else {
+                    await AsyncStorage.removeItem(JOB_STUDIO_DRAFT_KEY);
+                }
+            } catch (_error) {
+                // Keep typing flow uninterrupted if draft persistence fails.
+            }
+        };
+        persistDraft();
+    }, [
+        companyBrandPhoto,
+        companyName,
+        district,
+        draftHydrated,
+        experienceMax,
+        experienceMin,
+        goodToHaveSkills,
+        hasDraftContent,
+        languages,
+        locality,
+        mandatoryLicensesText,
+        mustHaveSkills,
+        openings,
+        remoteAllowed,
+        roleType,
+        salaryMax,
+        salaryMin,
+        salaryRangeFallback,
+        screeningQuestionsText,
+        shift,
+        stepIndex,
+        title,
+        videoUrl,
+    ]);
+
+    useEffect(() => {
         if (route.params?.videoUrl) {
             setVideoUrl(route.params.videoUrl);
         }
-
         const rawJobData = route.params?.jobData;
-        if (!rawJobData || typeof rawJobData !== 'object') {
-            return;
-        }
+        if (!rawJobData || typeof rawJobData !== 'object') return;
 
-        const incomingTitle = String(rawJobData.title || '').trim();
-        const incomingShift = String(rawJobData.shift || '').trim();
-        const incomingSalaryRange = String(rawJobData.salaryRange || '').trim();
+        const incomingTitle = clampText(rawJobData.title || '', 120);
+        const incomingShift = clampText(rawJobData.shift || '', 40);
+        const incomingSalaryRange = clampText(rawJobData.salaryRange || '', 120);
         const incomingRequirements = Array.isArray(rawJobData.requirements) ? rawJobData.requirements : [];
+        const incomingDistrict = clampText(rawJobData.district || '', 120);
+        const incomingMandal = clampText(rawJobData.mandal || '', 120);
+        const incomingLocation = clampText(rawJobData.locationLabel || rawJobData.location || '', 120);
 
         if (incomingTitle) setTitle(incomingTitle);
-        if (SHIFT_OPTIONS.includes(incomingShift)) setShift(incomingShift);
+        if (SHIFT_OPTIONS.some((option) => option.value === incomingShift)) setShift(incomingShift);
         if (incomingSalaryRange) {
             const parsed = parseSalaryRange(incomingSalaryRange);
             if (parsed.min) setSalaryMin(parsed.min);
@@ -444,203 +678,266 @@ export default function PostJobScreen({ navigation, route }) {
         if (incomingRequirements.length) {
             setMustHaveSkills(incomingRequirements.join(', '));
         }
-    }, [route.params]);
+        if (incomingDistrict || incomingLocation) {
+            if (incomingDistrict) {
+                setDistrict(incomingDistrict);
+            }
+            if (incomingMandal) {
+                setLocality(incomingMandal);
+            }
+        }
+        if (!incomingDistrict && incomingLocation) {
+            const matchingDistrict = apDistrictOptions.find((option) => normalizeText(incomingLocation).includes(normalizeText(option)));
+            if (matchingDistrict) {
+                setDistrict(matchingDistrict);
+                const localityTokens = incomingLocation
+                    .split(',')
+                    .map((token) => clampText(token, 120))
+                    .filter(Boolean)
+                    .filter((token) => normalizeText(token) !== normalizeText(matchingDistrict));
+                if (localityTokens.length > 0) {
+                    setLocality(localityTokens[0]);
+                }
+            } else {
+                setDistrict(incomingLocation);
+            }
+        }
+    }, [apDistrictOptions, route.params]);
 
     useEffect(() => {
-        const fetchProfile = async () => {
+        const fetchEmployerProfile = async () => {
             try {
                 const { data } = await client.get('/api/users/profile', {
                     __skipApiErrorHandler: true,
                     params: { role: 'employer' },
                 });
-                const profile = data?.profile || {};
-                const profileCompany = String(profile.companyName || '').trim();
-
+                const profileCompany = clampText(data?.profile?.companyName || '', 120);
+                const profileBrandPhoto = clampText(
+                    data?.profile?.logoUrl
+                    || data?.profile?.avatar
+                    || data?.organization?.logoUrl
+                    || '',
+                    500
+                );
                 if (profileCompany && !companyName) {
                     setCompanyName(profileCompany);
                 }
+                if (profileBrandPhoto && !companyBrandPhoto) {
+                    setCompanyBrandPhoto(profileBrandPhoto);
+                }
+                if (!district) {
+                    setDistrict(clampText(data?.profile?.district || data?.profile?.location || '', 120));
+                }
+                if (!locality) {
+                    setLocality(clampText(data?.profile?.mandal || '', 120));
+                }
             } catch (_error) {
-                // Keep form available even when profile prefill is unavailable.
+                // Keep studio usable without prefill.
             }
         };
-        fetchProfile();
-    }, [companyName]);
-
-    useEffect(() => {
-        if (!roleType) return;
-        if (!String(title || '').trim() && roleTemplate.titles.length > 0) {
-            setTitle(roleTemplate.titles[0]);
-        }
-        if (!String(mustHaveSkills || '').trim() && roleTemplate.skills.length > 0) {
-            setMustHaveSkills(roleTemplate.skills.join(', '));
-        }
-        if (!String(mandatoryLicensesText || '').trim() && roleTemplate.licenses.length > 0) {
-            setMandatoryLicensesText(roleTemplate.licenses.join(', '));
-        }
-    }, [mandatoryLicensesText, mustHaveSkills, roleTemplate.licenses, roleTemplate.skills, roleTemplate.titles, roleType, title]);
+        fetchEmployerProfile();
+    }, [companyBrandPhoto, companyName, district, locality]);
 
     const computedSalaryRange = useMemo(() => {
-        const normalizedMin = formatNumberWithCommas(salaryMin);
-        const normalizedMax = formatNumberWithCommas(salaryMax);
-        if (normalizedMin && normalizedMax) return `Rs ${normalizedMin} - Rs ${normalizedMax}`;
-        if (normalizedMin) return `Rs ${normalizedMin}+`;
-        if (normalizedMax) return `Up to Rs ${normalizedMax}`;
-        return String(salaryRangeFallback || '').trim();
+        const minValue = formatNumberWithCommas(salaryMin);
+        const maxValue = formatNumberWithCommas(salaryMax);
+        if (minValue && maxValue) return `₹${minValue} - ₹${maxValue}`;
+        if (minValue) return `₹${minValue}+`;
+        if (maxValue) return `Up to ₹${maxValue}`;
+        return clampText(salaryRangeFallback, 120);
     }, [salaryMin, salaryMax, salaryRangeFallback]);
 
+    const resolvedLocation = useMemo(() => (
+        [clampText(locality, 120), clampText(district, 120)].filter(Boolean).join(', ')
+    ), [district, locality]);
+
+    const currentStep = STEP_TITLES[stepIndex] || STEP_TITLES[0];
+    const studioRemainingCount = Math.max(0, 6 - readinessCount);
+    const canAdvanceStep = useMemo(() => {
+        if (stepIndex === 0) {
+            return Boolean(roleType && clampText(title, 120) && clampText(companyName, 120));
+        }
+        if (stepIndex === 1) {
+            return Boolean(clampText(district, 120));
+        }
+        if (stepIndex === 2) {
+            return Boolean(computedSalaryRange && selectedMustHaveSkills.length);
+        }
+        return true;
+    }, [
+        companyName,
+        computedSalaryRange,
+        district,
+        roleType,
+        selectedMustHaveSkills.length,
+        stepIndex,
+        title,
+    ]);
+
     const handleSuggestRequirements = async () => {
-        const safeTitle = String(title || '').trim();
+        const safeTitle = clampText(title, 120);
         if (!safeTitle) {
-            Alert.alert('Add role title', 'Enter the role title first to generate skill suggestions.');
+            Alert.alert('Add role title', 'Pick or type the role title first.');
             return;
         }
-
         setAiLoading(true);
         try {
             const { data } = await client.post('/api/jobs/suggest', { jobTitle: safeTitle }, { __skipApiErrorHandler: true });
             const structured = data?.data && typeof data.data === 'object' ? data.data : {};
             const suggestions = Array.isArray(structured.requirements)
                 ? structured.requirements
-                : (Array.isArray(data?.suggestions)
-                    ? data.suggestions
-                    : String(data?.suggestions || '')
-                        .split(',')
-                        .map((entry) => entry.trim())
-                        .filter(Boolean));
-            const suggestedQuestions = Array.isArray(structured.screeningQuestions)
-                ? structured.screeningQuestions.map((entry) => String(entry || '').trim()).filter(Boolean)
-                : [];
-            const suggestedShifts = Array.isArray(structured.shiftSuggestions)
-                ? structured.shiftSuggestions.map((entry) => String(entry || '').trim())
-                : [];
-            const suggestedShift = suggestedShifts.find((entry) => SHIFT_OPTIONS.includes(entry));
-
-            if (!suggestions.length && !suggestedQuestions.length) {
-                Alert.alert('No suggestions yet', 'Try adding details manually for now.');
-                return;
-            }
-
+                : (Array.isArray(data?.suggestions) ? data.suggestions : []);
+            const suggestedShift = Array.isArray(structured.shiftSuggestions)
+                ? structured.shiftSuggestions.find((item) => SHIFT_OPTIONS.some((option) => option.value === item))
+                : '';
             if (suggestions.length) {
                 setMustHaveSkills(suggestions.slice(0, 12).join(', '));
-            }
-            if (suggestedQuestions.length) {
-                setScreeningQuestionsText((prev) => {
-                    const existing = parseLineList(prev, 40, 250);
-                    const merged = [...new Set([...existing, ...suggestedQuestions])].slice(0, 20);
-                    return merged.join('\n');
-                });
             }
             if (suggestedShift) {
                 setShift(suggestedShift);
             }
+            if (!suggestions.length && !suggestedShift) {
+                Alert.alert('No suggestions yet', 'Please continue with your own role signals for now.');
+            }
         } catch (_error) {
-            Alert.alert('Suggestion unavailable', 'Could not generate job suggestions right now. You can continue manually.');
+            Alert.alert('Suggestion unavailable', 'Could not fetch role suggestions right now.');
         } finally {
             setAiLoading(false);
         }
     };
 
     const handleSuggestQuestions = async () => {
-        const safeTitle = String(title || '').trim();
+        const safeTitle = clampText(title, 120);
         if (!safeTitle) {
-            Alert.alert('Add role title', 'Enter the role title first to generate screening questions.');
+            Alert.alert('Add role title', 'Pick or type the role title first.');
             return;
         }
-
         setAiQuestionsLoading(true);
         try {
-            const skillTokens = parseCommaList(mustHaveSkills, 12, 80);
             const { data } = await client.post('/api/features/ai/interview-questions', {
                 jobTitle: safeTitle,
-                skills: skillTokens,
+                skills: selectedMustHaveSkills.slice(0, 12),
             }, { __skipApiErrorHandler: true });
-
             const questions = Array.isArray(data?.questions)
-                ? data.questions.map((entry) => String(entry || '').trim()).filter(Boolean)
-                : String(data?.questions || '')
-                    .split(',')
-                    .map((entry) => entry.trim())
-                    .filter(Boolean);
+                ? data.questions.map((entry) => clampText(entry, 200)).filter(Boolean)
+                : [];
             if (!questions.length) {
-                Alert.alert('No questions yet', 'Try adding screening questions manually for now.');
+                Alert.alert('No questions yet', 'Please add screening questions manually.');
                 return;
             }
-
             setScreeningQuestionsText((prev) => {
-                const existing = parseLineList(prev, 40, 250);
-                const merged = [...new Set([...existing, ...questions])].slice(0, 20);
+                const merged = [...new Set([...parseLineList(prev, 40, 250), ...questions])].slice(0, 20);
                 return merged.join('\n');
             });
         } catch (_error) {
-            Alert.alert('Suggestion unavailable', 'Could not generate screening questions right now. You can continue manually.');
+            Alert.alert('Suggestion unavailable', 'Could not fetch screening questions right now.');
         } finally {
             setAiQuestionsLoading(false);
         }
     };
 
+    const uploadCompanyBrandPhoto = async (uri, mimeType = 'image/jpeg') => {
+        const safeUri = String(uri || '').trim();
+        if (!safeUri) return '';
+
+        const fileName = safeUri.split('/').pop() || `employer-brand-${Date.now()}.jpg`;
+        const formData = new FormData();
+        formData.append('avatar', { uri: safeUri, name: fileName, type: mimeType });
+
+        const response = await client.post('/api/settings/avatar', formData, {
+            __allowWhenCircuitOpen: true,
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 15000,
+        });
+
+        return String(response?.data?.avatarUrl || safeUri).trim();
+    };
+
+    const handlePickCompanyBrandPhoto = async () => {
+        try {
+            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (permission?.status !== 'granted') {
+                Alert.alert('Permission needed', 'Allow photo access to choose a company or office photo.');
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: false,
+                quality: 0.82,
+            });
+
+            if (result?.canceled || !result?.assets?.length) return;
+
+            const asset = result.assets[0];
+            const nextUri = String(asset?.uri || '').trim();
+            if (!nextUri) return;
+
+            setCompanyBrandPhoto(nextUri);
+        } catch (error) {
+            Alert.alert('Photo unavailable', extractApiErrorMessage(error, 'Could not add company photo right now.'));
+        } finally {
+            setUploadingCompanyBrand(false);
+        }
+    };
+
     const handleAddCustomSkill = () => {
-        const token = clampText(customSkillInput, 80);
-        if (!token) return;
-        setMustHaveSkills((prev) => appendCommaToken(prev, token));
+        const nextValue = clampText(customSkillInput, 80);
+        if (!nextValue) return;
+        setMustHaveSkills((prev) => appendCommaToken(prev, nextValue));
         setCustomSkillInput('');
     };
 
     const handleAddCustomLicense = () => {
-        const token = clampText(customLicenseInput, 80);
-        if (!token) return;
-        setMandatoryLicensesText((prev) => appendCommaToken(prev, token));
+        const nextValue = clampText(customLicenseInput, 80);
+        if (!nextValue) return;
+        setMandatoryLicensesText((prev) => appendCommaToken(prev, nextValue));
         setCustomLicenseInput('');
     };
 
     const handleAddCustomQuestion = () => {
-        const token = clampText(customQuestionInput, 200);
-        if (!token) return;
-        setScreeningQuestionsText((prev) => (prev ? `${prev}\n${token}` : token));
+        const nextValue = clampText(customQuestionInput, 200);
+        if (!nextValue) return;
+        setScreeningQuestionsText((prev) => (prev ? `${prev}\n${nextValue}` : nextValue));
         setCustomQuestionInput('');
     };
 
     const validateStep = (index) => {
         const safeTitle = clampText(title, 120);
-        const safeCompanyName = clampText(companyName, 120);
-        const safeLocation = clampText(location, 120);
-        const safeSalaryRange = clampText(computedSalaryRange, 120);
-
+        const safeCompany = clampText(companyName, 120);
         if (index === 0) {
-            if (!String(roleType || '').trim()) {
-                Alert.alert('Select role type', 'Choose a role type to continue.');
+            if (!roleType) {
+                Alert.alert('Select role family', 'Choose one hiring family to continue.');
                 return false;
             }
             if (!safeTitle) {
-                Alert.alert('Select role title', 'Pick a role title to continue.');
+                Alert.alert('Add role title', 'Pick or type the role title.');
                 return false;
             }
-            if (!safeCompanyName) {
-                Alert.alert('Select company name', 'Pick your organization to continue.');
+            if (!safeCompany) {
+                Alert.alert('Add company', 'Enter the employer or company name.');
                 return false;
             }
             return true;
         }
-
         if (index === 1) {
-            if (!safeLocation) {
-                Alert.alert('Select location', 'Choose where this role is based.');
-                return false;
-            }
-            if (!safeSalaryRange) {
-                Alert.alert('Select salary range', 'Pick a salary band to continue.');
+            if (!clampText(district, 120)) {
+                Alert.alert('Add district', 'Type the district where this job should appear first.');
                 return false;
             }
             return true;
         }
-
         if (index === 2) {
-            if (selectedMustHaveSkills.length === 0) {
-                Alert.alert('Select must-have skills', 'Choose at least one must-have skill.');
+            if (!computedSalaryRange) {
+                Alert.alert('Add salary', 'Choose or type a salary band.');
+                return false;
+            }
+            if (!selectedMustHaveSkills.length) {
+                Alert.alert('Add must-have skills', 'Select at least one skill so matching works properly.');
                 return false;
             }
             return true;
         }
-
         return true;
     };
 
@@ -655,110 +952,201 @@ export default function PostJobScreen({ navigation, route }) {
         setStepIndex((prev) => Math.max(prev - 1, 0));
     };
 
+    const clearSavedDraft = async () => {
+        draftPersistencePausedRef.current = true;
+        try {
+            await AsyncStorage.removeItem(JOB_STUDIO_DRAFT_KEY);
+        } catch (_error) {
+            // Ignore cleanup issues after a successful post.
+        }
+    };
+
+    const verifyRecentJobCreation = async (payload) => {
+        for (let attempt = 0; attempt < JOB_POST_VERIFY_ATTEMPTS; attempt += 1) {
+            if (attempt > 0) {
+                await wait(JOB_POST_VERIFY_DELAY_MS);
+            }
+            try {
+                const { data } = await client.get('/api/jobs/my-jobs', {
+                    __skipApiErrorHandler: true,
+                    __allowWhenCircuitOpen: true,
+                    __disableBaseFallback: true,
+                    __maxRetries: 0,
+                    timeout: JOB_POST_VERIFY_REQUEST_TIMEOUT_MS,
+                    params: { page: 1, limit: 8 },
+                });
+                const jobs = Array.isArray(data?.data) ? data.data : [];
+                const matchedJob = jobs.find((job) => (
+                    normalizeText(job?.title) === normalizeText(payload.title)
+                    && normalizeText(job?.companyName) === normalizeText(payload.companyName)
+                    && (
+                        !normalizeText(payload.location)
+                        || normalizeText(job?.location) === normalizeText(payload.location)
+                    )
+                ));
+                if (matchedJob) {
+                    return matchedJob;
+                }
+            } catch (_error) {
+                // Continue verification attempts quietly.
+            }
+        }
+        return null;
+    };
+
+    const handleOpenTalent = () => {
+        const navigateToTalent = () => navigation.navigate('MainTab', { screen: 'Talent' });
+        if (!hasDraftContent) {
+            navigateToTalent();
+            return;
+        }
+        Alert.alert(
+            'Open Talent?',
+            'Your current job draft will stay saved. You can come back and continue from where you stopped.',
+            [
+                { text: 'Stay', style: 'cancel' },
+                { text: 'Open Talent', onPress: navigateToTalent },
+            ]
+        );
+    };
+
     const handlePostJob = async () => {
         const safeTitle = clampText(title, 120);
         const safeCompanyName = clampText(companyName, 120);
-        const safeLocation = clampText(location, 120);
+        const safeLocation = clampText(resolvedLocation, 120);
         const safeSalaryRange = clampText(computedSalaryRange, 120);
-        const mustHave = parseCommaList(mustHaveSkills, 30, 120).map((item) => clampText(item, 120)).filter(Boolean);
-        const goodToHave = parseCommaList(goodToHaveSkills, 20, 120)
-            .map((item) => clampText(`Nice to have: ${item}`, 120))
-            .filter(Boolean);
-        const languageList = parseCommaList(languages, 10, 60);
-
+        const mustHave = selectedMustHaveSkills.map((item) => clampText(item, 120)).filter(Boolean);
+        const goodToHave = selectedGoodToHaveSkills.map((item) => clampText(`Nice to have: ${item}`, 120)).filter(Boolean);
+        const languageList = selectedLanguages.map((item) => clampText(item, 60)).filter(Boolean);
         const minExpValue = clampNonNegativeInt(experienceMin);
         const maxExpValue = clampNonNegativeInt(experienceMax);
         const openingsValue = clampNonNegativeInt(openings);
 
-        const metadataRequirements = [];
-        if (minExpValue !== null || maxExpValue !== null) {
-            const minLabel = minExpValue !== null ? String(minExpValue) : '0';
-            const maxLabel = maxExpValue !== null ? String(maxExpValue) : 'plus';
-            metadataRequirements.push(clampText(`Experience: ${minLabel}-${maxLabel} years`, 120));
-        }
-        if (languageList.length) {
-            metadataRequirements.push(clampText(`Language: ${languageList.join(', ')}`, 120));
-        }
-        if (openingsValue !== null && openingsValue > 0) {
-            metadataRequirements.push(clampText(`Openings: ${openingsValue}`, 120));
-        }
-        metadataRequirements.push(clampText(`Role type: ${roleType || 'Other'}`, 120));
-
-        const requirements = [...mustHave, ...goodToHave, ...metadataRequirements]
-            .map((item) => clampText(item, 120))
-            .filter(Boolean)
-            .slice(0, 50);
-        const mandatoryLicenses = parseCommaList(mandatoryLicensesText, 20, 120)
-            .map((item) => clampText(item, 120))
-            .filter(Boolean);
-        const screeningQuestions = parseLineList(screeningQuestionsText, 20, 250)
-            .map((item) => clampText(item, 250))
-            .filter(Boolean);
-
-        if (!String(roleType || '').trim()) {
-            Alert.alert('Select role type', 'Choose a role type first for better matching.');
-            return;
-        }
-        if (!safeTitle || !safeCompanyName || !safeLocation) {
-            Alert.alert('Missing basic info', 'Role title, company name and location are required.');
+        if (!roleType || !safeTitle || !safeCompanyName || !safeLocation) {
+            Alert.alert('Missing basics', 'Role, company, and AP location are required.');
             return;
         }
         if (!safeSalaryRange) {
-            Alert.alert('Missing salary', 'Add salary range so matching can rank candidates correctly.');
+            Alert.alert('Missing salary', 'Add salary so matching can rank talent correctly.');
             return;
         }
         if (!mustHave.length) {
-            Alert.alert('Missing must-have skills', 'Add at least one must-have skill for accurate matchmaking.');
+            Alert.alert('Missing must-have skills', 'Select at least one core skill.');
             return;
         }
         if (minExpValue !== null && maxExpValue !== null && maxExpValue < minExpValue) {
-            Alert.alert('Invalid experience range', 'Maximum experience must be greater than minimum experience.');
+            Alert.alert('Invalid experience range', 'Maximum experience should be greater than minimum experience.');
             return;
         }
 
+        const requirements = [
+            ...mustHave,
+            ...goodToHave,
+            ...(languageList.length ? [clampText(`Language: ${languageList.join(', ')}`, 120)] : []),
+            ...(minExpValue !== null || maxExpValue !== null ? [clampText(`Experience: ${minExpValue ?? 0}-${maxExpValue ?? 'plus'} years`, 120)] : []),
+            ...(openingsValue !== null ? [clampText(`Openings: ${openingsValue}`, 120)] : []),
+            clampText(`Role type: ${roleType}`, 120),
+        ].filter(Boolean).slice(0, 50);
+
+        const mandatoryLicenses = selectedLicenses.map((item) => clampText(item, 120)).filter(Boolean);
+        const screeningQuestions = selectedQuestions.map((item) => clampText(item, 250)).filter(Boolean);
         const minSalaryValue = clampNonNegativeInt(salaryMin);
         const maxSalaryValue = clampNonNegativeInt(salaryMax);
+        const pendingBrandPhoto = isLocalAssetUri(companyBrandPhoto) ? companyBrandPhoto : '';
 
         const payload = {
             title: safeTitle,
             companyName: safeCompanyName,
             salaryRange: safeSalaryRange,
             location: safeLocation,
+            district: clampText(district, 120),
+            mandal: clampText(locality, 120),
+            locationLabel: safeLocation,
             requirements,
             screeningQuestions,
             shift,
             mandatoryLicenses,
             remoteAllowed: Boolean(remoteAllowed),
+            ...(openingsValue !== null ? { openings: openingsValue } : {}),
             ...(minSalaryValue !== null ? { minSalary: minSalaryValue } : {}),
             ...(maxSalaryValue !== null ? { maxSalary: maxSalaryValue } : {}),
         };
 
         setSaving(true);
+        setVerifyingPost(false);
         try {
-            await client.post('/api/jobs', payload, {
-                __skipApiErrorHandler: true,
-                __allowWhenCircuitOpen: true,
-            });
-            Alert.alert('Job posted', 'Your job post is now live in My Jobs.', [
+            await withTimeout(
+                client.post('/api/jobs', payload, {
+                    __skipApiErrorHandler: true,
+                    __allowWhenCircuitOpen: true,
+                    __disableBaseFallback: true,
+                    __maxRetries: 0,
+                    timeout: JOB_POST_TIMEOUT_MS,
+                }),
+                JOB_POST_TIMEOUT_MS + 1200,
+                'Job post timed out.',
+            );
+            if (pendingBrandPhoto) {
+                setUploadingCompanyBrand(true);
+                uploadCompanyBrandPhoto(pendingBrandPhoto)
+                    .then((uploadedUri) => {
+                        if (uploadedUri) {
+                            setCompanyBrandPhoto(uploadedUri);
+                        }
+                    })
+                    .catch((photoError) => {
+                        logger.warn('Company photo sync failed after job publish:', photoError?.message || photoError);
+                    })
+                    .finally(() => {
+                        setUploadingCompanyBrand(false);
+                    });
+            }
+            await clearSavedDraft();
+            Alert.alert('Job posted', pendingBrandPhoto ? 'Your new job is live. Company photo will finish syncing in the background.' : 'Your new job is live in My Jobs.', [
                 { text: 'Open My Jobs', onPress: () => navigation.navigate('MainTab', { screen: 'My Jobs' }) },
             ]);
         } catch (error) {
-            const reason = extractApiErrorMessage(error, 'Please review the form and try again.');
+            const timedOut = normalizeText(error?.message).includes('timed out');
+            if (timedOut) {
+                setSaving(false);
+                setVerifyingPost(true);
+                const matchedJob = await verifyRecentJobCreation(payload);
+                setVerifyingPost(false);
+                if (matchedJob) {
+                    await clearSavedDraft();
+                    Alert.alert(
+                        'Job posted',
+                        pendingBrandPhoto
+                            ? 'Your job was created. Company photo will keep syncing in the background.'
+                            : 'Your new job is live in My Jobs.',
+                        [{ text: 'Open My Jobs', onPress: () => navigation.navigate('MainTab', { screen: 'My Jobs' }) }],
+                    );
+                    return;
+                }
+                Alert.alert('Still checking', 'We could not confirm the latest post yet. Open My Jobs and pull down once before retrying.');
+                return;
+            }
+            const reason = extractApiErrorMessage(error, 'Please review the job studio and try again.');
             logger.warn('Job post failed:', reason);
+            setVerifyingPost(false);
             Alert.alert('Could not post job', reason);
         } finally {
             setSaving(false);
         }
     };
 
+    const currentStepMeta = STEP_META[currentStep.key] || STEP_META.basics;
+
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+            <StatusBar barStyle="light-content" backgroundColor="#6d28d9" />
+            <View style={[styles.statusBarFill, { height: insets.top }]} />
             <KeyboardAvoidingView
-                style={styles.container}
+                style={styles.screenCanvas}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
             >
-                <View style={styles.header}>
+                <View style={styles.headerChrome}>
                     <TouchableOpacity
                         onPress={() => {
                             if (navigation.canGoBack()) {
@@ -768,622 +1156,765 @@ export default function PostJobScreen({ navigation, route }) {
                             navigation.navigate('MainTab', { screen: 'My Jobs' });
                         }}
                         style={styles.backButton}
-                        activeOpacity={0.85}
+                        activeOpacity={0.86}
                     >
-                        <Ionicons name="arrow-back" size={22} color="#ffffff" />
+                        <Ionicons name="chevron-back" size={22} color="#0f172a" />
                     </TouchableOpacity>
                     <View style={styles.headerTextWrap}>
-                        <Text style={styles.headerTitle}>Post Job</Text>
-                        <Text style={styles.headerSubtitle}>Precise details = better candidate ranking</Text>
+                        <Text style={styles.headerEyebrow}>JOB STUDIO</Text>
+                        <Text style={styles.headerTitle}>Post job</Text>
+                        <Text style={styles.headerSubtitle}>4 easy cards.</Text>
                     </View>
+                    <TouchableOpacity
+                        style={styles.headerAction}
+                        onPress={handleOpenTalent}
+                        activeOpacity={0.86}
+                    >
+                        <Ionicons name="people-outline" size={18} color="#6d28d9" />
+                    </TouchableOpacity>
                 </View>
 
                 <ScrollView
-                    contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 16) + 24 }]}
+                    ref={contentScrollRef}
+                    contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, 18) + 28 }]}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                 >
-                    <View style={styles.noticeCard}>
-                        <Ionicons name="checkmark-done-circle-outline" size={16} color="#6d28d9" />
-                        <Text style={styles.noticeText}>
-                            Choice-first flow: mostly tap to select. Typing is only optional when your option is not listed.
-                        </Text>
-                    </View>
-
-                <View style={styles.stepHeader}>
-                    <Text style={styles.stepMetaText}>Step {stepIndex + 1} of {STEP_TITLES.length}</Text>
-                    <Text style={styles.stepTitle}>{currentStepTitle}</Text>
-                    <View style={styles.stepPillRow}>
-                        {STEP_TITLES.map((label, index) => {
-                            const active = stepIndex === index;
-                            const done = stepIndex > index;
-                            return (
-                                <View key={label} style={[styles.stepPill, active ? styles.stepPillActive : null, done ? styles.stepPillDone : null]}>
-                                    <Text style={[styles.stepPillText, active || done ? styles.stepPillTextActive : null]}>
-                                        {label}
-                                    </Text>
-                                </View>
-                            );
-                        })}
-                    </View>
-                </View>
-
-                {stepIndex === 0 ? (
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Select Role & Organization</Text>
-                        <Text style={styles.label}>Role Type *</Text>
-                        <View style={styles.roleTypeGrid}>
-                            {visibleRoleTypeOptions.map((item) => {
-                                const selected = roleType === item;
-                                const meta = ROLE_TYPE_META[item] || ROLE_TYPE_META.Other;
+                    <View style={styles.fastSetupCard}>
+                        <View style={styles.studioHeaderTopRow}>
+                            <View style={styles.studioHeaderTopCopy}>
+                                <Text style={styles.fastSetupTitle}>Step {stepIndex + 1} of {STEP_TITLES.length}</Text>
+                                <Text style={styles.fastSetupText}>{currentStepMeta.label}</Text>
+                            </View>
+                            <View style={[styles.studioProgressPill, studioRemainingCount === 0 && styles.studioProgressPillDone]}>
+                                <Text style={[styles.studioProgressPillText, studioRemainingCount === 0 && styles.studioProgressPillTextDone]}>
+                                    {studioRemainingCount === 0 ? 'Ready' : `${studioRemainingCount} left`}
+                                </Text>
+                            </View>
+                        </View>
+                        <Text style={styles.fastSetupStatus}>{currentStepMeta.hint}</Text>
+                        <View style={styles.studioSegmentRail}>
+                            {STEP_TITLES.map((step, index) => {
+                                const meta = STEP_META[step.key] || STEP_META.basics;
+                                const active = stepIndex === index;
+                                const done = stepIndex > index;
+                                const unlocked = index <= stepIndex;
                                 return (
                                     <TouchableOpacity
-                                        key={item}
-                                        style={[styles.roleTypeCard, selected ? styles.roleTypeCardActive : null]}
+                                        key={step.key}
+                                        style={[
+                                            styles.studioSegmentTab,
+                                            active && styles.studioSegmentTabCurrent,
+                                            done && styles.studioSegmentTabDone,
+                                            !unlocked && styles.studioSegmentTabLocked,
+                                        ]}
                                         onPress={() => {
-                                            const roleChanged = normalizeText(roleType) !== normalizeText(item);
-                                            setRoleType(item);
-                                            setShowAllRoleTitles(false);
-                                            setShowAllMustHaveSkills(false);
-                                            setShowAllGoodToHaveSkills(false);
-                                            setShowAllLicenses(false);
-                                            const nextTemplate = ROLE_TYPE_CONFIG[item] || ROLE_TYPE_CONFIG.Other;
-                                            if (roleChanged) {
-                                                setTitle(String(nextTemplate.titles?.[0] || '').trim());
-                                                setMustHaveSkills(Array.isArray(nextTemplate.skills) ? nextTemplate.skills.join(', ') : '');
-                                                setGoodToHaveSkills('');
-                                                setMandatoryLicensesText(
-                                                    Array.isArray(nextTemplate.licenses) && nextTemplate.licenses.length > 0
-                                                        ? nextTemplate.licenses.join(', ')
-                                                        : ''
-                                                );
-                                            } else if (!Array.isArray(nextTemplate.licenses) || nextTemplate.licenses.length === 0) {
-                                                setMandatoryLicensesText('');
-                                            } else if (!String(mandatoryLicensesText || '').trim()) {
-                                                setMandatoryLicensesText(nextTemplate.licenses.join(', '));
+                                            if (unlocked) {
+                                                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                                setStepIndex(index);
                                             }
                                         }}
-                                        activeOpacity={0.85}
+                                        activeOpacity={unlocked ? 0.86 : 1}
+                                        disabled={!unlocked}
                                     >
-                                        <View style={[styles.roleTypeIconWrap, selected ? styles.roleTypeIconWrapActive : null]}>
-                                            <Ionicons name={meta.icon} size={16} color={selected ? '#6d28d9' : '#475569'} />
+                                        <View style={[
+                                            styles.studioSegmentBadge,
+                                            active && styles.studioSegmentBadgeCurrent,
+                                            done && styles.studioSegmentBadgeDone,
+                                        ]}>
+                                            {done ? (
+                                                <Ionicons name="checkmark" size={12} color={active ? '#ffffff' : '#059669'} />
+                                            ) : (
+                                                <Ionicons
+                                                    name={meta.icon}
+                                                    size={12}
+                                                    color={active ? '#ffffff' : unlocked ? '#6d28d9' : '#94a3b8'}
+                                                />
+                                            )}
                                         </View>
-                                        <View style={styles.roleTypeTextWrap}>
-                                            <Text style={[styles.roleTypeName, selected ? styles.roleTypeNameActive : null]}>{item}</Text>
-                                            <Text style={[styles.roleTypeHint, selected ? styles.roleTypeHintActive : null]}>{meta.hint}</Text>
-                                        </View>
+                                        <Text style={[
+                                            styles.studioSegmentTabText,
+                                            active && styles.studioSegmentTabTextCurrent,
+                                            done && styles.studioSegmentTabTextDone,
+                                            !unlocked && styles.studioSegmentTabTextLocked,
+                                        ]}>
+                                            {meta.label}
+                                        </Text>
+                                        <View style={[
+                                            styles.studioSegmentTabDot,
+                                            active && styles.studioSegmentTabDotCurrent,
+                                            done && styles.studioSegmentTabDotDone,
+                                        ]} />
                                     </TouchableOpacity>
                                 );
                             })}
                         </View>
-                        {ROLE_TYPE_OPTIONS.length > visibleRoleTypeOptions.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllRoleTypes(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show all role categories</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllRoleTypes ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllRoleTypes(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer categories</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {roleType ? (
-                            <View style={styles.selectedRoleBanner}>
-                                <Text style={styles.selectedRoleTitle}>{roleType} selected</Text>
-                                <Text style={styles.selectedRoleHint}>Pick one role title and continue. You can add extras later.</Text>
-                            </View>
-                        ) : null}
-
-                        <Text style={styles.label}>Role Title *</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleRoleTitleOptions.map((roleTitle) => {
-                                const selected = normalizeText(title) === normalizeText(roleTitle);
-                                return (
-                                    <TouchableOpacity
-                                        key={roleTitle}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => {
-                                            setTitle(roleTitle);
-                                            setShowCustomRoleInput(false);
-                                        }}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{roleTitle}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        {roleTitleOptions.length > visibleRoleTitleOptions.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllRoleTitles(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show more role titles</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllRoleTitles ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllRoleTitles(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer role titles</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomRoleInput((prev) => !prev)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={styles.linkButtonText}>{showCustomRoleInput ? 'Hide custom role' : 'Can’t find role? Add custom'}</Text>
-                        </TouchableOpacity>
-                        {showCustomRoleInput ? (
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Type custom role title"
-                                placeholderTextColor="#94a3b8"
-                                value={title}
-                                onChangeText={setTitle}
-                            />
-                        ) : null}
-
-                        <Text style={styles.label}>Company / Organization *</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleCompanyOptions.map((item) => {
-                                const selected = normalizeText(companyName) === normalizeText(item);
-                                return (
-                                    <TouchableOpacity
-                                        key={item}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => {
-                                            setCompanyName(item);
-                                            setShowCustomCompanyInput(false);
-                                        }}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{item}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        {companyOptions.length > visibleCompanyOptions.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllCompanies(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show more organizations</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllCompanies ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllCompanies(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer organizations</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomCompanyInput((prev) => !prev)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={styles.linkButtonText}>{showCustomCompanyInput ? 'Hide custom company' : 'Use custom company name'}</Text>
-                        </TouchableOpacity>
-                        {showCustomCompanyInput ? (
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Type company name"
-                                placeholderTextColor="#94a3b8"
-                                value={companyName}
-                                onChangeText={setCompanyName}
-                            />
-                        ) : null}
                     </View>
-                ) : null}
 
-                {stepIndex === 1 ? (
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Select Work Setup</Text>
-                        <Text style={styles.label}>Location *</Text>
-                        <View style={styles.inlineChips}>
-                            {QUICK_LOCATION_OPTIONS.map((city) => {
-                                const selected = normalizeText(location) === normalizeText(city);
-                                return (
+                    {stepIndex === 0 ? (
+                        <View style={styles.formSectionCard}>
+                            <View style={styles.formSectionHero}>
+                                <View style={styles.formSectionHeroIcon}>
+                                    <Ionicons name="briefcase-outline" size={18} color="#6d28d9" />
+                                </View>
+                                <View style={styles.formSectionHeroCopy}>
+                                    <Text style={styles.formSectionTitle}>1. Basics</Text>
+                                    <Text style={styles.formSectionSub}>Pick family, title, employer.</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.studioSummaryRow}>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Family</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{roleType || 'Choose'}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Role</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{title || 'Choose'}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Employer</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{companyName || 'Add'}</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>1</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Work family</Text>
+                                        <Text style={styles.guidedFieldHint}>Choose the hiring lane first. Role title comes next.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.roleGrid}>
+                                    {roleFamilyOptions.map((item) => {
+                                        const selected = roleType === item.label;
+                                        const visual = getRoleFamilyVisual(item.label);
+                                        return (
+                                            <TouchableOpacity
+                                                key={item.label}
+                                                style={[styles.roleCard, selected ? styles.roleCardActive : null]}
+                                                onPress={() => {
+                                                    const currentTitle = clampText(title, 120);
+                                                    const currentWasSuggested = getRoleTitlesForCategory(roleType).some(
+                                                        (roleTitle) => normalizeText(roleTitle) === normalizeText(currentTitle)
+                                                    );
+                                                    setRoleType(item.label);
+                                                    if (currentWasSuggested) {
+                                                        setTitle('');
+                                                    }
+                                                }}
+                                                activeOpacity={0.86}
+                                            >
+                                                <View
+                                                    style={[
+                                                        styles.roleCardIcon,
+                                                        { backgroundColor: visual.tint },
+                                                        selected ? styles.roleCardIconActive : null,
+                                                    ]}
+                                                >
+                                                    <Text style={styles.roleCardEmoji}>{visual.emoji}</Text>
+                                                </View>
+                                                <Text style={[styles.roleCardTitle, selected ? styles.roleCardTitleActive : null]}>{item.label}</Text>
+                                                <Text style={[styles.roleCardHint, selected ? styles.roleCardHintActive : null]}>{item.hint}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>2</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Role title</Text>
+                                        <Text style={styles.guidedFieldHint}>
+                                            {roleType ? 'Pick one from this family or type your own exact title.' : 'Choose a work family first.'}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <View style={styles.choiceWrap}>
+                                    {roleTitleOptions.map((roleTitle) => (
+                                        <StudioChip
+                                            key={roleTitle}
+                                            label={roleTitle}
+                                            selected={normalizeText(title) === normalizeText(roleTitle)}
+                                            onPress={() => setTitle(roleTitle)}
+                                        />
+                                    ))}
+                                </View>
+                                <TypeaheadInput
+                                    value={title}
+                                    onChangeText={setTitle}
+                                    placeholder="Type exact job title"
+                                    suggestions={roleTitleOptions}
+                                    onSelectSuggestion={setTitle}
+                                    pickerTitle="Choose the role title"
+                                    pickerHint={roleType ? 'Suggested roles come from the selected work family. If yours is not listed, type it.' : 'Choose a work family first, then pick or type the role title.'}
+                                    disabled={!roleType}
+                                    emptyStateText={roleType ? 'No suggestions yet. Type the exact job title you want.' : 'Choose a work family first.'}
+                                />
+                                <Text style={styles.fieldHelperText}>
+                                    {roleType
+                                        ? 'You can pick a suggested title or type your own exact job title.'
+                                        : 'Pick a work family first to unlock role suggestions.'}
+                                </Text>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>3</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Company / hiring team</Text>
+                                        <Text style={styles.guidedFieldHint}>Use the public employer name candidates should trust first.</Text>
+                                    </View>
+                                </View>
+                                <TypeaheadInput
+                                    value={companyName}
+                                    onChangeText={setCompanyName}
+                                    placeholder="Type employer or company name"
+                                    suggestions={companyOptions}
+                                    onSelectSuggestion={setCompanyName}
+                                    pickerTitle="Choose the employer name"
+                                    pickerHint="Pick one or type the exact company or hiring team name."
+                                    emptyStateText="Type the company or hiring team name you want job seekers to see."
+                                />
+                                <Text style={styles.fieldHelperText}>This is the name shown on the job card and in the talent review flow.</Text>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>4</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Company photo</Text>
+                                        <Text style={styles.guidedFieldHint}>Add one clear office or company photo. It syncs when you publish.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.companyPhotoCard}>
+                                    {!companyBrandPhoto ? (
+                                        <View style={styles.companyPhotoBadge}>
+                                            <Text style={styles.companyPhotoBadgeText}>Recommended</Text>
+                                        </View>
+                                    ) : null}
+                                    {companyBrandPhoto ? (
+                                        <Image source={{ uri: companyBrandPhoto }} style={styles.companyPhotoPreview} />
+                                    ) : (
+                                        <View style={styles.companyPhotoPlaceholder}>
+                                            <Ionicons name="business-outline" size={24} color="#6d28d9" />
+                                            <Text style={styles.companyPhotoPlaceholderText}>Add office photo</Text>
+                                        </View>
+                                    )}
                                     <TouchableOpacity
-                                        key={city}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => {
-                                            setLocation(city);
-                                            setShowCustomLocationInput(false);
-                                        }}
-                                        activeOpacity={0.82}
+                                        style={styles.companyPhotoButton}
+                                        onPress={handlePickCompanyBrandPhoto}
+                                        activeOpacity={0.86}
+                                        disabled={uploadingCompanyBrand}
                                     >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>
-                                            {city}
+                                        <Text style={styles.companyPhotoButtonText}>
+                                            {uploadingCompanyBrand ? 'Uploading...' : companyBrandPhoto ? 'Change photo' : 'Choose photo'}
                                         </Text>
                                     </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomLocationInput((prev) => !prev)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={styles.linkButtonText}>{showCustomLocationInput ? 'Hide custom location' : 'Use custom location'}</Text>
-                        </TouchableOpacity>
-                        {showCustomLocationInput ? (
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Type city / area"
-                                placeholderTextColor="#94a3b8"
-                                value={location}
-                                onChangeText={setLocation}
-                            />
-                        ) : null}
-
-                        <Text style={styles.label}>Shift *</Text>
-                        <View style={styles.chipWrap}>
-                            {SHIFT_OPTIONS.map((item) => {
-                                const selected = shift === item;
-                                return (
-                                    <TouchableOpacity
-                                        key={item}
-                                        style={[styles.choiceChip, selected && styles.choiceChipActive]}
-                                        onPress={() => setShift(item)}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Text style={[styles.choiceChipText, selected && styles.choiceChipTextActive]}>{item}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-
-                        <Text style={styles.label}>Openings (Optional)</Text>
-                        <View style={styles.inlineChips}>
-                            {OPENING_OPTIONS.map((count) => {
-                                const selected = String(openings) === String(count);
-                                return (
-                                    <TouchableOpacity
-                                        key={String(count)}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setOpenings(String(count))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{count}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-
-                        <View style={styles.switchRow}>
-                            <View style={styles.switchTextWrap}>
-                                <Text style={styles.switchTitle}>Remote Allowed</Text>
-                                <Text style={styles.switchHint}>Enable only if this role can be done remotely.</Text>
+                                </View>
+                                <Text style={styles.fieldHelperText}>A real company visual helps job seekers trust the role faster.</Text>
                             </View>
-                            <Switch
-                                value={remoteAllowed}
-                                onValueChange={setRemoteAllowed}
-                                trackColor={{ false: '#d1d5db', true: '#c4b5fd' }}
-                                thumbColor={remoteAllowed ? '#7c3aed' : '#f8fafc'}
-                            />
                         </View>
+                    ) : null}
 
-                        <Text style={styles.label}>Salary Band *</Text>
-                        <View style={styles.inlineChips}>
-                            {QUICK_SALARY_PRESETS.map((preset) => {
-                                const selected = normalizeText(salaryMin) === normalizeText(preset.min) && normalizeText(salaryMax) === normalizeText(preset.max);
-                                return (
-                                    <TouchableOpacity
-                                        key={preset.label}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => {
-                                            setSalaryMin(preset.min);
-                                            setSalaryMax(preset.max);
-                                        }}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{preset.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        <Text style={styles.rangePreviewLabel}>Selected Salary Range</Text>
-                        <View style={styles.rangePreview}>
-                            <Text style={styles.rangePreviewText}>{computedSalaryRange || 'Not set yet'}</Text>
-                        </View>
+                    {stepIndex === 1 ? (
+                        <View style={styles.formSectionCard}>
+                            <View style={styles.formSectionHero}>
+                                <View style={styles.formSectionHeroIcon}>
+                                    <Ionicons name="location-outline" size={18} color="#6d28d9" />
+                                </View>
+                                <View style={styles.formSectionHeroCopy}>
+                                    <Text style={styles.formSectionTitle}>2. AP setup</Text>
+                                    <Text style={styles.formSectionSub}>District first. Mandal or locality next.</Text>
+                                </View>
+                            </View>
 
-                        <Text style={styles.label}>Experience Range *</Text>
-                        <View style={styles.inlineChips}>
-                            {QUICK_EXPERIENCE_PRESETS.map((preset) => {
-                                const selected = normalizeText(experienceMin) === normalizeText(preset.min) && normalizeText(experienceMax) === normalizeText(preset.max);
-                                return (
-                                    <TouchableOpacity
-                                        key={preset.label}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => {
-                                            setExperienceMin(preset.min);
-                                            setExperienceMax(preset.max);
-                                        }}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{preset.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
+                            <View style={styles.studioSummaryRow}>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>District</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{district || 'Choose'}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Locality</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{locality || 'Optional'}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Shift</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{shift || 'Choose'}</Text>
+                                </View>
+                            </View>
 
-                        <Text style={styles.label}>Preferred Languages (Optional)</Text>
-                        <View style={styles.inlineChips}>
-                            {QUICK_LANGUAGE_OPTIONS.map((item) => {
-                                const selected = hasCsvToken(languages, item);
-                                return (
-                                    <TouchableOpacity
-                                        key={item}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setLanguages((prev) => toggleCommaToken(prev, item))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{item}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                    </View>
-                ) : null}
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>1</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>District *</Text>
+                                        <Text style={styles.guidedFieldHint}>Type the district where the job should appear first.</Text>
+                                    </View>
+                                </View>
+                                <TypeaheadInput
+                                    value={district}
+                                    onChangeText={setDistrict}
+                                    placeholder="Search district"
+                                    suggestions={districtSuggestions}
+                                    onSelectSuggestion={setDistrict}
+                                    pickerTitle="Choose the district"
+                                    pickerHint="Pick a district or type your own. If yours is not listed, keep typing and use it."
+                                    emptyStateText="No district suggestion yet. Type your district and continue."
+                                />
+                                <Text style={styles.fieldHelperText}>If your district is not listed, type it exactly and keep going.</Text>
+                            </View>
 
-                {stepIndex === 2 ? (
-                    <View style={styles.card}>
-                        <View style={styles.cardTitleRow}>
-                            <Text style={styles.cardTitle}>Candidate Fit Choices</Text>
-                            <View style={styles.aiActionsRow}>
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>2</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Mandal / locality</Text>
+                                        <Text style={styles.guidedFieldHint}>Add only if you want a tighter area.</Text>
+                                    </View>
+                                </View>
+                                <TypeaheadInput
+                                    value={locality}
+                                    onChangeText={setLocality}
+                                    placeholder={clampText(district, 40) ? 'Type mandal, city, or locality' : 'Enter district first'}
+                                    suggestions={localitySuggestions}
+                                    onSelectSuggestion={setLocality}
+                                    pickerTitle="Choose the mandal or locality"
+                                    pickerHint="Pick one or type your own mandal, town, or area."
+                                    disabled={!clampText(district, 120)}
+                                    emptyStateText={clampText(district, 120)
+                                        ? 'No locality suggestion yet. Type the exact mandal, town, or area.'
+                                        : 'Enter the district first.'}
+                                />
+                                <Text style={styles.fieldHelperText}>
+                                    {clampText(district, 120)
+                                        ? 'If your mandal is not listed, type it exactly and continue.'
+                                        : 'Choose the district first to unlock mandal suggestions.'}
+                                </Text>
+                            </View>
+
+                            <View style={styles.studioMiniGrid}>
+                                <View style={styles.studioMiniCard}>
+                                    <Text style={styles.sectionLabel}>Shift</Text>
+                                    <View style={styles.choiceWrap}>
+                                        {SHIFT_OPTIONS.map((item) => (
+                                            <StudioChip
+                                                key={item.value}
+                                                label={item.value}
+                                                selected={shift === item.value}
+                                                onPress={() => setShift(item.value)}
+                                                icon={item.icon}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+                                <View style={styles.studioMiniCard}>
+                                    <Text style={styles.sectionLabel}>Openings</Text>
+                                    <View style={styles.choiceWrap}>
+                                        {OPENING_OPTIONS.map((count) => (
+                                            <StudioChip
+                                                key={`opening-${count}`}
+                                                label={`${count}`}
+                                                selected={String(openings) === String(count)}
+                                                onPress={() => setOpenings(String(count))}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>3</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Work mode</Text>
+                                        <Text style={styles.guidedFieldHint}>Turn this on only if the role can be done away from site.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.toggleCard}>
+                                    <View style={styles.toggleCopy}>
+                                        <Text style={styles.toggleTitle}>Remote allowed</Text>
+                                        <Text style={styles.toggleHint}>Keep it off for on-site jobs.</Text>
+                                    </View>
+                                    <Switch
+                                        value={remoteAllowed}
+                                        onValueChange={setRemoteAllowed}
+                                        trackColor={{ false: '#d9e2ef', true: '#c4b5fd' }}
+                                        thumbColor={remoteAllowed ? '#6d28d9' : '#ffffff'}
+                                    />
+                                </View>
+                            </View>
+
+                            {videoUrl ? (
+                                <View style={styles.videoCard}>
+                                    <Ionicons name="videocam-outline" size={18} color="#6d28d9" />
+                                    <Text style={styles.videoText}>Video introduction is linked to this job.</Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : null}
+
+                    {stepIndex === 2 ? (
+                        <View style={styles.formSectionCard}>
+                            <View style={styles.formSectionHero}>
+                                <View style={styles.formSectionHeroIcon}>
+                                    <Ionicons name="options-outline" size={18} color="#6d28d9" />
+                                </View>
+                                <View style={styles.formSectionHeroCopy}>
+                                    <Text style={styles.formSectionTitle}>3. Job fit</Text>
+                                    <Text style={styles.formSectionSub}>Only keep the signals that help matching.</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.studioSummaryRow}>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Salary</Text>
+                                    <Text style={styles.studioSummaryValue} numberOfLines={1}>{computedSalaryRange || 'Set'}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Must-have</Text>
+                                    <Text style={styles.studioSummaryValue}>{selectedMustHaveSkills.length}</Text>
+                                </View>
+                                <View style={styles.studioSummaryPill}>
+                                    <Text style={styles.studioSummaryLabel}>Proofs</Text>
+                                    <Text style={styles.studioSummaryValue}>{selectedLicenses.length}</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>1</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Salary band *</Text>
+                                        <Text style={styles.guidedFieldHint}>Choose a range or type your own.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.choiceWrap}>
+                                    {QUICK_SALARY_PRESETS.map((preset) => (
+                                        <StudioChip
+                                            key={preset.label}
+                                            label={preset.label}
+                                            selected={normalizeText(salaryMin) === normalizeText(preset.min) && normalizeText(salaryMax) === normalizeText(preset.max)}
+                                            onPress={() => {
+                                                setSalaryMin(preset.min);
+                                                setSalaryMax(preset.max);
+                                            }}
+                                        />
+                                    ))}
+                                </View>
+                                <View style={styles.inputRow}>
+                                    <TextInput
+                                        style={[styles.textInput, styles.halfInput]}
+                                        placeholder="Min salary"
+                                        placeholderTextColor="#94a3b8"
+                                        keyboardType="number-pad"
+                                        value={salaryMin}
+                                        onChangeText={setSalaryMin}
+                                    />
+                                    <TextInput
+                                        style={[styles.textInput, styles.halfInput]}
+                                        placeholder="Max salary"
+                                        placeholderTextColor="#94a3b8"
+                                        keyboardType="number-pad"
+                                        value={salaryMax}
+                                        onChangeText={setSalaryMax}
+                                    />
+                                </View>
+                                <View style={styles.previewPill}>
+                                    <Text style={styles.previewPillText}>{computedSalaryRange || 'Choose or type a salary band'}</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>2</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Experience</Text>
+                                        <Text style={styles.guidedFieldHint}>Use only if experience matters for the role.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.choiceWrap}>
+                                    {QUICK_EXPERIENCE_PRESETS.map((preset) => (
+                                        <StudioChip
+                                            key={preset.label}
+                                            label={preset.label}
+                                            selected={normalizeText(experienceMin) === normalizeText(preset.min) && normalizeText(experienceMax) === normalizeText(preset.max)}
+                                            onPress={() => {
+                                                setExperienceMin(preset.min);
+                                                setExperienceMax(preset.max);
+                                            }}
+                                        />
+                                    ))}
+                                </View>
+                                <View style={styles.inputRow}>
+                                    <TextInput
+                                        style={[styles.textInput, styles.halfInput]}
+                                        placeholder="Min years"
+                                        placeholderTextColor="#94a3b8"
+                                        keyboardType="number-pad"
+                                        value={experienceMin}
+                                        onChangeText={setExperienceMin}
+                                    />
+                                    <TextInput
+                                        style={[styles.textInput, styles.halfInput]}
+                                        placeholder="Max years"
+                                        placeholderTextColor="#94a3b8"
+                                        keyboardType="number-pad"
+                                        value={experienceMax}
+                                        onChangeText={setExperienceMax}
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>3</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Languages</Text>
+                                        <Text style={styles.guidedFieldHint}>Add only the languages really needed for this job.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.choiceWrap}>
+                                    {AP_LANGUAGE_OPTIONS.map((language) => (
+                                        <StudioChip
+                                            key={language}
+                                            label={language}
+                                            selected={selectedLanguages.some((item) => normalizeText(item) === normalizeText(language))}
+                                            onPress={() => setLanguages((prev) => toggleCommaToken(prev, language))}
+                                            accent
+                                        />
+                                    ))}
+                                </View>
+                            </View>
+
+                            <View style={styles.aiRow}>
                                 <TouchableOpacity
-                                    style={styles.aiButton}
+                                    style={styles.aiAction}
                                     onPress={handleSuggestRequirements}
-                                    activeOpacity={0.85}
+                                    activeOpacity={0.86}
                                     disabled={aiLoading}
                                 >
-                                    <Ionicons name="sparkles" size={15} color="#4f46e5" />
-                                    <Text style={styles.aiButtonText}>{aiLoading ? 'Thinking' : 'AI Skills'}</Text>
+                                    <Ionicons name="sparkles-outline" size={15} color="#6d28d9" />
+                                    <Text style={styles.aiActionText}>{aiLoading ? 'Thinking…' : 'AI skills'}</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={styles.aiButton}
+                                    style={styles.aiAction}
                                     onPress={handleSuggestQuestions}
-                                    activeOpacity={0.85}
+                                    activeOpacity={0.86}
                                     disabled={aiQuestionsLoading}
                                 >
-                                    <Ionicons name="help-buoy-outline" size={15} color="#4f46e5" />
-                                    <Text style={styles.aiButtonText}>{aiQuestionsLoading ? 'Thinking' : 'AI Questions'}</Text>
+                                    <Ionicons name="help-circle-outline" size={15} color="#6d28d9" />
+                                    <Text style={styles.aiActionText}>{aiQuestionsLoading ? 'Thinking…' : 'AI questions'}</Text>
                                 </TouchableOpacity>
                             </View>
-                        </View>
 
-                        <Text style={styles.label}>Must-have Skills *</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleMustHaveSkills.map((skill) => {
-                                const selected = hasCsvToken(mustHaveSkills, skill);
-                                return (
-                                    <TouchableOpacity
-                                        key={skill}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setMustHaveSkills((prev) => toggleCommaToken(prev, skill))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{skill}</Text>
+                            <View style={styles.editorCard}>
+                                <View style={styles.editorHeaderRow}>
+                                    <Text style={styles.sectionLabel}>Must-have skills *</Text>
+                                    <Text style={styles.editorCountBadge}>{selectedMustHaveSkills.length}</Text>
+                                </View>
+                                {skillOptions.length ? (
+                                    <View style={styles.choiceWrap}>
+                                        {skillOptions.map((skill) => (
+                                            <StudioChip
+                                                key={skill}
+                                                label={skill}
+                                                selected={selectedMustHaveSkills.some((item) => normalizeText(item) === normalizeText(skill))}
+                                                onPress={() => setMustHaveSkills((prev) => toggleCommaToken(prev, skill))}
+                                            />
+                                        ))}
+                                    </View>
+                                ) : (
+                                    <Text style={styles.fieldHelperText}>Type the exact role title above to unlock role-based skill suggestions.</Text>
+                                )}
+                                <View style={styles.addRow}>
+                                    <TextInput
+                                        style={[styles.textInput, styles.addInput]}
+                                        placeholder="Type extra must-have skill"
+                                        placeholderTextColor="#94a3b8"
+                                        value={customSkillInput}
+                                        onChangeText={setCustomSkillInput}
+                                    />
+                                    <TouchableOpacity style={styles.addButton} onPress={handleAddCustomSkill} activeOpacity={0.86}>
+                                        <Text style={styles.addButtonText}>Add</Text>
                                     </TouchableOpacity>
-                                );
-                            })}
+                                </View>
+                            </View>
+
+                            <View style={styles.editorCard}>
+                                <View style={styles.editorHeaderRow}>
+                                    <Text style={styles.sectionLabel}>Nice-to-have skills</Text>
+                                    <Text style={styles.editorCountBadge}>{selectedGoodToHaveSkills.length}</Text>
+                                </View>
+                                {skillOptions.length ? (
+                                    <View style={styles.choiceWrap}>
+                                        {skillOptions.map((skill) => (
+                                            <StudioChip
+                                                key={`nice-${skill}`}
+                                                label={skill}
+                                                selected={selectedGoodToHaveSkills.some((item) => normalizeText(item) === normalizeText(skill))}
+                                                onPress={() => setGoodToHaveSkills((prev) => toggleCommaToken(prev, skill))}
+                                                accent
+                                            />
+                                        ))}
+                                    </View>
+                                ) : null}
+                            </View>
+
+                            <View style={styles.editorCard}>
+                                <View style={styles.editorHeaderRow}>
+                                    <Text style={styles.sectionLabel}>Licenses / proofs</Text>
+                                    <Text style={styles.editorCountBadge}>{selectedLicenses.length}</Text>
+                                </View>
+                                {licenseOptions.length ? (
+                                    <View style={styles.choiceWrap}>
+                                        {licenseOptions.map((license) => (
+                                            <StudioChip
+                                                key={license}
+                                                label={license}
+                                                selected={selectedLicenses.some((item) => normalizeText(item) === normalizeText(license))}
+                                                onPress={() => setMandatoryLicensesText((prev) => toggleCommaToken(prev, license))}
+                                            />
+                                        ))}
+                                    </View>
+                                ) : (
+                                    <Text style={styles.fieldHelperText}>Role-based proofs appear when the role title matches a known job title.</Text>
+                                )}
+                                <View style={styles.addRow}>
+                                    <TextInput
+                                        style={[styles.textInput, styles.addInput]}
+                                        placeholder="Type extra license or proof"
+                                        placeholderTextColor="#94a3b8"
+                                        value={customLicenseInput}
+                                        onChangeText={setCustomLicenseInput}
+                                    />
+                                    <TouchableOpacity style={styles.addButton} onPress={handleAddCustomLicense} activeOpacity={0.86}>
+                                        <Text style={styles.addButtonText}>Add</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
                         </View>
-                        {fitSkillOptions.length > visibleMustHaveSkills.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllMustHaveSkills(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show more must-have skills</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllMustHaveSkills ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllMustHaveSkills(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer must-have skills</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomSkillInput((prev) => !prev)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={styles.linkButtonText}>{showCustomSkillInput ? 'Hide custom skill' : 'Add custom skill'}</Text>
-                        </TouchableOpacity>
-                        {showCustomSkillInput ? (
-                            <View style={styles.customInputRow}>
-                                <TextInput
-                                    style={[styles.input, styles.customInlineInput]}
-                                    placeholder="Type custom skill"
-                                    placeholderTextColor="#94a3b8"
-                                    value={customSkillInput}
-                                    onChangeText={setCustomSkillInput}
+                    ) : null}
+
+                    {stepIndex === 3 ? (
+                        <View style={styles.formSectionCard}>
+                            <View style={styles.formSectionHero}>
+                                <View style={styles.formSectionHeroIcon}>
+                                    <Ionicons name="checkmark-done-outline" size={18} color="#6d28d9" />
+                                </View>
+                                <View style={styles.formSectionHeroCopy}>
+                                    <Text style={styles.formSectionTitle}>4. Review</Text>
+                                    <Text style={styles.formSectionSub}>Final questions and publish check.</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.publishReadyCard}>
+                                <View style={styles.publishReadyBadge}>
+                                    <Text style={styles.publishReadyBadgeText}>{`${readinessCount}/6 ready`}</Text>
+                                </View>
+                                <Text style={styles.publishReadyTitle}>Publish when basics, AP setup, salary, and must-have skills look right.</Text>
+                            </View>
+
+                            <View style={styles.guidedFieldCard}>
+                                <View style={styles.guidedFieldHeader}>
+                                    <View style={styles.guidedFieldIndex}><Text style={styles.guidedFieldIndexText}>1</Text></View>
+                                    <View style={styles.guidedFieldCopy}>
+                                        <Text style={styles.sectionLabel}>Screening questions</Text>
+                                        <Text style={styles.guidedFieldHint}>Keep only the questions that help you decide fast.</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.choiceWrap}>
+                                    {COMMON_QUESTIONS.map((question) => (
+                                        <StudioChip
+                                            key={question}
+                                            label={question}
+                                            selected={selectedQuestions.some((item) => normalizeText(item) === normalizeText(question))}
+                                            onPress={() => setScreeningQuestionsText((prev) => toggleLineToken(prev, question))}
+                                            accent
+                                        />
+                                    ))}
+                                </View>
+                                <View style={styles.addRow}>
+                                    <TextInput
+                                        style={[styles.textInput, styles.addInput]}
+                                        placeholder="Type your own question"
+                                        placeholderTextColor="#94a3b8"
+                                        value={customQuestionInput}
+                                        onChangeText={setCustomQuestionInput}
+                                    />
+                                    <TouchableOpacity style={styles.addButton} onPress={handleAddCustomQuestion} activeOpacity={0.86}>
+                                        <Text style={styles.addButtonText}>Add</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={styles.reviewCard}>
+                                <ReviewRow label="Role" value={title} />
+                                <ReviewRow label="Company" value={companyName} />
+                                <ReviewRow label="Location" value={resolvedLocation} />
+                                <ReviewRow label="Shift" value={shift} />
+                                <ReviewRow label="Salary" value={computedSalaryRange} />
+                                <ReviewRow
+                                    label="Experience"
+                                    value={experienceMin || experienceMax ? `${experienceMin || 0}-${experienceMax || 'plus'} yrs` : ''}
                                 />
-                                <TouchableOpacity style={styles.addButton} onPress={handleAddCustomSkill} activeOpacity={0.85}>
-                                    <Text style={styles.addButtonText}>Add</Text>
-                                </TouchableOpacity>
                             </View>
-                        ) : null}
 
-                        <Text style={styles.label}>Good-to-have Skills</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleGoodToHaveSkills.map((skill) => {
-                                const selected = hasCsvToken(goodToHaveSkills, skill);
-                                return (
-                                    <TouchableOpacity
-                                        key={`good-${skill}`}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setGoodToHaveSkills((prev) => toggleCommaToken(prev, skill))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{skill}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
+                            <View style={styles.summarySection}>
+                                <Text style={styles.summaryTitle}>Must-have skills</Text>
+                                <Text style={styles.summaryBody}>{selectedMustHaveSkills.join(', ') || 'None added yet'}</Text>
+                            </View>
+                            <View style={styles.summarySection}>
+                                <Text style={styles.summaryTitle}>Licenses / proofs</Text>
+                                <Text style={styles.summaryBody}>{selectedLicenses.join(', ') || 'None added yet'}</Text>
+                            </View>
+                            <View style={styles.summarySection}>
+                                <Text style={styles.summaryTitle}>Screening questions</Text>
+                                <Text style={styles.summaryBody}>{selectedQuestions.join(' • ') || 'None added yet'}</Text>
+                            </View>
                         </View>
-                        {fitSkillOptions.length > visibleGoodToHaveSkills.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllGoodToHaveSkills(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show more optional skills</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllGoodToHaveSkills ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllGoodToHaveSkills(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer optional skills</Text>
-                            </TouchableOpacity>
-                        ) : null}
+                    ) : null}
 
-                        <Text style={styles.label}>Mandatory Licenses / Certifications</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleLicenseOptions.map((license) => {
-                                const selected = hasCsvToken(mandatoryLicensesText, license);
-                                return (
-                                    <TouchableOpacity
-                                        key={license}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setMandatoryLicensesText((prev) => toggleCommaToken(prev, license))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{license}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        {licenseOptions.length > visibleLicenseOptions.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllLicenses(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show more licenses</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllLicenses ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllLicenses(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer licenses</Text>
-                            </TouchableOpacity>
-                        ) : null}
+                    <View style={styles.modalActionsSingle}>
                         <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomLicenseInput((prev) => !prev)}
-                            activeOpacity={0.82}
+                            style={styles.studioBackLink}
+                            onPress={stepIndex > 0 ? handlePreviousStep : () => navigation.goBack()}
+                            activeOpacity={0.86}
                         >
-                            <Text style={styles.linkButtonText}>{showCustomLicenseInput ? 'Hide custom license' : 'Add custom license'}</Text>
+                            <Text style={styles.studioBackLinkText}>{stepIndex > 0 ? 'Back' : 'Cancel'}</Text>
                         </TouchableOpacity>
-                        {showCustomLicenseInput ? (
-                            <View style={styles.customInputRow}>
-                                <TextInput
-                                    style={[styles.input, styles.customInlineInput]}
-                                    placeholder="Type custom license"
-                                    placeholderTextColor="#94a3b8"
-                                    value={customLicenseInput}
-                                    onChangeText={setCustomLicenseInput}
-                                />
-                                <TouchableOpacity style={styles.addButton} onPress={handleAddCustomLicense} activeOpacity={0.85}>
-                                    <Text style={styles.addButtonText}>Add</Text>
-                                </TouchableOpacity>
-                            </View>
-                        ) : null}
-
-                        <Text style={styles.label}>Screening Questions (Optional)</Text>
-                        <View style={styles.inlineChips}>
-                            {visibleQuestions.map((question) => {
-                                const selected = hasLineToken(screeningQuestionsText, question);
-                                return (
-                                    <TouchableOpacity
-                                        key={question}
-                                        style={[styles.inlineChip, selected ? styles.inlineChipActive : null]}
-                                        onPress={() => setScreeningQuestionsText((prev) => toggleLineToken(prev, question))}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.inlineChipText, selected ? styles.inlineChipTextActive : null]}>{question}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        {COMMON_SCREENING_QUESTIONS.length > visibleQuestions.length ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllQuestions(true)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show all default questions</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        {showAllQuestions ? (
-                            <TouchableOpacity style={styles.linkButton} onPress={() => setShowAllQuestions(false)} activeOpacity={0.82}>
-                                <Text style={styles.linkButtonText}>Show fewer questions</Text>
-                            </TouchableOpacity>
-                        ) : null}
-                        <TouchableOpacity
-                            style={styles.linkButton}
-                            onPress={() => setShowCustomQuestionInput((prev) => !prev)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={styles.linkButtonText}>{showCustomQuestionInput ? 'Hide custom question' : 'Add custom question'}</Text>
-                        </TouchableOpacity>
-                        {showCustomQuestionInput ? (
-                            <View style={styles.customInputRow}>
-                                <TextInput
-                                    style={[styles.input, styles.customInlineInput]}
-                                    placeholder="Type custom question"
-                                    placeholderTextColor="#94a3b8"
-                                    value={customQuestionInput}
-                                    onChangeText={setCustomQuestionInput}
-                                />
-                                <TouchableOpacity style={styles.addButton} onPress={handleAddCustomQuestion} activeOpacity={0.85}>
-                                    <Text style={styles.addButtonText}>Add</Text>
-                                </TouchableOpacity>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {stepIndex === 3 ? (
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Review Before Publish</Text>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Role</Text>
-                            <Text style={styles.summaryValue}>{title || 'Not selected'}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Company</Text>
-                            <Text style={styles.summaryValue}>{companyName || 'Not selected'}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Location</Text>
-                            <Text style={styles.summaryValue}>{location || 'Not selected'}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Salary</Text>
-                            <Text style={styles.summaryValue}>{computedSalaryRange || 'Not selected'}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Experience</Text>
-                            <Text style={styles.summaryValue}>
-                                {experienceMin || experienceMax ? `${experienceMin || 0}-${experienceMax || 'plus'} years` : 'Not selected'}
-                            </Text>
-                        </View>
-                        <View style={styles.summaryBlock}>
-                            <Text style={styles.summaryLabel}>Must-have Skills</Text>
-                            <Text style={styles.summaryValue}>{selectedMustHaveSkills.join(', ') || 'None selected'}</Text>
-                        </View>
-                        <View style={styles.summaryBlock}>
-                            <Text style={styles.summaryLabel}>Licenses</Text>
-                            <Text style={styles.summaryValue}>{selectedLicenses.join(', ') || 'None selected'}</Text>
-                        </View>
-                        <View style={styles.summaryBlock}>
-                            <Text style={styles.summaryLabel}>Questions</Text>
-                            <Text style={styles.summaryValue}>{selectedQuestions.join(' | ') || 'None selected'}</Text>
-                        </View>
-                    </View>
-                ) : null}
-
-                {videoUrl ? (
-                    <View style={styles.videoCard}>
-                        <Ionicons name="videocam" size={18} color="#ffffff" />
-                        <Text style={styles.videoText}>Video introduction attached for this post</Text>
-                    </View>
-                ) : null}
-
-                    <View style={styles.stepFooter}>
-                        {stepIndex > 0 ? (
-                            <TouchableOpacity style={styles.secondaryButton} onPress={handlePreviousStep} activeOpacity={0.85}>
-                                <Text style={styles.secondaryButtonText}>Back</Text>
-                            </TouchableOpacity>
-                        ) : <View style={styles.secondaryButtonPlaceholder} />}
 
                         {stepIndex < STEP_TITLES.length - 1 ? (
-                            <TouchableOpacity style={styles.primaryStepButton} onPress={handleNextStep} activeOpacity={0.9}>
-                                <Text style={styles.primaryStepButtonText}>Next</Text>
+                            <TouchableOpacity
+                                style={[styles.studioStepPrimaryBtn, !canAdvanceStep && styles.studioStepPrimaryBtnDisabled]}
+                                onPress={handleNextStep}
+                                activeOpacity={0.9}
+                                disabled={!canAdvanceStep}
+                            >
+                                <LinearGradient colors={['#7c3aed', '#a855f7']} style={styles.studioStepPrimaryBtnGradient}>
+                                    <Text style={styles.studioStepPrimaryBtnText}>Next</Text>
+                                </LinearGradient>
                             </TouchableOpacity>
                         ) : (
                             <TouchableOpacity
-                                style={[styles.postButton, saving && styles.postButtonDisabled, styles.primaryStepButton]}
+                                style={[styles.studioStepPrimaryBtn, (saving || verifyingPost) && styles.studioStepPrimaryBtnDisabled]}
                                 onPress={handlePostJob}
-                                disabled={saving}
                                 activeOpacity={0.9}
+                                disabled={saving || verifyingPost}
                             >
-                                {saving ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.postButtonText}>Publish Job</Text>}
+                                <LinearGradient colors={['#7c3aed', '#a855f7']} style={styles.studioStepPrimaryBtnGradient}>
+                                    {saving ? (
+                                        <ActivityIndicator color="#ffffff" />
+                                    ) : verifyingPost ? (
+                                        <Text style={styles.studioStepPrimaryBtnText}>Checking…</Text>
+                                    ) : (
+                                        <Text style={styles.studioStepPrimaryBtnText}>Publish Job</Text>
+                                    )}
+                                </LinearGradient>
                             </TouchableOpacity>
                         )}
                     </View>
@@ -1396,575 +1927,1107 @@ export default function PostJobScreen({ navigation, route }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#eef2f8',
+        backgroundColor: '#f4f7fc',
     },
-    header: {
+    screenCanvas: {
+        flex: 1,
+        backgroundColor: '#f4f7fc',
+    },
+    statusBarFill: {
+        backgroundColor: '#6d28d9',
+    },
+    headerChrome: {
+        ...SCREEN_CHROME.headerSurface,
+        paddingHorizontal: 18,
+        paddingTop: 10,
+        paddingBottom: 12,
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#7c3aed',
-        paddingHorizontal: 16,
-        paddingBottom: 16,
-        paddingTop: 10,
-        borderBottomLeftRadius: 18,
-        borderBottomRightRadius: 18,
-        shadowColor: '#5b21b6',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.22,
-        shadowRadius: 14,
-        elevation: 7,
+        gap: 12,
+        ...SHADOWS.sm,
     },
     backButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 12,
+        ...SCREEN_CHROME.actionButton,
+    },
+    headerAction: {
+        ...SCREEN_CHROME.actionButton,
+        ...SCREEN_CHROME.actionButtonPrimary,
     },
     headerTextWrap: {
         flex: 1,
+        minWidth: 0,
+    },
+    headerEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#7c8798',
+        letterSpacing: 1,
+        textTransform: 'uppercase',
     },
     headerTitle: {
-        fontSize: 22,
-        lineHeight: 28,
+        marginTop: 2,
+        fontSize: 26,
         fontWeight: '800',
-        color: '#ffffff',
-        marginBottom: 3,
-        letterSpacing: 0.2,
+        letterSpacing: -0.5,
+        color: '#111827',
     },
     headerSubtitle: {
-        fontSize: 12,
-        lineHeight: 18,
-        color: 'rgba(255,255,255,0.88)',
-        fontWeight: '600',
+        marginTop: 2,
+        fontSize: 11.5,
+        fontWeight: '700',
+        color: '#7c8798',
     },
     content: {
         paddingHorizontal: 16,
-        paddingTop: 18,
-        paddingBottom: 56,
+        paddingTop: 16,
     },
-    noticeCard: {
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf8ff',
+    fastSetupCard: {
+        ...SCREEN_CHROME.contentCard,
         paddingHorizontal: 14,
-        paddingVertical: 12,
-        marginBottom: 14,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 8,
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-        elevation: 2,
-    },
-    noticeText: {
-        flex: 1,
-        color: '#5b21b6',
-        fontSize: 12,
-        lineHeight: 18,
-        fontWeight: '600',
-    },
-    stepHeader: {
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        marginBottom: 14,
-        shadowColor: '#5b21b6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
-        elevation: 2,
-    },
-    stepMetaText: {
-        fontSize: 10,
-        color: '#7c3aed',
-        fontWeight: '700',
-        textTransform: 'uppercase',
-        letterSpacing: 0.8,
-        marginBottom: 4,
-    },
-    stepTitle: {
-        fontSize: 18,
-        lineHeight: 24,
-        color: '#0f172a',
-        fontWeight: '800',
-        marginBottom: 10,
-    },
-    stepPillRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 6,
-    },
-    stepPill: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#f8fafc',
-        paddingHorizontal: 11,
-        paddingVertical: 6,
-    },
-    stepPillActive: {
-        borderColor: '#7c3aed',
-        backgroundColor: '#ede9fe',
-    },
-    stepPillDone: {
-        borderColor: '#a78bfa',
-        backgroundColor: '#f5f3ff',
-    },
-    stepPillText: {
-        fontSize: 11,
-        color: '#64748b',
-        fontWeight: '700',
-        letterSpacing: 0.2,
-    },
-    stepPillTextActive: {
-        color: '#5b21b6',
-    },
-    card: {
-        backgroundColor: '#ffffff',
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        paddingHorizontal: 15,
         paddingVertical: 14,
         marginBottom: 14,
-        shadowColor: '#334155',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 2,
+        borderRadius: 24,
     },
-    cardTitle: {
-        fontSize: 17,
-        lineHeight: 22,
-        color: '#0f172a',
-        fontWeight: '800',
-        marginBottom: 12,
-    },
-    cardTitleRow: {
+    studioHeaderTopRow: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'space-between',
-        marginBottom: 12,
-        gap: 8,
+        gap: 10,
     },
-    label: {
-        fontSize: 12,
-        color: '#334155',
-        fontWeight: '700',
-        marginBottom: 8,
-        marginTop: 2,
-        letterSpacing: 0.2,
+    studioHeaderTopCopy: {
+        flex: 1,
     },
-    helperText: {
-        marginBottom: 8,
-        color: '#64748b',
-        fontSize: 12,
+    fastSetupTitle: {
+        fontSize: 11,
+        color: '#6d28d9',
+        fontWeight: '900',
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+    },
+    fastSetupText: {
+        marginTop: 3,
+        fontSize: 15,
+        color: '#111827',
+        fontWeight: '800',
         lineHeight: 18,
     },
-    input: {
-        borderWidth: 1,
-        borderColor: '#d6deeb',
-        borderRadius: 12,
-        backgroundColor: '#f8fafc',
-        paddingHorizontal: 12,
-        paddingVertical: 11,
-        fontSize: 14,
-        color: '#0f172a',
-        fontWeight: '600',
-        marginBottom: 14,
-    },
-    textArea: {
-        minHeight: 88,
-        textAlignVertical: 'top',
-    },
-    textAreaSmall: {
-        minHeight: 72,
-        textAlignVertical: 'top',
-    },
-    textAreaTall: {
-        minHeight: 104,
-        textAlignVertical: 'top',
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-    },
-    flex1: {
-        flex: 1,
-    },
-    rowGapRight: {
-        marginRight: 10,
-    },
-    switchRow: {
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#dbe4f0',
-        backgroundColor: '#f9fbff',
-        paddingHorizontal: 12,
-        paddingVertical: 11,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 14,
-    },
-    switchTextWrap: {
-        flex: 1,
-        marginRight: 10,
-    },
-    switchTitle: {
-        fontSize: 13,
-        color: '#1e293b',
+    fastSetupStatus: {
+        marginTop: 6,
+        fontSize: 11,
+        color: '#6d28d9',
         fontWeight: '700',
-        marginBottom: 2,
     },
-    switchHint: {
-        fontSize: 11,
-        color: '#64748b',
-    },
-    chipWrap: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginBottom: 10,
-    },
-    roleTypeGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        marginBottom: 12,
-        gap: 8,
-    },
-    roleTypeCard: {
-        width: '48%',
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#fbfcff',
-        paddingHorizontal: 11,
-        paddingVertical: 11,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 8,
-        shadowColor: '#475569',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
-        elevation: 1,
-    },
-    roleTypeCardActive: {
-        borderColor: '#7c3aed',
-        backgroundColor: '#f5f3ff',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.14,
-        shadowRadius: 10,
-        elevation: 3,
-    },
-    roleTypeIconWrap: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: '#e2e8f0',
-        alignItems: 'center',
+    studioProgressPill: {
+        ...SCREEN_CHROME.signalChip,
+        minWidth: 66,
         justifyContent: 'center',
-        marginTop: 2,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
     },
-    roleTypeIconWrapActive: {
-        backgroundColor: '#ddd6fe',
+    studioProgressPillDone: {
+        backgroundColor: '#f0fdf4',
+        borderColor: '#bbf7d0',
     },
-    roleTypeTextWrap: {
-        flex: 1,
-    },
-    roleTypeName: {
-        fontSize: 13,
+    studioProgressPillText: {
+        fontSize: 10.5,
         fontWeight: '800',
-        color: '#1e293b',
-        marginBottom: 3,
-    },
-    roleTypeNameActive: {
-        color: '#5b21b6',
-    },
-    roleTypeHint: {
-        fontSize: 11,
-        lineHeight: 15,
-        color: '#64748b',
-        fontWeight: '600',
-    },
-    roleTypeHintActive: {
         color: '#6d28d9',
     },
-    selectedRoleBanner: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf5ff',
-        paddingHorizontal: 12,
+    studioProgressPillTextDone: {
+        color: '#047857',
+    },
+    studioSegmentRail: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 10,
+    },
+    studioSegmentTab: {
+        ...SCREEN_CHROME.signalChip,
+        flex: 1,
+        borderRadius: 18,
+        paddingHorizontal: 8,
         paddingVertical: 10,
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: 6,
+    },
+    studioSegmentTabCurrent: {
+        borderColor: '#d8b4fe',
+        backgroundColor: '#faf5ff',
+    },
+    studioSegmentTabDone: {
+        borderColor: '#bbf7d0',
+        backgroundColor: '#f0fdf4',
+    },
+    studioSegmentTabLocked: {
+        opacity: 0.58,
+    },
+    studioSegmentBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5f3ff',
+        alignSelf: 'center',
+    },
+    studioSegmentBadgeCurrent: {
+        backgroundColor: '#7c3aed',
+    },
+    studioSegmentBadgeDone: {
+        backgroundColor: '#dcfce7',
+    },
+    studioSegmentTabText: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#64748b',
+        textAlign: 'center',
+    },
+    studioSegmentTabTextCurrent: {
+        color: '#6d28d9',
+    },
+    studioSegmentTabTextDone: {
+        color: '#047857',
+    },
+    studioSegmentTabTextLocked: {
+        color: '#94a3b8',
+    },
+    studioSegmentTabDot: {
+        width: 5,
+        height: 5,
+        borderRadius: 999,
+        alignSelf: 'center',
+        backgroundColor: '#cbd5e1',
+    },
+    studioSegmentTabDotCurrent: {
+        backgroundColor: '#7c3aed',
+    },
+    studioSegmentTabDotDone: {
+        backgroundColor: '#10b981',
+    },
+    formSectionCard: {
+        ...SCREEN_CHROME.contentCard,
+        borderRadius: 24,
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        marginBottom: 14,
+    },
+    formSectionHero: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
         marginBottom: 12,
     },
-    selectedRoleTitle: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: '#5b21b6',
+    formSectionHeroIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5f3ff',
+    },
+    formSectionHeroCopy: {
+        flex: 1,
+    },
+    formSectionTitle: {
+        fontSize: 15,
+        fontWeight: '900',
+        color: '#111827',
         marginBottom: 2,
     },
-    selectedRoleHint: {
+    formSectionSub: {
+        fontSize: 11.5,
+        color: '#64748b',
+        marginBottom: 4,
+    },
+    studioSummaryRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 12,
+    },
+    studioSummaryPill: {
+        ...SCREEN_CHROME.metricTile,
+        paddingHorizontal: 11,
+        paddingVertical: 11,
+    },
+    studioSummaryLabel: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#94a3b8',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    studioSummaryValue: {
+        marginTop: 3,
+        fontSize: 12.5,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    guidedFieldCard: {
+        ...SCREEN_CHROME.metricTile,
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        marginBottom: 10,
+    },
+    guidedFieldHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 8,
+    },
+    guidedFieldIndex: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#ede9fe',
+    },
+    guidedFieldIndexText: {
         fontSize: 11,
-        color: '#6b21a8',
+        fontWeight: '900',
+        color: '#6d28d9',
+    },
+    guidedFieldCopy: {
+        flex: 1,
+    },
+    guidedFieldHint: {
+        marginTop: -2,
+        fontSize: 10.5,
+        color: '#64748b',
         fontWeight: '600',
+    },
+    studioMiniGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginBottom: 2,
+    },
+    studioMiniCard: {
+        ...SCREEN_CHROME.metricTile,
+        width: '48.4%',
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+    },
+    editorCard: {
+        ...SCREEN_CHROME.metricTile,
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        marginBottom: 10,
+    },
+    editorHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    editorCountBadge: {
+        minWidth: 28,
+        borderRadius: 999,
+        backgroundColor: '#ede9fe',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#6d28d9',
+        textAlign: 'center',
+    },
+    heroCard: {
+        ...SCREEN_CHROME.heroSurface,
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+        marginBottom: 14,
+    },
+    heroTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    heroBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    heroBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    heroMiniPill: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    heroMiniPillText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
+    },
+    heroTitle: {
+        marginTop: 14,
+        fontSize: 24,
+        lineHeight: 30,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.5,
+    },
+    heroMetricRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 14,
+    },
+    heroMetricTile: {
+        ...SCREEN_CHROME.metricTile,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+    },
+    heroMetricValue: {
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    heroMetricLabel: {
+        marginTop: 3,
+        fontSize: 10.5,
+        fontWeight: '800',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+        color: '#94a3b8',
+    },
+    heroSignalRail: {
+        marginTop: 14,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    heroSignalChip: {
+        ...SCREEN_CHROME.signalChip,
+        gap: 6,
+    },
+    heroSignalText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    stepRail: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 14,
+    },
+    stepPill: {
+        flex: 1,
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#e5eaf2',
+        backgroundColor: '#ffffff',
+        ...SHADOWS.sm,
+    },
+    stepDot: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#eef2f7',
+        marginBottom: 6,
+    },
+    stepDotActive: {
+        backgroundColor: '#7c3aed',
+    },
+    stepDotDone: {
+        backgroundColor: '#c4b5fd',
+    },
+    stepDotText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#64748b',
+    },
+    stepDotTextActive: {
+        color: '#ffffff',
+    },
+    stepPillActive: {
+        backgroundColor: '#f5f3ff',
+        borderColor: '#d8b4fe',
+    },
+    stepPillDone: {
+        backgroundColor: '#f8fafc',
+        borderColor: '#dbe4f0',
+    },
+    stepPillText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#64748b',
+    },
+    stepPillTextActive: {
+        color: '#6d28d9',
+    },
+    card: {
+        ...SCREEN_CHROME.contentCard,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+        marginBottom: 14,
+    },
+    cardHeaderBlock: {
+        marginBottom: 14,
+    },
+    sectionPillRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 12,
+    },
+    sectionPill: {
+        ...SCREEN_CHROME.signalChip,
+        backgroundColor: '#ffffff',
+    },
+    sectionPillText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#64748b',
+    },
+    cardTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.3,
+    },
+    cardSubtitle: {
+        marginTop: 4,
+        fontSize: 13,
+        lineHeight: 18,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    sectionLabel: {
+        marginTop: 4,
+        marginBottom: 8,
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#334155',
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+    roleGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginBottom: 12,
+    },
+    roleCard: {
+        width: '48%',
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e6ebf3',
+        backgroundColor: '#f8fafc',
+        padding: 14,
+        gap: 8,
+    },
+    roleCardActive: {
+        borderColor: '#d8b4fe',
+        backgroundColor: '#faf5ff',
+    },
+    roleCardIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    roleCardIconActive: {
+        transform: [{ scale: 1.04 }],
+    },
+    roleCardEmoji: {
+        fontSize: 18,
+    },
+    roleCardTitle: {
+        fontSize: 14,
+        lineHeight: 18,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    roleCardTitleActive: {
+        color: '#6d28d9',
+    },
+    roleCardHint: {
+        fontSize: 11,
         lineHeight: 16,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    roleCardHintActive: {
+        color: '#7c3aed',
+    },
+    fieldHelperText: {
+        marginTop: -2,
+        marginBottom: 4,
+        fontSize: 11.5,
+        lineHeight: 16,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    choiceWrap: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 12,
     },
     choiceChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
         borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
         borderWidth: 1,
-        borderColor: '#cbd5e1',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 13,
-        paddingVertical: 8,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+    },
+    choiceChipAccent: {
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
     },
     choiceChipActive: {
         borderColor: '#7c3aed',
-        backgroundColor: '#f5f3ff',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
-        elevation: 1,
+        backgroundColor: '#7c3aed',
     },
     choiceChipText: {
         fontSize: 12,
         fontWeight: '700',
         color: '#475569',
     },
-    choiceChipTextActive: {
+    choiceChipTextAccent: {
         color: '#6d28d9',
     },
-    rangePreviewLabel: {
-        fontSize: 10,
+    choiceChipTextActive: {
+        color: '#ffffff',
+    },
+    typeaheadShell: {
+        borderWidth: 1,
+        borderColor: '#dde5f0',
+        borderRadius: 16,
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 14,
+        minHeight: 50,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 12,
+    },
+    typeaheadShellDisabled: {
+        opacity: 0.52,
+    },
+    typeaheadDisplayText: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    typeaheadPlaceholderText: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#94a3b8',
+    },
+    typeaheadChevron: {
+        fontSize: 11,
+        fontWeight: '900',
+        color: '#7c8798',
+    },
+    typeaheadPickerOverlay: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    typeaheadPickerBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    },
+    typeaheadPickerSheet: {
+        backgroundColor: '#f8fafc',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingHorizontal: 16,
+        paddingTop: 10,
+        paddingBottom: 20,
+        minHeight: Dimensions.get('window').height * 0.56,
+        maxHeight: Dimensions.get('window').height * 0.82,
+        ...SHADOWS.lg,
+    },
+    typeaheadPickerHandle: {
+        alignSelf: 'center',
+        width: 44,
+        height: 5,
+        borderRadius: 999,
+        backgroundColor: 'rgba(148, 163, 184, 0.38)',
+        marginBottom: 12,
+    },
+    typeaheadPickerHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 12,
+    },
+    typeaheadPickerHeaderCopy: {
+        flex: 1,
+        gap: 4,
+    },
+    typeaheadPickerTitle: {
+        fontSize: 18,
+        fontWeight: '900',
+        color: '#0f172a',
+    },
+    typeaheadPickerHint: {
+        fontSize: 11.5,
+        lineHeight: 16,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    typeaheadPickerCloseBtn: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    typeaheadPickerSearchShell: {
+        marginBottom: 10,
+    },
+    typeaheadInput: {
+        flex: 1,
+        fontSize: 15,
+        color: '#0f172a',
+        fontWeight: '700',
+        paddingVertical: 12,
+    },
+    typeaheadPickerList: {
+        flex: 1,
+    },
+    typeaheadPickerListContent: {
+        paddingBottom: 12,
+        gap: 8,
+    },
+    typeaheadPickerItem: {
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e6ebf3',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+    },
+    typeaheadPickerItemPrimary: {
+        borderColor: '#d8b4fe',
+        backgroundColor: '#faf5ff',
+    },
+    typeaheadPickerItemPrimaryText: {
+        color: '#6d28d9',
+    },
+    typeaheadPickerItemPrimaryMeta: {
+        color: '#7c3aed',
+    },
+    typeaheadPickerEmptyState: {
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e6ebf3',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 14,
+        paddingVertical: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    typeaheadPickerEmptyText: {
+        fontSize: 11.5,
         color: '#64748b',
         fontWeight: '700',
-        textTransform: 'uppercase',
-        marginBottom: 6,
-        letterSpacing: 0.7,
+        textAlign: 'center',
     },
-    rangePreview: {
-        borderRadius: 12,
+    typeaheadItemText: {
+        fontSize: 13.5,
+        color: '#0f172a',
+        fontWeight: '700',
+    },
+    typeaheadItemMeta: {
+        marginTop: 3,
+        fontSize: 11,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    textInput: {
+        width: '100%',
         borderWidth: 1,
-        borderColor: '#dbe4f0',
-        backgroundColor: '#f9fbff',
-        paddingHorizontal: 12,
-        paddingVertical: 11,
-        marginBottom: 14,
+        borderColor: '#dde5f0',
+        borderRadius: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#0f172a',
+        backgroundColor: '#f8fafc',
+        marginBottom: 12,
     },
-    rangePreviewText: {
-        color: '#1e293b',
+    suggestionList: {
+        marginTop: -4,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#e6ebf3',
+        borderRadius: 16,
+        backgroundColor: '#ffffff',
+        overflow: 'hidden',
+    },
+    suggestionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eef2f7',
+    },
+    suggestionText: {
         fontSize: 13,
         fontWeight: '700',
+        color: '#334155',
     },
-    aiButton: {
-        borderRadius: 999,
+    companyPhotoCard: {
+        borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#c7d2fe',
-        backgroundColor: '#eef2ff',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#faf5ff',
+        padding: 12,
+        gap: 12,
+        overflow: 'hidden',
+        marginBottom: 8,
+    },
+    companyPhotoBadge: {
+        alignSelf: 'flex-start',
+        borderRadius: 999,
+        backgroundColor: '#ede9fe',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    companyPhotoBadgeText: {
+        fontSize: 10.5,
+        fontWeight: '900',
+        color: '#6d28d9',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    companyPhotoPreview: {
+        width: '100%',
+        height: 170,
+        borderRadius: 18,
+        backgroundColor: '#ede9fe',
+    },
+    companyPhotoPlaceholder: {
+        width: '100%',
+        minHeight: 170,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#d8b4fe',
+        borderStyle: 'dashed',
+        backgroundColor: 'rgba(255,255,255,0.76)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 18,
+    },
+    companyPhotoPlaceholderText: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    companyPhotoButton: {
+        borderRadius: 16,
+        backgroundColor: '#6d28d9',
+        paddingHorizontal: 16,
+        paddingVertical: 13,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    companyPhotoButtonText: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#ffffff',
+    },
+    toggleCard: {
+        marginTop: 4,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e7ecf4',
+        backgroundColor: '#fbfcff',
+        paddingHorizontal: 14,
+        paddingVertical: 14,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        justifyContent: 'space-between',
+        gap: 16,
     },
-    aiActionsRow: {
+    setupSummaryRow: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'flex-end',
+        gap: 8,
+        marginTop: 12,
+    },
+    setupSummaryTile: {
+        ...SCREEN_CHROME.metricTile,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+    },
+    setupSummaryLabel: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.7,
+        color: '#94a3b8',
+    },
+    setupSummaryValue: {
+        marginTop: 4,
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    toggleCopy: {
+        flex: 1,
+    },
+    toggleTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    toggleHint: {
+        marginTop: 4,
+        fontSize: 12,
+        lineHeight: 17,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    videoCard: {
+        marginTop: 12,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#faf5ff',
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    videoText: {
+        flex: 1,
+        fontSize: 13,
+        lineHeight: 18,
+        color: '#5b21b6',
+        fontWeight: '700',
+    },
+    inputRow: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    halfInput: {
+        flex: 1,
+    },
+    previewPill: {
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e5eaf2',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: 12,
+    },
+    previewPillText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    aiRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 4,
+        marginBottom: 12,
+    },
+    fitSummaryStrip: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 12,
+    },
+    fitSummaryChip: {
+        ...SCREEN_CHROME.metricTile,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+    },
+    fitSummaryValue: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    fitSummaryLabel: {
+        marginTop: 3,
+        fontSize: 10.5,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+        color: '#94a3b8',
+    },
+    aiAction: {
+        flex: 1,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#faf5ff',
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
         gap: 8,
     },
-    aiButtonText: {
-        color: '#4338ca',
+    aiActionText: {
         fontSize: 12,
         fontWeight: '800',
-    },
-    inlineChips: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginBottom: 10,
-    },
-    inlineChip: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#dbe4f0',
-        backgroundColor: '#f8fafc',
-        paddingHorizontal: 11,
-        paddingVertical: 7,
-    },
-    inlineChipActive: {
-        borderColor: '#7c3aed',
-        backgroundColor: '#f5f3ff',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
-        elevation: 1,
-    },
-    inlineChipText: {
-        fontSize: 12,
-        color: '#475569',
-        fontWeight: '700',
-    },
-    inlineChipTextActive: {
         color: '#6d28d9',
     },
-    linkButton: {
-        paddingVertical: 5,
-        marginBottom: 10,
-    },
-    linkButtonText: {
-        fontSize: 12,
-        color: '#6d28d9',
-        fontWeight: '700',
-    },
-    customInputRow: {
+    addRow: {
         flexDirection: 'row',
+        gap: 10,
         alignItems: 'center',
-        gap: 8,
-        marginBottom: 14,
+        marginBottom: 12,
     },
-    customInlineInput: {
+    addInput: {
         flex: 1,
         marginBottom: 0,
     },
     addButton: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#7c3aed',
-        backgroundColor: '#f5f3ff',
-        paddingHorizontal: 13,
-        paddingVertical: 11,
+        minWidth: 72,
+        borderRadius: 16,
+        backgroundColor: '#111827',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
     },
     addButtonText: {
         fontSize: 12,
-        color: '#6d28d9',
         fontWeight: '800',
+        color: '#ffffff',
     },
-    summaryRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-        paddingBottom: 8,
+    reviewCard: {
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#e6ebf3',
+        backgroundColor: '#fbfcff',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        marginTop: 10,
+    },
+    publishReadyCard: {
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#faf5ff',
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        marginBottom: 14,
+    },
+    publishReadyBadge: {
+        alignSelf: 'flex-start',
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    publishReadyBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    publishReadyTitle: {
+        marginTop: 10,
+        fontSize: 13,
+        lineHeight: 19,
+        fontWeight: '700',
+        color: '#5b21b6',
+    },
+    reviewRow: {
+        paddingVertical: 10,
         borderBottomWidth: 1,
         borderBottomColor: '#eef2f7',
-        gap: 10,
     },
-    summaryBlock: {
-        marginTop: 10,
-        paddingTop: 2,
-    },
-    summaryLabel: {
+    reviewLabel: {
         fontSize: 11,
-        color: '#64748b',
         fontWeight: '800',
+        color: '#7c8798',
         textTransform: 'uppercase',
-        marginBottom: 6,
-        letterSpacing: 0.7,
+        letterSpacing: 0.5,
     },
-    summaryValue: {
-        flex: 1,
-        color: '#0f172a',
-        fontSize: 13,
-        fontWeight: '700',
-        lineHeight: 18,
-    },
-    videoCard: {
-        borderRadius: 14,
-        backgroundColor: '#059669',
-        paddingHorizontal: 13,
-        paddingVertical: 11,
-        marginBottom: 14,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        shadowColor: '#059669',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        elevation: 3,
-    },
-    videoText: {
-        color: '#ffffff',
-        fontSize: 13,
-        fontWeight: '700',
-    },
-    stepFooter: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
+    reviewValue: {
         marginTop: 4,
-        marginBottom: 6,
-    },
-    secondaryButton: {
-        flex: 1,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d5deeb',
-        backgroundColor: '#f9fbff',
-        paddingVertical: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    secondaryButtonPlaceholder: {
-        flex: 1,
-    },
-    secondaryButtonText: {
-        color: '#334155',
         fontSize: 14,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    summarySection: {
+        marginTop: 14,
+        paddingHorizontal: 4,
+    },
+    summaryTitle: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#334155',
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+    summaryBody: {
+        marginTop: 6,
+        fontSize: 13,
+        lineHeight: 19,
+        color: '#475569',
+        fontWeight: '600',
+    },
+    modalActionsSingle: {
+        alignItems: 'center',
+        marginTop: 8,
+        gap: 12,
+        paddingTop: 10,
+        paddingBottom: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#e8edf5',
+    },
+    studioBackLink: {
+        ...SCREEN_CHROME.signalChip,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+    },
+    studioBackLinkText: {
+        color: '#64748b',
+        fontSize: 12,
         fontWeight: '800',
     },
-    primaryStepButton: {
-        flex: 1,
-        borderRadius: 14,
-        backgroundColor: '#6d28d9',
-        paddingVertical: 15,
+    studioStepPrimaryBtn: {
+        width: '78%',
+        borderRadius: 18,
+        overflow: 'hidden',
+        ...SHADOWS.md,
+    },
+    studioStepPrimaryBtnDisabled: {
+        opacity: 0.45,
+    },
+    studioStepPrimaryBtnGradient: {
+        width: '100%',
+        paddingVertical: 17,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#6d28d9',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        elevation: 6,
     },
-    primaryStepButtonText: {
-        color: '#ffffff',
-        fontSize: 15,
-        fontWeight: '800',
-    },
-    postButton: {
-        borderRadius: 14,
-        backgroundColor: '#6d28d9',
-        paddingVertical: 15,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 2,
-        shadowColor: '#6d28d9',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        elevation: 6,
-    },
-    postButtonDisabled: {
-        opacity: 0.7,
-    },
-    postButtonText: {
+    studioStepPrimaryBtnText: {
         color: '#ffffff',
         fontSize: 15,
         fontWeight: '800',

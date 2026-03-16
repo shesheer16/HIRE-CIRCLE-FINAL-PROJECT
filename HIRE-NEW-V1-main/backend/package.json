@@ -56,6 +56,7 @@
     "validate:build": "node scripts/validateBuildIntegrity.js",
     "restore:integrity-test": "node scripts/mongoRestoreIntegrityTest.js",
     "purge:deleted-accounts": "node scripts/purgeDeletedAccounts.js",
+    "backfill:structured-locations": "node scripts/backfillStructuredLocations.js",
     "cleanup:file-retention": "node scripts/fileRetentionCleanup.js",
     "loadtest:extreme": "node scripts/loadSimulationExtreme.js",
     "simulate:moat-scale": "node scripts/moatScaleSimulation.js",

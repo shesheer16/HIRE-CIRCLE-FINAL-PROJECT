@@ -41,11 +41,30 @@ const loginSchema = z.object({
 }).strict();
 
 const refreshTokenSchema = z.object({
-    refreshToken: z.string().trim().min(20).max(2048),
+    refreshToken: optionalTrimmedString(2048),
 }).strict();
 
 const logoutSchema = z.object({
     refreshToken: optionalTrimmedString(2048),
+    deviceId: optionalTrimmedString(128),
+}).strict();
+
+const forgotPasswordSchema = z.object({
+    email: z.string().trim().email().transform((value) => value.toLowerCase()),
+}).strict();
+
+const resendVerificationSchema = z.object({
+    email: z.string().trim().email().transform((value) => value.toLowerCase()),
+}).strict();
+
+const resetPasswordSchema = z.object({
+    password: z.string()
+        .min(10)
+        .max(128)
+        .regex(/[A-Z]/, 'Password must include at least one uppercase letter')
+        .regex(/[a-z]/, 'Password must include at least one lowercase letter')
+        .regex(/[0-9]/, 'Password must include at least one number')
+        .regex(/[^A-Za-z0-9]/, 'Password must include at least one symbol'),
 }).strict();
 
 const otpSendSchema = z.object({
@@ -95,16 +114,44 @@ const jobPostSchema = z.object({
     companyName: z.string().trim().min(2).max(120),
     salaryRange: z.string().trim().min(1).max(120),
     location: z.string().trim().min(1).max(120),
+    district: optionalTrimmedString(120),
+    mandal: optionalTrimmedString(120),
+    locationLabel: optionalTrimmedString(160),
     countryCode: optionalTrimmedString(4),
+    region: optionalTrimmedString(32),
     regionCode: optionalTrimmedString(32),
+    currencyCode: optionalTrimmedString(8),
+    languageCode: optionalTrimmedString(16),
     remoteAllowed: z.boolean().optional(),
     requirements: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
     screeningQuestions: z.array(z.string().trim().min(1).max(250)).max(20).optional(),
     minSalary: z.number().int().nonnegative().optional(),
     maxSalary: z.number().int().nonnegative().optional(),
-    shift: z.enum(['Day', 'Night', 'Flexible']).optional(),
+    openings: z.number().int().nonnegative().optional(),
+    shift: z.preprocess((value) => {
+        if (value === null || typeof value === 'undefined') return undefined;
+        const normalized = String(value).trim().toLowerCase();
+        if (!normalized) return undefined;
+        if (normalized === 'day') return 'Day';
+        if (normalized === 'night') return 'Night';
+        if (normalized === 'flexible') return 'Flexible';
+        return value;
+    }, z.enum(['Day', 'Night', 'Flexible'])).optional(),
     mandatoryLicenses: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
     isPulse: z.boolean().optional(),
+    expiresAt: z.union([z.string(), z.number(), z.date(), z.null(), z.undefined()])
+        .transform((value) => {
+            if (value === null || typeof value === 'undefined') return undefined;
+            if (value instanceof Date) return value.toISOString();
+            const normalized = String(value).trim();
+            return normalized.length ? normalized : undefined;
+        })
+        .refine((value) => typeof value === 'undefined' || value.length <= 64, {
+            message: 'Must be at most 64 characters',
+        }),
+    contactPerson: optionalTrimmedString(120),
+    processingId: optionalTrimmedString(120),
+    description: optionalTrimmedString(5000),
 }).strict();
 
 const communityCreateSchema = z.object({
@@ -238,6 +285,9 @@ module.exports = {
     loginSchema,
     refreshTokenSchema,
     logoutSchema,
+    forgotPasswordSchema,
+    resendVerificationSchema,
+    resetPasswordSchema,
     otpSendSchema,
     otpVerifySchema,
     jobPostSchema,

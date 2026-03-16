@@ -1,6 +1,21 @@
 const AdminUser = require('../models/AdminUser');
 const { issueAdminToken, ensureBootstrapAdmin } = require('../services/adminAuthService');
 
+const isProductionRuntime = () => String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const isAdminBootstrapEnabled = () => {
+    const configured = String(process.env.ADMIN_BOOTSTRAP_ENABLED || '').trim().toLowerCase();
+    if (configured) {
+        return configured === 'true';
+    }
+    return !isProductionRuntime();
+};
+const resolveBootstrapToken = () => String(process.env.ADMIN_BOOTSTRAP_TOKEN || '').trim();
+const readBootstrapToken = (req = {}) => String(
+    req.headers?.['x-bootstrap-token']
+    || req.body?.bootstrapToken
+    || ''
+).trim();
+
 const adminLogin = async (req, res) => {
     try {
         const email = String(req.body?.email || '').trim().toLowerCase();
@@ -41,6 +56,23 @@ const adminLogin = async (req, res) => {
 
 const bootstrapAdmin = async (req, res) => {
     try {
+        if (!isAdminBootstrapEnabled()) {
+            return res.status(404).json({ message: 'Not found' });
+        }
+
+        const bootstrapToken = resolveBootstrapToken();
+        if (isProductionRuntime()) {
+            if (!bootstrapToken) {
+                return res.status(503).json({ message: 'Admin bootstrap is not configured' });
+            }
+
+            if (readBootstrapToken(req) !== bootstrapToken) {
+                return res.status(403).json({ message: 'Admin bootstrap token is invalid' });
+            }
+        } else if (bootstrapToken && readBootstrapToken(req) !== bootstrapToken) {
+            return res.status(403).json({ message: 'Admin bootstrap token is invalid' });
+        }
+
         const existingCount = await AdminUser.countDocuments({});
         if (existingCount > 0) {
             return res.status(409).json({ message: 'Admin bootstrap already completed' });

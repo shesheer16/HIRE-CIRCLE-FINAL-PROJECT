@@ -1,90 +1,128 @@
-# HireCircle 🚀
+# HireCircle
 
-> **Smart AI matching for everyone.**
-> An AI-powered hiring platform designed to seamlessly connect Job Seekers and Employers through an intelligent matchmaking engine, intuitive mobile app, and scalable backend architecture.
+AI-powered hiring platform for job seekers and employers, built as a shared product across mobile, web, and backend services.
 
----
+This repository is being pushed as a checkpoint release. It captures the current state of the platform across product work, backend hardening, mobile workflow expansion, admin tooling, and Andhra Pradesh location intelligence so we can preserve progress cleanly before continuing the remaining work.
 
-## 🏗️ Architecture & Project Structure
-
-The repository is structured into distinct microservices and client apps to ensure scalability, ease of maintenance, and decoupled deployment.
+## Repo Overview
 
 ```text
-HIRE-NEW-V1/
-├── HIRE-NEW-V1-main/
-│   └── backend/         # Node.js + Express backend & AI matching engine
-├── mobile-app/          # React Native (Expo) mobile application (iOS & Android)
-├── frontend/            # React web dashboard for admin/employer management
-├── marketing-site/      # Next.js landing page & SEO optimized promotional site
-├── config/              # Shared configuration & deployment manifests
-├── scripts/             # CLI, maintenance, and database scripts
-└── infrastructure/      # Infrastructure as Code (IaC) & deployment configs
+Hirepp/
+├── HIRE-NEW-V1-main/backend/   # Node.js + Express API, matching, auth, jobs, chat, pulse, tests
+├── mobile-app/                 # Expo / React Native app for job seekers and employers
+├── frontend/                   # React web dashboard and admin surfaces
+├── marketing-site/             # Next.js marketing site
+├── infrastructure/             # Deployment and infrastructure assets
+├── scripts/                    # Repository-level maintenance and validation scripts
+├── archive_unused/             # Archived legacy or unused assets kept out of the active path
+└── *.md                        # Checklists, structure notes, and certification reports
 ```
 
-## 🛠️ Technology Stack
+## Current Status
 
-### Backend (`/HIRE-NEW-V1-main/backend`)
-- **Runtime:** Node.js + Express
-- **Database:** MongoDB (Mongoose) + Redis (Caching)
-- **AI/ML:** Custom probabilistic synthesis matching engine + Gemini AI integrations
-- **Realtime:** Socket.io (for Chat, Notifications, and Interview updates)
-- **Workers:** Background queue processing (SQS, BullMQ) for heavy jobs
+Status as of March 16, 2026:
 
-### Mobile App (`/mobile-app`)
-- **Framework:** React Native + Expo
-- **Navigation:** React Navigation (Stack & Tabs)
-- **State Management:** React Context API + Custom Hooks
-- **Styling:** Custom StyleSheet + Theme provider
-- **Animations:** React Native Animated API for smooth micro-interactions
+- Backend hardening is substantially expanded: tighter environment validation, stronger auth/session protections, operational access middleware, widget/embed security work, platform API protections, and broader automated test coverage.
+- Mobile product flows have grown significantly: onboarding, profile setup, post job, employer dashboard, applications, auth entry, and connect/pulse surfaces all have active improvements in this checkpoint.
+- Andhra Pradesh district and mandal support is now a first-class theme in the codebase through structured location catalogs, normalized location helpers, ranking utilities, and location-aware filtering groundwork.
+- Web admin and browser session support now include admin login flows, guarded admin/web session helpers, and notification/session infrastructure for operational dashboards.
+- This is still an in-flight product checkpoint, not a final production release. Some flows are improved but still need final end-to-end validation before we call them complete.
 
-### Frontend & Marketing (`/frontend` & `/marketing-site`)
-- **Framework:** React (Dashboard) & Next.js (Marketing)
-- **Styling:** TailwindCSS
+## What Is Working
 
----
+- Shared job seeker and employer product model across the mobile app.
+- AI-assisted capture flows for profiles, interviews, and richer job/application data entry.
+- Smart matchmaking infrastructure and supporting backend ranking layers.
+- Employer-side hiring workflow surfaces including job posting, job management, and application review flows.
+- Connect, feed, pulse, and community-oriented product surfaces with ongoing UI and ranking improvements.
+- Admin and operational dashboard groundwork on the web app.
 
-## ✨ Core Features
-1. **Role-Based Architecture:** Unified app for both `Job Seekers` and `Employers` (Hybrid Mode).
-2. **AI Matchmaking Engine:** Real-time semantic and probabilistic scoring to instantly connect candidates to the perfect jobs.
-3. **Smart Interviews:** AI-assisted interviews, scheduling, and insights.
-4. **Realtime Connect Platform:** Fully integrated chat, networking feed, and community circles.
-5. **Secure Escrow & Bounties:** Built-in financial layer for gig-work and referral bounties.
+## Still In Progress
 
----
+- Final end-to-end verification for manual job discovery filters in `Find Work`, especially around location-filtered listing behavior.
+- Full regression coverage across the recently expanded mobile flows and admin/browser session flows.
+- Production deployment hardening beyond the current checkpoint, including environment completeness, observability, and rollout validation.
+- Documentation depth for module-by-module ownership, deployment steps, and recovery runbooks.
 
-## 🚀 Getting Started
+## Technology Stack
 
-### 1. Backend Setup
+### Backend
+
+- Node.js
+- Express
+- MongoDB with Mongoose
+- Redis-ready runtime integrations
+- Socket.IO
+- Zod validation
+- Jest + Supertest
+
+### Mobile App
+
+- Expo
+- React Native
+- React Navigation
+- AsyncStorage and SecureStore
+- Axios
+- React Native Maps / charts / media integrations
+
+### Web Surfaces
+
+- React for the dashboard frontend
+- Next.js for the marketing site
+- TailwindCSS in the web surfaces
+
+## Getting Started
+
+### Backend
+
 ```bash
 cd HIRE-NEW-V1-main/backend
 npm install
 npm start
 ```
-*(Requires running MongoDB, Redis instances, and populated `.env` variables)*
 
-### 2. Mobile App Setup
+Local backend development currently expects at least:
+
+- `MONGO_URI`
+- `JWT_SECRET`
+
+Production/staging requires additional infrastructure and provider variables enforced by the backend runtime validator.
+
+### Mobile App
+
 ```bash
 cd mobile-app
 npm install
 npx expo start
 ```
-*(Use the Expo Go app on your physical device, or press `i` / `a` to run on iOS/Android simulators)*
 
-### 3. Web Dashboard / Marketing Site
+Use Expo Go or a simulator/device to run the app.
+
+### Web Dashboard
+
 ```bash
-cd frontend         # Or cd marketing-site
+cd frontend
+npm install
+npm start
+```
+
+### Marketing Site
+
+```bash
+cd marketing-site
 npm install
 npm run dev
 ```
 
----
+## Security Notes
 
-## 🔒 Security & Maintenance
+- `.env` files, logs, uploads, and local-only runtime artifacts are excluded from source control.
+- Do not commit MongoDB URIs, JWT secrets, API keys, or provider credentials.
+- The backend includes stricter production environment validation and rejects placeholder secrets in production-style runtimes.
 
-- **Keys & Secrets:** Never commit `.env` files or API keys. The `.gitignore` is heavily fortified.
-- **Uploads:** User uploads and local DB data (`.mongo-data`) are excluded from source control.
-- **Architecture Validation:** Run `npm run check:syntax` in the backend before pushing changes.
+## Supporting Docs
 
----
-
-*For deep technical documentation, architecture decisions, and regression checklists, please see [PROJECT_EXECUTION_MASTER.md](./PROJECT_EXECUTION_MASTER.md).*
+- [FINAL_SYSTEM_CHECKLIST.md](./FINAL_SYSTEM_CHECKLIST.md)
+- [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
+- [REPO_CLEANUP_REPORT.md](./REPO_CLEANUP_REPORT.md)
+- [SCALE_ARCHITECTURE_CERTIFICATION.md](./SCALE_ARCHITECTURE_CERTIFICATION.md)

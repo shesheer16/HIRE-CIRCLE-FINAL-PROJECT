@@ -12,6 +12,10 @@ const workerProfileSchema = mongoose.Schema(
     firstName: { type: String, required: true },
     lastName: { type: String },
     city: { type: String, required: true },
+    district: { type: String, default: null, index: true },
+    mandal: { type: String, default: null, index: true },
+    panchayat: { type: String, default: null },
+    locationLabel: { type: String, default: null },
     avatar: { type: String, default: null },
     country: { type: String, default: 'IN', uppercase: true, index: true },
     language: { type: String, default: null },
@@ -183,6 +187,7 @@ const workerProfileSchema = mongoose.Schema(
 
 // Match Engine Optimization: Indexing for fast searches (Phase 5)
 workerProfileSchema.index({ city: 1, 'roleProfiles.roleName': 1 });
+workerProfileSchema.index({ district: 1, mandal: 1, 'roleProfiles.roleName': 1 });
 workerProfileSchema.index({ user: 1 }, { unique: true });
 workerProfileSchema.index({ user: 1, 'roleProfiles.profileId': 1 });
 workerProfileSchema.index({ user: 1, 'roleProfiles.activeProfile': 1 });

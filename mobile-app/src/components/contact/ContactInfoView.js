@@ -33,7 +33,7 @@ export default function ContactInfoView({
         name = '',
         avatar,
         headline = '',
-        industryTag = mode === 'employer' ? 'EMPLOYER PROFILE' : 'CANDIDATE PROFILE',
+        industryTag = mode === 'employer' ? 'EMPLOYER PROFILE' : 'JOB SEEKER PROFILE',
         bannerImage = '',
         mission = '',
         industry = '',

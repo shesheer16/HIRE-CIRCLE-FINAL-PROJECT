@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Image, StyleSheet, Modal, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { IconMic, IconImage, IconVideo } from '../../../components/Icons';
 import { RADIUS, SPACING } from '../../../theme/theme';
 
@@ -121,6 +122,7 @@ function FeedComposerComponent({
     onComposerVisibilitySelect,
     isEmployerRole = false,
     onOpenPostJobForm,
+    showInline = true,
 }) {
     const onVoicePress = useCallback(() => onMediaButtonClick('VOICE'), [onMediaButtonClick]);
     const onPhotosPress = useCallback(() => onMediaButtonClick('PHOTOS'), [onMediaButtonClick]);
@@ -141,7 +143,12 @@ function FeedComposerComponent({
             ? safeMediaAssets.length > 0
             : true;
 
-    const canShare = Boolean(String(composerText || '').trim()) && hasRequiredMedia && !isVoiceRecording && !isPosting;
+    const hasCaption = Boolean(String(composerText || '').trim());
+    const canShare = (
+        normalizedMediaType === 'TEXT'
+            ? hasCaption
+            : hasRequiredMedia
+    ) && !isVoiceRecording && !isPosting;
     const defaultPostAction = isEmployerRole ? 'hiring_need' : 'open_to_work';
 
     const [flowStep, setFlowStep] = useState('CAPTION');
@@ -297,33 +304,28 @@ function FeedComposerComponent({
     const leftHeaderIcon = flowStep === 'CAPTION' && hasVisualMedia ? 'chevron-back' : 'close';
 
     return (
-        <View style={styles.wrapper}>
-            <View style={styles.inlineComposer}>
-                <View style={styles.inlineTopRow}>
-                    <Image source={{ uri: avatarUri }} style={styles.avatar} />
-                    <TouchableOpacity style={styles.inlineInput} onPress={onInputAreaClick} activeOpacity={0.85}>
-                        <Text style={styles.inlineInputText}>Start a post</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.addButton} onPress={onInputAreaClick} activeOpacity={0.82}>
-                        <Ionicons name="add" size={20} color="#ffffff" />
-                    </TouchableOpacity>
-                </View>
+        <View style={[styles.wrapper, !showInline && styles.wrapperHidden]}>
+            {showInline ? (
+                <View style={styles.inlineComposer}>
+                    <View style={styles.inlineTopRow}>
+                        <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                        <View style={styles.inlineTextWrap}>
+                            <Text style={styles.inlineTitle}>Create a post</Text>
+                            <Text style={styles.inlineSubtitle}>Share updates, wins, or hiring needs.</Text>
+                        </View>
+                        <TouchableOpacity style={styles.inlinePlusButton} onPress={onInputAreaClick} activeOpacity={0.85}>
+                            <Ionicons name="add" size={18} color="#ffffff" />
+                        </TouchableOpacity>
+                    </View>
 
-                <View style={styles.inlineActionRow}>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onPhotosPress} activeOpacity={0.85}>
-                        <IconImage size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>Photo</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onVideoPress} activeOpacity={0.85}>
-                        <IconVideo size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>Reel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onVoicePress} activeOpacity={0.85}>
-                        <IconMic size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>{isVoiceRecording ? 'Stop' : 'Voice'}</Text>
-                    </TouchableOpacity>
+                    {isEmployerRole && typeof onOpenPostJobForm === 'function' ? (
+                        <TouchableOpacity style={styles.inlineJobLink} onPress={onOpenPostJobForm} activeOpacity={0.82}>
+                            <Ionicons name="briefcase-outline" size={13} color="#6a41d8" />
+                            <Text style={styles.inlineJobLinkText}>Post a job instead</Text>
+                        </TouchableOpacity>
+                    ) : null}
                 </View>
-            </View>
+            ) : null}
 
             <Modal
                 visible={Boolean(composerOpen)}
@@ -343,7 +345,14 @@ function FeedComposerComponent({
                             activeOpacity={0.85}
                             disabled={headerPrimaryDisabled}
                         >
-                            <Text style={styles.headerPrimaryText}>{headerPrimaryLabel}</Text>
+                            <LinearGradient
+                                colors={['#9f5cff', '#7c3aed', '#5b48f2']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.headerPrimaryGradient}
+                            >
+                                <Text style={styles.headerPrimaryText}>{headerPrimaryLabel}</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
 
@@ -679,80 +688,89 @@ export default memo(FeedComposerComponent);
 
 const styles = StyleSheet.create({
     wrapper: {
-        marginBottom: 10,
+        marginBottom: 14,
+    },
+    wrapperHidden: {
+        marginBottom: 0,
+        height: 0,
     },
     inlineComposer: {
         borderWidth: 1,
-        borderColor: '#ede9fe',
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
+        borderColor: '#e9e1fb',
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderRadius: 22,
         marginHorizontal: 10,
-        marginTop: 6,
-        paddingHorizontal: 12,
+        marginTop: 10,
+        paddingHorizontal: 14,
         paddingTop: 12,
         paddingBottom: 10,
+        shadowColor: '#261249',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.06,
+        shadowRadius: 18,
+        elevation: 3,
     },
     inlineTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 10,
+        gap: 12,
     },
     avatar: {
+        width: 40,
+        height: 40,
+        borderRadius: RADIUS.full,
+        borderWidth: 1.5,
+        borderColor: '#dfd5f6',
+    },
+    inlineTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    inlineTitle: {
+        color: '#1f2436',
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    inlineSubtitle: {
+        marginTop: 2,
+        color: '#7f879b',
+        fontSize: 11.5,
+        fontWeight: '600',
+    },
+    inlinePlusButton: {
         width: 38,
         height: 38,
-        borderRadius: RADIUS.full,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        marginRight: 10,
-    },
-    inlineInput: {
-        flex: 1,
-        minHeight: 40,
-        borderRadius: RADIUS.full,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf8ff',
-        justifyContent: 'center',
-        paddingHorizontal: 14,
-    },
-    inlineInputText: {
-        color: '#6b7280',
-        fontSize: 13.5,
-        fontWeight: '500',
-    },
-    addButton: {
-        width: 38,
-        height: 38,
-        borderRadius: RADIUS.full,
+        borderRadius: 19,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: ACCENT,
-        marginLeft: 10,
+        backgroundColor: '#6f4cf6',
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
+        elevation: 3,
     },
-    inlineActionRow: {
+    inlineJobLink: {
+        marginTop: 9,
         flexDirection: 'row',
-        gap: 8,
-    },
-    inlineActionButton: {
-        flex: 1,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf8ff',
-        borderRadius: 999,
-        paddingVertical: 9,
         alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
+        alignSelf: 'flex-start',
         gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: '#f3edff',
+        borderWidth: 1,
+        borderColor: '#e2d7ff',
     },
-    inlineActionText: {
-        color: '#111111',
+    inlineJobLinkText: {
+        color: '#6a41d8',
         fontSize: 11,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     modalShell: {
         flex: 1,
-        backgroundColor: '#faf8ff',
+        backgroundColor: '#f8f4ff',
     },
     modalHeader: {
         paddingHorizontal: 14,
@@ -761,7 +779,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#ffffff',
+        backgroundColor: 'rgba(255,255,255,0.94)',
     },
     headerIconBtn: {
         width: 36,
@@ -769,20 +787,26 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.full,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#f4efff',
+        borderWidth: 1,
+        borderColor: '#e3d7ff',
     },
     modalTitle: {
-        color: '#111111',
+        color: '#17182b',
         fontSize: 18,
         fontWeight: '800',
     },
     headerPrimaryBtn: {
         borderRadius: RADIUS.full,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: ACCENT,
+        overflow: 'hidden',
     },
     headerPrimaryBtnDisabled: {
         opacity: 0.45,
+    },
+    headerPrimaryGradient: {
+        borderRadius: RADIUS.full,
+        paddingHorizontal: 15,
+        paddingVertical: 8,
     },
     headerPrimaryText: {
         color: '#ffffff',
@@ -791,7 +815,7 @@ const styles = StyleSheet.create({
     },
     modalDivider: {
         height: 1,
-        backgroundColor: '#ede9fe',
+        backgroundColor: '#ece2ff',
     },
     mediaStepWrap: {
         flex: 1,
@@ -855,12 +879,17 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     captionSectionCard: {
-        borderRadius: 14,
+        borderRadius: 18,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#ffffff',
+        borderColor: '#e7dcff',
+        backgroundColor: 'rgba(255,255,255,0.96)',
         paddingHorizontal: 12,
         paddingVertical: 12,
+        shadowColor: '#7c3aed',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.05,
+        shadowRadius: 12,
+        elevation: 2,
     },
     actionChoiceHeader: {
         marginBottom: 8,
@@ -1112,10 +1141,10 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     selectedMediaCard: {
-        borderRadius: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: LILAC_BG,
+        borderColor: '#e7dcff',
+        backgroundColor: '#fbf7ff',
         paddingHorizontal: 10,
         paddingVertical: 10,
         flexDirection: 'row',
@@ -1164,10 +1193,10 @@ const styles = StyleSheet.create({
         borderColor: '#d1d5db',
     },
     voiceCard: {
-        borderRadius: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: LILAC_BG,
+        borderColor: '#e7dcff',
+        backgroundColor: '#fbf7ff',
         paddingHorizontal: 10,
         paddingVertical: 10,
         flexDirection: 'row',
@@ -1213,10 +1242,10 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     optionsCard: {
-        borderRadius: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#ffffff',
+        borderColor: '#e7dcff',
+        backgroundColor: 'rgba(255,255,255,0.97)',
         overflow: 'hidden',
     },
     optionRow: {
@@ -1383,7 +1412,8 @@ const styles = StyleSheet.create({
     },
     bottomBar: {
         borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
+        borderTopColor: '#e5dbff',
+        backgroundColor: 'rgba(255,255,255,0.95)',
         paddingHorizontal: 12,
         paddingTop: 10,
         paddingBottom: 14,
@@ -1392,11 +1422,11 @@ const styles = StyleSheet.create({
     },
     bottomActionBtn: {
         flex: 1,
-        borderRadius: 999,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#d1d5db',
-        backgroundColor: '#ffffff',
-        paddingVertical: 9,
+        borderColor: '#e6dbff',
+        backgroundColor: '#faf8ff',
+        paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',

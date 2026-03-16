@@ -5,6 +5,7 @@ const {
     rankJobsForWorker,
     sortScoredMatches,
 } = require('../match/matchEngineV2');
+const { resolveApLocationFromEntity } = require('../match/apMatchEngineV19');
 
 describe('matchEngineV2', () => {
     const baseJob = {
@@ -268,6 +269,75 @@ describe('matchEngineV2', () => {
 
         expect(evaluation.distanceScore).toBeCloseTo(0.72);
         expect(evaluation.rejectReason).not.toBe(HARD_GATE_REASONS.COMMUTE_OUTSIDE_RADIUS);
+    });
+
+    it('uses AP geo distance when AP locations are resolvable', () => {
+        const evaluation = evaluateRoleAgainstJob({
+            job: {
+                ...baseJob,
+                title: 'Delivery Driver',
+                location: 'Madanapalle',
+                geo: { type: 'Point', coordinates: [78.5, 13.55] }, // [lng, lat]
+            },
+            worker: {
+                ...baseWorker,
+                city: 'Chinnathippasamudram',
+                roleProfiles: [baseRole],
+            },
+            workerUser: baseUser,
+            roleData: baseRole,
+        });
+
+        expect(evaluation.accepted).toBe(true);
+        expect(evaluation.distanceScore).toBeGreaterThan(0.9);
+        expect(evaluation.distanceKm).toBeGreaterThan(0);
+        expect(evaluation.distanceKm).toBeLessThan(10);
+        expect(evaluation.explainability.apRegional).not.toBeNull();
+        expect(evaluation.explainability.apRegional.multiplier).toBeLessThanOrEqual(1.15);
+    });
+
+    it('uses AP LGD hierarchy fallback when locality text is not resolvable', () => {
+        const evaluation = evaluateRoleAgainstJob({
+            job: {
+                ...baseJob,
+                title: 'Delivery Driver',
+                location: 'Launch Cluster North',
+                districtLgd: 753,
+                mandalLgd: 753,
+            },
+            worker: {
+                ...baseWorker,
+                city: 'Launch Cluster South',
+                districtLgd: 753,
+                mandalLgd: 753,
+                roleProfiles: [baseRole],
+            },
+            workerUser: baseUser,
+            roleData: baseRole,
+        });
+
+        expect(evaluation.accepted).toBe(true);
+        expect(evaluation.distanceScore).toBeCloseTo(1);
+        expect(evaluation.explainability.apRegional).not.toBeNull();
+        expect(evaluation.explainability.apRegional.reasons).toContain('AP_LGD_MANDAL_MATCH');
+    });
+
+    it('prefers district hint when an AP place name exists in multiple districts', () => {
+        const resolvedAnakapalli = resolveApLocationFromEntity({
+            location: 'Anandapuram',
+            district: 'Anakapalli',
+            districtLgd: 744,
+        });
+        const resolvedVisakhapatnam = resolveApLocationFromEntity({
+            location: 'Anandapuram',
+            district: 'Visakhapatnam',
+            lgdCode: 4863,
+        });
+
+        expect(resolvedAnakapalli).toBeTruthy();
+        expect(resolvedAnakapalli.district).toBe('Anakapalli');
+        expect(resolvedVisakhapatnam).toBeTruthy();
+        expect(resolvedVisakhapatnam.district).toBe('Visakhapatnam');
     });
 
     it('applies verified priority boost only when feature flag is enabled', () => {

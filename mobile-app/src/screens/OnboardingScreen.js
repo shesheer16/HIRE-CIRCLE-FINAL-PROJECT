@@ -58,7 +58,7 @@ export default function OnboardingScreen() {
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { width } = useWindowDimensions();
-    const { completeOnboarding } = useContext(AuthContext);
+    const { completeOnboarding, authEntryRole } = useContext(AuthContext);
 
     const [activeIndex, setActiveIndex] = useState(0);
     const [detectedRegion, setDetectedRegion] = useState('');
@@ -115,18 +115,30 @@ export default function OnboardingScreen() {
         }
 
         await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [activeIndex, data.length, markOnboardingComplete, navigation]);
+        if (authEntryRole) {
+            navigation.replace('Login', { selectedRole: authEntryRole });
+            return;
+        }
+        navigation.replace('RoleSelection');
+    }, [activeIndex, authEntryRole, data.length, markOnboardingComplete, navigation]);
 
     const handleAlreadyHaveAccount = useCallback(async () => {
         await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [markOnboardingComplete, navigation]);
+        if (authEntryRole) {
+            navigation.replace('Login', { selectedRole: authEntryRole });
+            return;
+        }
+        navigation.replace('RoleSelection');
+    }, [authEntryRole, markOnboardingComplete, navigation]);
 
     const handleSkip = useCallback(async () => {
         await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [markOnboardingComplete, navigation]);
+        if (authEntryRole) {
+            navigation.replace('Login', { selectedRole: authEntryRole });
+            return;
+        }
+        navigation.replace('RoleSelection');
+    }, [authEntryRole, markOnboardingComplete, navigation]);
 
     return (
         <View style={styles.container}>

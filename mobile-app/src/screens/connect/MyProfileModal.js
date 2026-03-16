@@ -50,7 +50,7 @@ function MyProfileModalComponent({
         return Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean))).slice(0, 8);
     }, [safeUserInfo?.roleProfiles]);
 
-    const roleLabel = safeUserInfo?.primaryRole === 'employer' ? 'Hiring Actively' : 'Professional Member';
+    const roleLabel = safeUserInfo?.primaryRole === 'employer' ? 'Employer' : 'Job Seeker';
     const cityLabel = String(safeUserInfo?.city || safeUserInfo?.acquisitionCity || '').trim() || 'Location not set';
     const availabilityLabel = String(safeUserInfo?.availabilityStatus || '').trim()
         || (safeUserInfo?.isAvailable ? 'Available for opportunities' : 'Availability not set');

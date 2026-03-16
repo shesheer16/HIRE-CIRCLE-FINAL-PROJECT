@@ -13,10 +13,11 @@ import {
     Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import EmptyState from '../../../components/EmptyState';
 import BountyCard from './BountyCard';
 import { RADIUS } from '../../../theme/theme';
 import { connectPalette, connectShadow } from '../connectPalette';
+import { ConnectSkeletonList } from '../ConnectSkeletons';
+import ConnectEmptyStateCard from '../ConnectEmptyState';
 
 const STATUS_FILTERS = ['all', 'open', 'reviewing', 'completed', 'expired'];
 const OPEN_STATUSES = new Set(['open', 'reviewing']);
@@ -242,17 +243,16 @@ function BountiesTabComponent({
                 })}
             </View>
 
-            {errorMessage ? (
-                <View style={styles.errorBanner}>
-                    <Text style={styles.errorBannerText}>{errorMessage}</Text>
-                    <TouchableOpacity
-                        style={styles.errorBannerRetryButton}
-                        activeOpacity={0.85}
-                        onPress={onRefreshBounties}
-                    >
-                        <Text style={styles.errorBannerRetryText}>Retry</Text>
-                    </TouchableOpacity>
-                </View>
+            {errorMessage && safeBounties.length > 0 ? (
+                <ConnectEmptyStateCard
+                    title="Bounties are showing your last saved view"
+                    subtitle={errorMessage}
+                    actionLabel="Retry"
+                    onAction={onRefreshBounties}
+                    tone="info"
+                    inline
+                    style={styles.inlineStatusCard}
+                />
             ) : null}
         </>
     ), [
@@ -271,25 +271,31 @@ function BountiesTabComponent({
     ), []);
 
     const listLoading = useMemo(() => (
-        <View style={styles.loaderCard}>
-            <ActivityIndicator size="small" color={connectPalette.accent} />
-            <Text style={styles.loaderText}>Loading bounties...</Text>
-        </View>
+        <ConnectSkeletonList count={3} />
     ), []);
 
     const listEmpty = useMemo(() => (
-        <EmptyState
-            icon="🚀"
-            title={normalizedFilter === 'all' ? 'No bounties yet' : `No ${formatFilterLabel(normalizedFilter).toLowerCase()} bounties`}
-            subtitle={
-                isEmployerRole
-                    ? 'Create your first bounty and watch submissions appear here.'
-                    : 'Open bounties and referral opportunities will appear here.'
-            }
-            actionLabel={isEmployerRole ? 'Create Bounty' : 'Start Referring'}
-            onAction={isEmployerRole ? handleOpenCreateModal : onStartAction}
-        />
-    ), [handleOpenCreateModal, isEmployerRole, normalizedFilter, onStartAction]);
+        errorMessage && safeBounties.length === 0 ? (
+            <ConnectEmptyStateCard
+                title="Bounties are unavailable right now"
+                subtitle={errorMessage}
+                actionLabel="Retry"
+                onAction={onRefreshBounties}
+                tone="error"
+            />
+        ) : (
+            <ConnectEmptyStateCard
+                title={normalizedFilter === 'all' ? 'No bounties yet' : `No ${formatFilterLabel(normalizedFilter).toLowerCase()} bounties`}
+                subtitle={
+                    isEmployerRole
+                        ? 'Create your first bounty and watch submissions appear here.'
+                        : 'Open bounties and referral opportunities will appear here.'
+                }
+                actionLabel={isEmployerRole ? 'Create Bounty' : 'Start Referring'}
+                onAction={isEmployerRole ? handleOpenCreateModal : onStartAction}
+            />
+        )
+    ), [errorMessage, handleOpenCreateModal, isEmployerRole, normalizedFilter, onRefreshBounties, onStartAction, safeBounties.length]);
 
     return (
         <>
@@ -310,7 +316,7 @@ function BountiesTabComponent({
                         colors={[connectPalette.accent]}
                     />
                 )}
-                removeClippedSubviews
+                removeClippedSubviews={Platform.OS === 'android'}
                 windowSize={10}
                 maxToRenderPerBatch={8}
                 initialNumToRender={6}
@@ -586,6 +592,9 @@ const styles = StyleSheet.create({
     filterChipTextActive: {
         color: connectPalette.accentDark,
     },
+    inlineStatusCard: {
+        marginBottom: 12,
+    },
     errorBanner: {
         backgroundColor: '#fef2f2',
         borderColor: '#fecaca',
@@ -612,22 +621,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '800',
         color: '#ffffff',
-    },
-    loaderCard: {
-        backgroundColor: connectPalette.surface,
-        borderRadius: RADIUS.lg,
-        borderWidth: 1,
-        borderColor: connectPalette.line,
-        padding: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-        ...connectShadow,
-    },
-    loaderText: {
-        marginTop: 8,
-        fontSize: 12,
-        color: connectPalette.muted,
-        fontWeight: '700',
     },
     bottomSpacer: {
         height: 32,

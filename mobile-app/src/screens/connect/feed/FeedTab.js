@@ -1,10 +1,10 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { View, FlatList, ActivityIndicator, StyleSheet, Modal, Text, TouchableOpacity, ScrollView, TextInput, Image, Alert } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, FlatList, ActivityIndicator, StyleSheet, Modal, Text, TouchableOpacity, ScrollView, TextInput, Image, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import FeedComposer from './FeedComposer';
 import FeedPostCard from './FeedPostCard';
-import EmptyState from '../../../components/EmptyState';
 import { IconSend } from '../../../components/Icons';
+import ConnectEmptyStateCard from '../ConnectEmptyState';
 
 const makeAvatarFromName = (name = 'Member') => (
     `https://ui-avatars.com/api/?name=${encodeURIComponent(String(name || 'Member'))}&background=d1d5db&color=111111&rounded=true`
@@ -43,12 +43,87 @@ const normalizeCommentEntries = (entries = []) => (
         .filter(Boolean)
 );
 
+const formatPreviewDate = (value) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    try {
+        return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch (_error) {
+        return parsed.toDateString().slice(4, 10);
+    }
+};
+
+const derivePreviewStatus = (preview) => {
+    if (!preview || typeof preview !== 'object') return { label: 'Open', closed: false };
+    const status = String(preview.status || '').trim().toLowerCase();
+    const isClosed = preview.isOpen === false || ['closed', 'expired', 'inactive', 'filled', 'paused'].includes(status);
+    return {
+        label: isClosed ? 'Closed' : 'Open',
+        closed: isClosed,
+    };
+};
+
+function FeedMark() {
+    return (
+        <View style={styles.feedMark}>
+            <View style={styles.feedMarkOuter} />
+            <View style={styles.feedMarkMiddle} />
+            <View style={styles.feedMarkInner} />
+        </View>
+    );
+}
+
+function FeedSkeletonCard({ includeMedia = false }) {
+    return (
+        <View style={styles.skeletonCard}>
+            <View style={styles.skeletonHeader}>
+                <View style={styles.skeletonAvatar} />
+                <View style={styles.skeletonHeaderText}>
+                    <View style={[styles.skeletonLine, styles.skeletonLinePrimary]} />
+                    <View style={[styles.skeletonLine, styles.skeletonLineSecondary]} />
+                </View>
+            </View>
+            <View style={[styles.skeletonLine, styles.skeletonLineBodyLong]} />
+            <View style={[styles.skeletonLine, styles.skeletonLineBodyShort]} />
+            {includeMedia ? <View style={styles.skeletonMedia} /> : null}
+            <View style={styles.skeletonActionsRow}>
+                <View style={styles.skeletonActionChip} />
+                <View style={styles.skeletonActionChip} />
+                <View style={styles.skeletonActionChip} />
+            </View>
+        </View>
+    );
+}
+
+function FeedLoadingState() {
+    return (
+        <View style={styles.loadingStateWrap}>
+            <FeedSkeletonCard includeMedia />
+            <FeedSkeletonCard />
+        </View>
+    );
+}
+
+function FeedEmptyStateCard({ onCreatePost }) {
+    return (
+        <ConnectEmptyStateCard
+            title="Your feed is ready for the first post"
+            subtitle="Share a quick update, voice note, or hiring need to start the conversation."
+            actionLabel="Create first post"
+            onAction={onCreatePost}
+            style={styles.feedEmptyCard}
+        />
+    );
+}
+
 function FeedTabComponent({
     feedPosts,
     isEmployerRole,
     loadingFeed,
     feedPullRefreshing,
     loadingMoreFeed,
+    feedError,
     composerOpen,
     composerMediaType,
     composerText,
@@ -69,6 +144,7 @@ function FeedTabComponent({
     jobPreviewApplying,
     hasAppliedToPreviewJob,
     onRefreshFeed,
+    onRetryFeed,
     onLoadMoreFeed,
     onMediaButtonClick,
     onInputAreaClick,
@@ -91,10 +167,14 @@ function FeedTabComponent({
     onCloseJobPreview,
     onApplyJobPreview,
     onOpenPostJobForm,
+    onFeedScrollDirection,
+    contentContainerStyle,
 }) {
     const [commentModalPostId, setCommentModalPostId] = useState('');
     const [postActionPost, setPostActionPost] = useState(null);
     const [postActionBusy, setPostActionBusy] = useState(false);
+    const lastScrollYRef = useRef(0);
+    const lastScrollDirectionRef = useRef('up');
 
     const safeFeedPosts = useMemo(() => (
         Array.isArray(feedPosts)
@@ -142,6 +222,11 @@ function FeedTabComponent({
         selectedPostId
         && (selectedPostId.startsWith('local-') || (safeCurrentUserId && selectedPostAuthorId === safeCurrentUserId))
     );
+    const previewStatus = useMemo(() => derivePreviewStatus(jobPreview), [jobPreview]);
+    const previewPostedLabel = useMemo(() => {
+        const formatted = formatPreviewDate(jobPreview?.createdAt);
+        return formatted ? `Posted ${formatted}` : 'Posted recently';
+    }, [jobPreview?.createdAt]);
 
     const handleOpenCommentsModal = useCallback((postId) => {
         const normalizedId = String(postId || '').trim();
@@ -149,6 +234,24 @@ function FeedTabComponent({
         setCommentModalPostId(normalizedId);
         onOpenComments?.(normalizedId);
     }, [onOpenComments]);
+
+    const handleFeedScroll = useCallback((event) => {
+        const offsetY = Number(event?.nativeEvent?.contentOffset?.y || 0);
+        const delta = offsetY - lastScrollYRef.current;
+        if (offsetY <= 12) {
+            lastScrollDirectionRef.current = 'up';
+            onFeedScrollDirection?.('top', offsetY);
+            lastScrollYRef.current = offsetY;
+            return;
+        }
+        if (Math.abs(delta) < 4) return;
+        const nextDirection = delta > 0 ? 'down' : 'up';
+        if (nextDirection !== lastScrollDirectionRef.current) {
+            lastScrollDirectionRef.current = nextDirection;
+            onFeedScrollDirection?.(nextDirection, offsetY);
+        }
+        lastScrollYRef.current = offsetY;
+    }, [onFeedScrollDirection]);
 
     const closeCommentsModal = useCallback(() => {
         setCommentModalPostId('');
@@ -246,96 +349,97 @@ function FeedTabComponent({
         onOpenAuthorProfile,
     ]);
 
-    const listHeader = useMemo(() => (
-        <FeedComposer
-            composerOpen={composerOpen}
-            composerMediaType={composerMediaType}
-            composerText={composerText}
-            composerVisibility={composerVisibility}
-            composerMediaAssets={composerMediaAssets}
-            isVoiceRecording={isVoiceRecording}
-            isPosting={postingFeed}
-            currentUserAvatar={currentUserAvatar}
-            onInputAreaClick={onInputAreaClick}
-            onMediaButtonClick={onMediaButtonClick}
-            onCancelComposer={onCancelComposer}
-            onStopVoiceRecording={onStopVoiceRecording}
-            onRemoveComposerMedia={onRemoveComposerMedia}
-            onPost={onPost}
-            onComposerTextChange={onComposerTextChange}
-            onComposerVisibilityToggle={onComposerVisibilityToggle}
-            onComposerVisibilitySelect={onComposerVisibilitySelect}
-            isEmployerRole={isEmployerRole}
-            onOpenPostJobForm={onOpenPostJobForm}
-        />
-    ), [
-        composerOpen,
-        composerMediaType,
-        composerText,
-        composerVisibility,
-        composerMediaAssets,
-        isVoiceRecording,
-        postingFeed,
-        currentUserAvatar,
-        onInputAreaClick,
-        onMediaButtonClick,
-        onCancelComposer,
-        onStopVoiceRecording,
-        onRemoveComposerMedia,
-        onPost,
-        onComposerTextChange,
-        onComposerVisibilityToggle,
-        onComposerVisibilitySelect,
-        isEmployerRole,
-        onOpenPostJobForm,
-    ]);
 
     const listFooter = useMemo(() => {
         if (loadingMoreFeed && safeFeedPosts.length >= 6) {
             return (
                 <View style={styles.footerLoading}>
                     <ActivityIndicator color="#5b48f2" />
+                    <Text style={styles.footerLoadingText}>Loading more posts…</Text>
                 </View>
             );
         }
         return <View style={styles.footerSpacer} />;
     }, [loadingMoreFeed, safeFeedPosts.length]);
 
+    const listHeader = useMemo(() => {
+        if (!feedError || safeFeedPosts.length === 0) {
+            return null;
+        }
+        return (
+            <ConnectEmptyStateCard
+                title="Couldn’t fully refresh Feed"
+                subtitle={feedError}
+                actionLabel="Retry"
+                onAction={onRetryFeed || onRefreshFeed}
+                tone="info"
+                inline
+                style={styles.inlineStatusCard}
+            />
+        );
+    }, [feedError, onRefreshFeed, onRetryFeed, safeFeedPosts.length]);
+
     const listEmpty = useMemo(() => {
         if (loadingFeed && !feedPullRefreshing) {
+            return <FeedLoadingState />;
+        }
+        if (feedError) {
             return (
-                <View style={styles.listLoadingWrap}>
-                    <ActivityIndicator size="small" color="#5b48f2" />
-                    <Text style={styles.listLoadingText}>Loading posts...</Text>
-                </View>
+                <ConnectEmptyStateCard
+                    title="Feed is unavailable right now"
+                    subtitle={feedError}
+                    actionLabel="Retry"
+                    onAction={onRetryFeed || onRefreshFeed}
+                    tone="error"
+                    style={styles.feedEmptyCard}
+                />
             );
         }
         return (
-            <EmptyState
-                icon={null}
-                title="No posts yet"
-                subtitle="Be the first to share your work today"
-                action={{ label: 'Create Post', onPress: onInputAreaClick }}
-            />
+            <FeedEmptyStateCard onCreatePost={onInputAreaClick} />
         );
-    }, [feedPullRefreshing, loadingFeed, onInputAreaClick]);
+    }, [feedError, feedPullRefreshing, loadingFeed, onInputAreaClick, onRefreshFeed, onRetryFeed]);
 
     return (
         <View style={styles.container}>
+            <FeedComposer
+                composerOpen={composerOpen}
+                composerMediaType={composerMediaType}
+                composerText={composerText}
+                composerVisibility={composerVisibility}
+                composerMediaAssets={composerMediaAssets}
+                isVoiceRecording={isVoiceRecording}
+                isPosting={postingFeed}
+                currentUserAvatar={currentUserAvatar}
+                onInputAreaClick={onInputAreaClick}
+                onMediaButtonClick={onMediaButtonClick}
+                onCancelComposer={onCancelComposer}
+                onStopVoiceRecording={onStopVoiceRecording}
+                onRemoveComposerMedia={onRemoveComposerMedia}
+                onPost={onPost}
+                onComposerTextChange={onComposerTextChange}
+                onComposerVisibilityToggle={onComposerVisibilityToggle}
+                onComposerVisibilitySelect={onComposerVisibilitySelect}
+                isEmployerRole={isEmployerRole}
+                onOpenPostJobForm={onOpenPostJobForm}
+                showInline={false}
+            />
             <FlatList
                 data={safeFeedPosts}
                 keyExtractor={keyExtractor}
                 renderItem={renderPostItem}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.content}
+                contentContainerStyle={[styles.content, contentContainerStyle, safeFeedPosts.length === 0 && styles.contentEmpty]}
                 refreshing={Boolean(feedPullRefreshing)}
                 onRefresh={onRefreshFeed}
+                onScroll={handleFeedScroll}
+                scrollEventThrottle={16}
                 onEndReached={onLoadMoreFeed}
                 onEndReachedThreshold={0.3}
                 ListHeaderComponent={listHeader}
                 ListEmptyComponent={listEmpty}
                 ListFooterComponent={listFooter}
-                removeClippedSubviews
+                removeClippedSubviews={Platform.OS === 'android'}
                 windowSize={10}
                 maxToRenderPerBatch={8}
                 initialNumToRender={6}
@@ -350,10 +454,19 @@ function FeedTabComponent({
                 <TouchableOpacity style={styles.postActionOverlay} activeOpacity={1} onPress={closePostActions}>
                     <TouchableOpacity style={styles.postActionSheet} activeOpacity={1} onPress={() => {}}>
                         <View style={styles.postActionHandle} />
-                        <Text style={styles.postActionTitle}>Post Actions</Text>
-                        <Text style={styles.postActionSubtitle} numberOfLines={2}>
-                            {String(postActionPost?.text || '').trim() || 'Choose what you want to do with this post.'}
-                        </Text>
+                        <Text style={styles.postActionTitle}>Post actions</Text>
+                        <View style={styles.postActionPreview}>
+                            <Image
+                                source={{ uri: makeAvatarFromName(String(postActionPost?.author || 'Member')) }}
+                                style={styles.postActionPreviewAvatar}
+                            />
+                            <View style={styles.postActionPreviewTextWrap}>
+                                <Text style={styles.postActionPreviewAuthor}>{String(postActionPost?.author || 'Member')}</Text>
+                                <Text style={styles.postActionSubtitle} numberOfLines={2}>
+                                    {String(postActionPost?.text || '').trim() || 'Choose what you want to do with this post.'}
+                                </Text>
+                            </View>
+                        </View>
 
                         <TouchableOpacity
                             style={styles.postActionItem}
@@ -361,8 +474,13 @@ function FeedTabComponent({
                             disabled={postActionBusy}
                             onPress={() => submitReportReason('spam')}
                         >
-                            <Ionicons name="alert-circle-outline" size={18} color="#111111" />
-                            <Text style={styles.postActionItemText}>Report as Spam</Text>
+                            <View style={styles.postActionIconWrap}>
+                                <Ionicons name="alert-circle-outline" size={17} color="#5f6274" />
+                            </View>
+                            <View style={styles.postActionTextWrap}>
+                                <Text style={styles.postActionItemText}>Report as spam</Text>
+                                <Text style={styles.postActionItemHelper}>Hide obvious junk or unsafe promotion.</Text>
+                            </View>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -371,8 +489,13 @@ function FeedTabComponent({
                             disabled={postActionBusy}
                             onPress={() => submitReportReason('harassment')}
                         >
-                            <Ionicons name="shield-outline" size={18} color="#111111" />
-                            <Text style={styles.postActionItemText}>Report as Harassment</Text>
+                            <View style={styles.postActionIconWrap}>
+                                <Ionicons name="shield-outline" size={17} color="#5f6274" />
+                            </View>
+                            <View style={styles.postActionTextWrap}>
+                                <Text style={styles.postActionItemText}>Report harassment</Text>
+                                <Text style={styles.postActionItemHelper}>Flag abusive, threatening, or targeted content.</Text>
+                            </View>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -381,8 +504,13 @@ function FeedTabComponent({
                             disabled={postActionBusy}
                             onPress={() => submitReportReason('misleading')}
                         >
-                            <Ionicons name="warning-outline" size={18} color="#111111" />
-                            <Text style={styles.postActionItemText}>Report as Misleading</Text>
+                            <View style={styles.postActionIconWrap}>
+                                <Ionicons name="warning-outline" size={17} color="#5f6274" />
+                            </View>
+                            <View style={styles.postActionTextWrap}>
+                                <Text style={styles.postActionItemText}>Report misleading info</Text>
+                                <Text style={styles.postActionItemHelper}>Flag claims that look false or manipulative.</Text>
+                            </View>
                         </TouchableOpacity>
 
                         {canDeleteSelectedPost ? (
@@ -392,8 +520,13 @@ function FeedTabComponent({
                                 disabled={postActionBusy}
                                 onPress={submitDeletePost}
                             >
-                                <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                                <Text style={styles.postActionItemDangerText}>Delete Post</Text>
+                                <View style={[styles.postActionIconWrap, styles.postActionIconWrapDanger]}>
+                                    <Ionicons name="trash-outline" size={17} color="#dc2626" />
+                                </View>
+                                <View style={styles.postActionTextWrap}>
+                                    <Text style={styles.postActionItemDangerText}>Delete post</Text>
+                                    <Text style={styles.postActionItemDangerHelper}>Remove it from your feed permanently.</Text>
+                                </View>
                             </TouchableOpacity>
                         ) : null}
 
@@ -420,7 +553,12 @@ function FeedTabComponent({
                         <View style={styles.commentsHandle} />
 
                         <View style={styles.commentsHeaderRow}>
-                            <Text style={styles.commentsTitle}>Comments</Text>
+                            <View style={styles.commentsHeaderTextWrap}>
+                                <Text style={styles.commentsTitle}>Comments</Text>
+                                <Text style={styles.commentsCountText}>
+                                    {activeCommentList.length > 0 ? `${activeCommentList.length} replies` : 'Start the conversation'}
+                                </Text>
+                            </View>
                             <TouchableOpacity style={styles.commentsCloseBtn} onPress={closeCommentsModal} activeOpacity={0.85}>
                                 <Text style={styles.commentsCloseText}>×</Text>
                             </TouchableOpacity>
@@ -429,10 +567,16 @@ function FeedTabComponent({
                         {activeCommentPost ? (
                             <>
                                 <View style={styles.commentsPostMeta}>
-                                    <Text style={styles.commentsPostAuthor}>{activeCommentPost.author || 'Member'}</Text>
-                                    <Text style={styles.commentsPostText} numberOfLines={2}>
-                                        {String(activeCommentPost.text || '').trim() || 'Post'}
-                                    </Text>
+                                    <Image
+                                        source={{ uri: makeAvatarFromName(String(activeCommentPost.author || 'Member')) }}
+                                        style={styles.commentsPostAvatar}
+                                    />
+                                    <View style={styles.commentsPostTextWrap}>
+                                        <Text style={styles.commentsPostAuthor}>{activeCommentPost.author || 'Member'}</Text>
+                                        <Text style={styles.commentsPostText} numberOfLines={2}>
+                                            {String(activeCommentPost.text || '').trim() || 'Post'}
+                                        </Text>
+                                    </View>
                                 </View>
 
                                 <ScrollView
@@ -448,17 +592,20 @@ function FeedTabComponent({
                                                     style={styles.commentAvatar}
                                                 />
                                                 <View style={styles.commentBubble}>
-                                                    <Text style={styles.commentText}>
+                                                    <View style={styles.commentHeaderRow}>
                                                         <Text style={styles.commentAuthor}>{String(comment?.author || 'Member')}</Text>
-                                                        {' '}
-                                                        {String(comment?.text || '')}
-                                                    </Text>
-                                                    <Text style={styles.commentTime}>{String(comment?.time || 'Just now')}</Text>
+                                                        <Text style={styles.commentTime}>{String(comment?.time || 'Just now')}</Text>
+                                                    </View>
+                                                    <Text style={styles.commentText}>{String(comment?.text || '')}</Text>
                                                 </View>
                                             </View>
                                         ))
                                     ) : (
-                                        <Text style={styles.commentsEmptyText}>No comments yet. Be the first to comment.</Text>
+                                        <View style={styles.commentsEmptyState}>
+                                            <View style={styles.commentsEmptyOrb} />
+                                            <Text style={styles.commentsEmptyTitle}>No comments yet</Text>
+                                            <Text style={styles.commentsEmptyText}>Be the first to reply and start the conversation.</Text>
+                                        </View>
                                     )}
                                 </ScrollView>
 
@@ -469,8 +616,8 @@ function FeedTabComponent({
                                         value={activeCommentInputValue}
                                         onChangeText={handleCommentComposerChange}
                                         onSubmitEditing={handleSubmitCommentFromModal}
-                                        placeholder="Add a comment..."
-                                        placeholderTextColor="#8e8e8e"
+                                        placeholder="Write a thoughtful reply..."
+                                        placeholderTextColor="#9aa1b5"
                                         returnKeyType="send"
                                     />
                                     <TouchableOpacity
@@ -500,6 +647,7 @@ function FeedTabComponent({
             >
                 <View style={styles.previewOverlay}>
                     <View style={styles.previewSheet}>
+                        <View style={styles.previewHandle} />
                         {jobPreviewLoading ? (
                             <View style={styles.previewLoadingWrap}>
                                 <ActivityIndicator size="small" color="#111111" />
@@ -507,23 +655,59 @@ function FeedTabComponent({
                             </View>
                         ) : (
                             <ScrollView showsVerticalScrollIndicator={false}>
-                                <Text style={styles.previewTitle}>{jobPreview?.title || 'Open Role'}</Text>
-                                <Text style={styles.previewCompany}>{jobPreview?.companyName || 'Employer'}</Text>
+                                <View style={styles.previewHeaderRow}>
+                                    <View style={styles.previewHeaderText}>
+                                        <Text style={styles.previewTitle}>{jobPreview?.title || 'Open Role'}</Text>
+                                        <Text style={styles.previewCompany}>{jobPreview?.companyName || 'Employer'}</Text>
+                                    </View>
+                                    <TouchableOpacity style={styles.previewCloseBtn} onPress={onCloseJobPreview} activeOpacity={0.85}>
+                                        <Ionicons name="close" size={18} color="#5b5f70" />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={styles.previewStatusRow}>
+                                    <View style={[styles.previewStatusChip, previewStatus.closed && styles.previewStatusChipClosed]}>
+                                        <View style={[styles.previewStatusDot, previewStatus.closed && styles.previewStatusDotClosed]} />
+                                        <Text style={[styles.previewStatusText, previewStatus.closed && styles.previewStatusTextClosed]}>
+                                            {previewStatus.label}
+                                        </Text>
+                                    </View>
+                                    <Text style={styles.previewPostedText}>{previewPostedLabel}</Text>
+                                </View>
+
                                 <View style={styles.previewMetaRow}>
-                                    <Text style={styles.previewMetaChip}>{jobPreview?.location || 'Location N/A'}</Text>
-                                    <Text style={styles.previewMetaChip}>{jobPreview?.salaryRange || 'Salary N/A'}</Text>
+                                    <View style={styles.previewMetaChip}>
+                                        <Ionicons name="location-outline" size={13} color="#5b5f70" />
+                                        <Text style={styles.previewMetaChipText}>{jobPreview?.location || 'Location N/A'}</Text>
+                                    </View>
+                                    <View style={styles.previewMetaChip}>
+                                        <Ionicons name="cash-outline" size={13} color="#5b5f70" />
+                                        <Text style={styles.previewMetaChipText}>{jobPreview?.salaryRange || 'Salary N/A'}</Text>
+                                    </View>
                                 </View>
                                 <View style={styles.previewMetaRow}>
-                                    <Text style={styles.previewMetaChip}>{jobPreview?.remoteAllowed ? 'Remote allowed' : 'On-site'}</Text>
-                                    <Text style={styles.previewMetaChip}>{jobPreview?.shift || 'Flexible shift'}</Text>
+                                    <View style={styles.previewMetaChip}>
+                                        <Ionicons name={jobPreview?.remoteAllowed ? 'wifi-outline' : 'briefcase-outline'} size={13} color="#5b5f70" />
+                                        <Text style={styles.previewMetaChipText}>{jobPreview?.remoteAllowed ? 'Remote allowed' : 'On-site'}</Text>
+                                    </View>
+                                    <View style={styles.previewMetaChip}>
+                                        <Ionicons name="time-outline" size={13} color="#5b5f70" />
+                                        <Text style={styles.previewMetaChipText}>{jobPreview?.shift || 'Flexible shift'}</Text>
+                                    </View>
                                 </View>
                                 <Text style={styles.previewSectionTitle}>Requirements</Text>
                                 {Array.isArray(jobPreview?.requirements) && jobPreview.requirements.length > 0 ? (
                                     jobPreview.requirements.slice(0, 8).map((item, index) => (
-                                        <Text key={`${String(item)}-${index}`} style={styles.previewRequirement}>• {item}</Text>
+                                        <View key={`${String(item)}-${index}`} style={styles.previewRequirementRow}>
+                                            <View style={styles.previewRequirementDot} />
+                                            <Text style={styles.previewRequirementText}>{item}</Text>
+                                        </View>
                                     ))
                                 ) : (
-                                    <Text style={styles.previewRequirement}>• Requirements will be shared by employer</Text>
+                                    <View style={styles.previewRequirementRow}>
+                                        <View style={styles.previewRequirementDot} />
+                                        <Text style={styles.previewRequirementText}>Requirements will be shared by employer</Text>
+                                    </View>
                                 )}
                             </ScrollView>
                         )}
@@ -557,18 +741,36 @@ export default memo(FeedTabComponent);
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#fcfbff',
     },
     content: {
         paddingHorizontal: 0,
-        paddingTop: 2,
-        paddingBottom: 28,
+        paddingTop: 4,
+        paddingBottom: 34,
+    },
+    contentEmpty: {
+        flexGrow: 1,
     },
     footerLoading: {
-        paddingVertical: 16,
+        marginHorizontal: 14,
+        marginTop: 2,
+        marginBottom: 6,
+        paddingVertical: 12,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#ece4f8',
+        backgroundColor: '#ffffff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    footerLoadingText: {
+        color: '#7c8398',
+        fontSize: 11.5,
+        fontWeight: '700',
     },
     footerSpacer: {
-        height: 26,
+        height: 34,
     },
     listLoadingWrap: {
         paddingVertical: 24,
@@ -581,233 +783,496 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
+    feedMark: {
+        width: 38,
+        height: 38,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    feedMarkOuter: {
+        position: 'absolute',
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 2,
+        borderColor: '#d0d3db',
+    },
+    feedMarkMiddle: {
+        position: 'absolute',
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        borderWidth: 2,
+        borderColor: '#d0d3db',
+    },
+    feedMarkInner: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        borderWidth: 2,
+        borderColor: '#d0d3db',
+        backgroundColor: '#ffffff',
+    },
+    loadingStateWrap: {
+        paddingHorizontal: 10,
+        paddingTop: 12,
+        paddingBottom: 20,
+        gap: 12,
+    },
+    loadingStateHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    loadingStateTextWrap: {
+        flex: 1,
+    },
+    loadingStateTitle: {
+        color: '#171a28',
+        fontSize: 15,
+        fontWeight: '800',
+    },
+    loadingStateSubtitle: {
+        marginTop: 2,
+        color: '#7c8398',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    skeletonCard: {
+        borderWidth: 1,
+        borderColor: '#efe9f8',
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 14,
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.03,
+        shadowRadius: 16,
+        elevation: 1,
+    },
+    skeletonHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    skeletonAvatar: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: '#f3eef8',
+        marginRight: 12,
+    },
+    skeletonHeaderText: {
+        flex: 1,
+        gap: 8,
+    },
+    skeletonLine: {
+        borderRadius: 999,
+        backgroundColor: '#f3eef8',
+    },
+    skeletonLinePrimary: {
+        width: '42%',
+        height: 12,
+    },
+    skeletonLineSecondary: {
+        width: '28%',
+        height: 10,
+    },
+    skeletonLineBodyLong: {
+        width: '96%',
+        height: 11,
+        marginBottom: 8,
+    },
+    skeletonLineBodyShort: {
+        width: '68%',
+        height: 11,
+        marginBottom: 12,
+    },
+    skeletonMedia: {
+        width: '100%',
+        height: 220,
+        borderRadius: 18,
+        backgroundColor: '#f6f2fb',
+        marginBottom: 12,
+    },
+    skeletonActionsRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    skeletonActionChip: {
+        width: 76,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: '#f5f0fa',
+    },
+    feedEmptyCard: {
+        marginTop: 8,
+        marginBottom: 16,
+        marginHorizontal: 10,
+        minHeight: 260,
+        justifyContent: 'center',
+    },
+    inlineStatusCard: {
+        marginTop: 8,
+        marginBottom: 14,
+        marginHorizontal: 10,
+    },
     postActionOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(17, 24, 39, 0.36)',
+        backgroundColor: 'rgba(16, 18, 27, 0.32)',
         justifyContent: 'flex-end',
     },
     postActionSheet: {
         backgroundColor: '#ffffff',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
         borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
+        borderTopColor: '#eee6f8',
         paddingHorizontal: 16,
         paddingTop: 10,
-        paddingBottom: 18,
-        gap: 8,
+        paddingBottom: 22,
+        gap: 10,
     },
     postActionHandle: {
         width: 38,
         height: 4,
         borderRadius: 999,
         alignSelf: 'center',
-        backgroundColor: '#c4b5fd',
+        backgroundColor: '#d6c9f3',
         marginBottom: 4,
     },
     postActionTitle: {
-        color: '#111111',
-        fontSize: 16,
+        color: '#171a28',
+        fontSize: 17,
         fontWeight: '800',
     },
+    postActionPreview: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 12,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#f0e9f8',
+        backgroundColor: '#fcfbff',
+    },
+    postActionPreviewAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+    },
+    postActionPreviewTextWrap: {
+        flex: 1,
+    },
+    postActionPreviewAuthor: {
+        color: '#171a28',
+        fontSize: 13.5,
+        fontWeight: '800',
+        marginBottom: 2,
+    },
     postActionSubtitle: {
-        color: '#4b5563',
+        color: '#70778a',
         fontSize: 12,
-        lineHeight: 16,
-        marginBottom: 4,
+        lineHeight: 17,
     },
     postActionItem: {
-        minHeight: 42,
-        borderRadius: 12,
+        minHeight: 58,
+        borderRadius: 18,
         borderWidth: 1,
-        borderColor: '#e9ddff',
-        backgroundColor: '#faf8ff',
+        borderColor: '#eee6f8',
+        backgroundColor: '#fcfbff',
         paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 12,
     },
     postActionItemDanger: {
         borderColor: '#fecaca',
-        backgroundColor: '#fff1f2',
+        backgroundColor: '#fff6f7',
+    },
+    postActionIconWrap: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5f1fb',
+        borderWidth: 1,
+        borderColor: '#ebe3f8',
+    },
+    postActionIconWrapDanger: {
+        backgroundColor: '#ffe8ec',
+        borderColor: '#ffd6de',
+    },
+    postActionTextWrap: {
+        flex: 1,
     },
     postActionItemText: {
-        color: '#111111',
+        color: '#171a28',
         fontSize: 13,
-        fontWeight: '700',
+        fontWeight: '800',
+    },
+    postActionItemHelper: {
+        marginTop: 2,
+        color: '#7d8497',
+        fontSize: 11.5,
+        lineHeight: 15,
     },
     postActionItemDangerText: {
         color: '#dc2626',
         fontSize: 13,
         fontWeight: '800',
     },
+    postActionItemDangerHelper: {
+        marginTop: 2,
+        color: '#b45369',
+        fontSize: 11.5,
+        lineHeight: 15,
+    },
     postActionCancel: {
-        marginTop: 4,
+        marginTop: 2,
         minHeight: 42,
-        borderRadius: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#f3e8ff',
+        borderColor: '#ebe2f8',
+        backgroundColor: '#f7f3fc',
         alignItems: 'center',
         justifyContent: 'center',
     },
     postActionCancelText: {
-        color: '#111111',
+        color: '#4f5470',
         fontSize: 13,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     commentsOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(76, 29, 149, 0.28)',
+        backgroundColor: 'rgba(18, 16, 30, 0.32)',
         justifyContent: 'flex-end',
     },
     commentsSheet: {
         maxHeight: '96%',
         minHeight: '84%',
-        backgroundColor: '#ffffff',
-        borderTopLeftRadius: 18,
-        borderTopRightRadius: 18,
-        paddingHorizontal: 14,
-        paddingTop: 8,
-        paddingBottom: 12,
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingHorizontal: 16,
+        paddingTop: 10,
+        paddingBottom: 14,
         borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
+        borderTopColor: '#ede6fb',
+        shadowColor: '#2a1858',
+        shadowOffset: { width: 0, height: -6 },
+        shadowOpacity: 0.06,
+        shadowRadius: 16,
+        elevation: 8,
     },
     commentsHandle: {
         alignSelf: 'center',
-        width: 40,
-        height: 4,
+        width: 46,
+        height: 5,
         borderRadius: 999,
-        backgroundColor: '#c4b5fd',
+        backgroundColor: '#d9cff4',
         marginBottom: 10,
     },
     commentsHeaderRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 8,
+        marginBottom: 10,
+    },
+    commentsHeaderTextWrap: {
+        flex: 1,
     },
     commentsTitle: {
-        color: '#111111',
-        fontSize: 16,
+        color: '#171a28',
+        fontSize: 18,
         fontWeight: '800',
     },
+    commentsCountText: {
+        marginTop: 2,
+        color: '#8b92a6',
+        fontSize: 12,
+        fontWeight: '600',
+    },
     commentsCloseBtn: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f3e8ff',
+        backgroundColor: '#f6f2ff',
+        borderWidth: 1,
+        borderColor: '#e5dcff',
     },
     commentsCloseText: {
-        color: '#111111',
-        fontSize: 18,
-        lineHeight: 18,
+        color: '#50556f',
+        fontSize: 20,
+        lineHeight: 20,
         fontWeight: '700',
     },
     commentsPostMeta: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 12,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        borderRadius: 10,
-        backgroundColor: '#f5f3ff',
-        paddingHorizontal: 11,
-        paddingVertical: 9,
-        marginBottom: 8,
+        borderColor: '#efe7fb',
+        borderRadius: 20,
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        marginBottom: 12,
+        shadowColor: '#2a1858',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.04,
+        shadowRadius: 10,
+    },
+    commentsPostAvatar: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e5dcff',
+        backgroundColor: '#f2ecff',
+    },
+    commentsPostTextWrap: {
+        flex: 1,
     },
     commentsPostAuthor: {
-        color: '#111111',
+        color: '#171a28',
         fontSize: 12,
         fontWeight: '800',
         marginBottom: 2,
     },
     commentsPostText: {
-        color: '#111111',
-        fontSize: 12,
-        lineHeight: 16,
+        color: '#50586e',
+        fontSize: 12.5,
+        lineHeight: 18,
     },
     commentsScroll: {
         flex: 1,
     },
     commentsScrollContent: {
-        paddingBottom: 12,
-        gap: 10,
+        paddingBottom: 20,
+        gap: 12,
     },
     commentRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 8,
+        gap: 10,
     },
     commentAvatar: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         marginTop: 1,
+        borderWidth: 1,
+        borderColor: '#e5dcff',
+        backgroundColor: '#f2ecff',
     },
     commentBubble: {
         flex: 1,
-        borderRadius: 10,
+        borderRadius: 18,
         borderWidth: 1,
-        borderColor: '#e9ddff',
-        backgroundColor: '#faf8ff',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
+        borderColor: '#efe7fb',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        shadowColor: '#2a1858',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.03,
+        shadowRadius: 10,
+    },
+    commentHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        marginBottom: 4,
     },
     commentAuthor: {
-        color: '#111111',
+        color: '#171a28',
         fontSize: 12,
         fontWeight: '800',
     },
     commentText: {
-        color: '#111111',
+        color: '#2a3043',
         fontSize: 13,
-        lineHeight: 18,
+        lineHeight: 19,
     },
     commentTime: {
-        marginTop: 2,
-        color: '#6b7280',
-        fontSize: 10.5,
-        fontWeight: '600',
+        color: '#8b92a4',
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    commentsEmptyState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 24,
+        gap: 6,
+    },
+    commentsEmptyOrb: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#f3edff',
+        borderWidth: 1,
+        borderColor: '#e4dafb',
+        marginBottom: 4,
+    },
+    commentsEmptyTitle: {
+        color: '#1f2436',
+        fontSize: 14,
+        fontWeight: '800',
     },
     commentsEmptyText: {
-        color: '#4b5563',
-        fontSize: 13,
+        color: '#7a8194',
+        fontSize: 12.5,
         fontWeight: '600',
         textAlign: 'center',
-        marginTop: 18,
-        marginBottom: 18,
+        lineHeight: 18,
     },
     commentComposerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10,
         borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
-        paddingTop: 10,
+        borderTopColor: '#f0e8fb',
+        paddingTop: 12,
+        paddingBottom: 4,
     },
     commentComposerAvatar: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 1,
+        borderColor: '#e5dcff',
+        backgroundColor: '#f2ecff',
     },
     commentComposerInput: {
         flex: 1,
-        minHeight: 38,
+        minHeight: 42,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 12,
-        color: '#111111',
+        borderColor: '#e8defc',
+        backgroundColor: '#f7f4ff',
+        paddingHorizontal: 14,
+        color: '#171a28',
         fontSize: 13,
     },
     commentComposerSendBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#5b48f2',
+        backgroundColor: '#6f4cf6',
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.16,
+        shadowRadius: 10,
     },
     commentsLoadingWrap: {
         paddingVertical: 24,
@@ -816,25 +1281,33 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     commentsLoadingText: {
-        color: '#4b5563',
+        color: '#6d7487',
         fontSize: 13,
         fontWeight: '600',
     },
     previewOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(76, 29, 149, 0.28)',
+        backgroundColor: 'rgba(15, 17, 24, 0.3)',
         justifyContent: 'flex-end',
     },
     previewSheet: {
-        maxHeight: '75%',
+        maxHeight: '78%',
         backgroundColor: '#ffffff',
-        borderTopLeftRadius: 18,
-        borderTopRightRadius: 18,
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
         paddingHorizontal: 16,
-        paddingTop: 16,
+        paddingTop: 10,
         paddingBottom: 16,
         borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
+        borderTopColor: '#ebe3f8',
+    },
+    previewHandle: {
+        alignSelf: 'center',
+        width: 42,
+        height: 4,
+        borderRadius: 999,
+        backgroundColor: '#d6c9f3',
+        marginBottom: 10,
     },
     previewLoadingWrap: {
         paddingVertical: 28,
@@ -843,76 +1316,168 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     previewLoadingText: {
-        color: '#4b5563',
+        color: '#6d7487',
         fontSize: 13,
         fontWeight: '600',
+    },
+    previewHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 10,
+    },
+    previewHeaderText: {
+        flex: 1,
     },
     previewTitle: {
         fontSize: 20,
         fontWeight: '800',
-        color: '#111111',
-        marginBottom: 6,
+        color: '#171a28',
+        marginBottom: 4,
     },
     previewCompany: {
         fontSize: 13,
-        color: '#4b5563',
+        color: '#6d7487',
         fontWeight: '700',
+    },
+    previewCloseBtn: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f7f3fc',
+        borderWidth: 1,
+        borderColor: '#ece4f8',
+    },
+    previewStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         marginBottom: 12,
+    },
+    previewStatusChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: '#eefbf2',
+        borderWidth: 1,
+        borderColor: '#d8f2e2',
+    },
+    previewStatusChipClosed: {
+        backgroundColor: '#fff4f5',
+        borderColor: '#f7d6db',
+    },
+    previewStatusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#22c55e',
+    },
+    previewStatusDotClosed: {
+        backgroundColor: '#ef4444',
+    },
+    previewStatusText: {
+        color: '#15803d',
+        fontSize: 11.5,
+        fontWeight: '800',
+    },
+    previewStatusTextClosed: {
+        color: '#b91c1c',
+    },
+    previewPostedText: {
+        color: '#7c8398',
+        fontSize: 11.5,
+        fontWeight: '700',
     },
     previewMetaRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
-        marginBottom: 8,
+        marginBottom: 10,
     },
     previewMetaChip: {
-        backgroundColor: '#f3e8ff',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#f8f6fb',
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
+        borderColor: '#ebe3f8',
         paddingHorizontal: 10,
         paddingVertical: 6,
-        color: '#111111',
+    },
+    previewMetaChipText: {
+        color: '#4d5163',
         fontSize: 12,
         fontWeight: '700',
     },
     previewSectionTitle: {
         marginTop: 6,
         marginBottom: 8,
-        color: '#111111',
+        color: '#171a28',
         fontSize: 13,
         fontWeight: '800',
     },
-    previewRequirement: {
-        color: '#111111',
+    previewRequirementRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 8,
+        marginBottom: 6,
+    },
+    previewRequirementDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#c7bfdc',
+        marginTop: 8,
+    },
+    previewRequirementText: {
+        flex: 1,
+        color: '#2c3244',
         fontSize: 13,
         lineHeight: 20,
-        marginBottom: 4,
     },
     previewActions: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
+        justifyContent: 'space-between',
         gap: 10,
         marginTop: 12,
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#f0e8f8',
     },
     previewSecondaryBtn: {
+        flex: 1,
         borderWidth: 1,
-        borderColor: '#c4b5fd',
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        backgroundColor: '#f3e8ff',
+        borderColor: '#ebe2f8',
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 11,
+        backgroundColor: '#f7f3fc',
+        alignItems: 'center',
     },
     previewSecondaryText: {
-        color: '#111111',
+        color: '#4f5470',
         fontSize: 13,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     previewPrimaryBtn: {
-        borderRadius: 10,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        backgroundColor: '#5b48f2',
+        flex: 1,
+        borderRadius: 14,
+        paddingHorizontal: 18,
+        paddingVertical: 11,
+        backgroundColor: '#6f4cf6',
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 14,
+        elevation: 2,
+        alignItems: 'center',
     },
     previewPrimaryBtnDisabled: {
         opacity: 0.55,

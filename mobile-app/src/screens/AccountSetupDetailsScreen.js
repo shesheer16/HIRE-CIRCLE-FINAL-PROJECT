@@ -15,7 +15,20 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
+import { GLASS_GRADIENTS, GLASS_PALETTE, GLASS_SHADOWS, GLASS_SURFACES } from '../theme/glass';
+import { buildPreviewAuthSession, isInstantPreviewAuthEnabled } from '../utils/previewAuthSession';
+import {
+    buildRoleAwareSessionPayload,
+    getProfileSetupLabel,
+    isQaRoleBootstrapEnabled,
+    resolveSelectedRoleSession,
+} from '../utils/authRoleSelection';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+
+const QA_ROLE_BOOTSTRAP_ENABLED = isQaRoleBootstrapEnabled();
+const INSTANT_PREVIEW_AUTH_ENABLED = isInstantPreviewAuthEnabled();
 
 const FUNCTIONAL_AREA_OPTIONS = [
     'Customer Support',
@@ -28,6 +41,17 @@ const FUNCTIONAL_AREA_OPTIONS = [
     'Finance',
     'Warehouse / Logistics',
     'Admin',
+];
+const EMPLOYER_INDUSTRY_OPTIONS = [
+    'Logistics',
+    'Retail',
+    'Hospitality',
+    'Healthcare',
+    'Technology',
+    'Finance',
+    'Staffing',
+    'Manufacturing',
+    'Construction',
 ];
 const CITY_OPTIONS = [
     'Bengaluru',
@@ -47,6 +71,30 @@ const SALARY_OPTIONS = [
     'INR 20+ LPA',
 ];
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
+
+const estimateMonthlyAmountFromBand = (value = '') => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    const matches = [...raw.matchAll(/(\d+(?:\.\d+)?)/g)].map((entry) => Number(entry[1]));
+    if (!matches.length) return '';
+    const numeric = matches.length >= 2
+        ? (matches[0] + matches[1]) / 2
+        : matches[0];
+    const annual = raw.includes('lpa') ? numeric * 100000 : numeric;
+    const monthly = Math.round(annual / 12);
+    return Number.isFinite(monthly) && monthly > 0 ? String(monthly) : '';
+};
+
+const inferWorkerRoleCategoryFromSetupArea = (value = '') => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized.includes('customer') || normalized.includes('support')) return 'Support / Service';
+    if (normalized.includes('sales') || normalized.includes('marketing')) return 'Sales / Marketing';
+    if (normalized.includes('engineering') || normalized.includes('design')) return 'Software / Tech';
+    if (normalized.includes('finance') || normalized.includes('admin') || normalized.includes('hr')) return 'Finance / Admin';
+    if (normalized.includes('warehouse') || normalized.includes('logistics') || normalized.includes('operations')) return 'Delivery / Logistics';
+    return '';
+};
 
 const splitName = (fullName = '') => {
     const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
@@ -91,13 +139,13 @@ function TypeaheadField({
                     onChangeText={onChangeText}
                     style={styles.input}
                     placeholder={placeholder}
-                    placeholderTextColor="#9aa0b5"
+                    placeholderTextColor={GLASS_PALETTE.textSoft}
                     keyboardType={keyboardType}
                     autoCapitalize={autoCapitalize}
                     onFocus={() => setIsFocused(true)}
                     onBlur={() => setTimeout(() => setIsFocused(false), 120)}
                 />
-                <Ionicons name={isFocused ? 'chevron-up' : 'chevron-down'} size={16} color="#7c3aed" />
+                <Ionicons name={isFocused ? 'chevron-up' : 'chevron-down'} size={16} color={GLASS_PALETTE.accentText} />
             </View>
 
             {isFocused && safeSuggestions.length > 0 ? (
@@ -113,7 +161,7 @@ function TypeaheadField({
                             }}
                         >
                             <Text style={styles.suggestionText}>{item}</Text>
-                            <Ionicons name="arrow-forward" size={14} color="#7c3aed" />
+                            <Ionicons name="arrow-forward" size={14} color={GLASS_PALETTE.accentText} />
                         </TouchableOpacity>
                     ))}
                 </View>
@@ -124,9 +172,12 @@ function TypeaheadField({
 
 export default function AccountSetupDetailsScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const { updateUserInfo, completeOnboarding } = useContext(AuthContext);
-    const passedRole = String(route?.params?.selectedRole || 'worker').toLowerCase();
-    const selectedRole = ['employer', 'hybrid'].includes(passedRole) ? passedRole : 'worker';
+    const { login, updateUserInfo, completeOnboarding } = useContext(AuthContext);
+    const selectedSession = useMemo(
+        () => resolveSelectedRoleSession(route?.params?.selectedRole || 'worker'),
+        [route?.params?.selectedRole]
+    );
+    const selectedRole = selectedSession.selectedRole;
     const authMode = String(route?.params?.authMode || 'phone').toLowerCase() === 'email' ? 'email' : 'phone';
 
     const seedName = String(route?.params?.name || '').trim();
@@ -139,19 +190,26 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
     const [password, setPassword] = useState(String(route?.params?.password || '').trim());
     const [dateOfBirth, setDateOfBirth] = useState('');
     const [gender, setGender] = useState('Male');
+    const [companyName, setCompanyName] = useState('');
     const [functionalArea, setFunctionalArea] = useState('');
     const [preferredCity, setPreferredCity] = useState('');
     const [expectedSalary, setExpectedSalary] = useState('');
     const [submitting, setSubmitting] = useState(false);
-    const normalizedRole = String(selectedRole || 'worker').toLowerCase();
-    const roleLabel = normalizedRole === 'hybrid'
-        ? 'Hybrid Profile'
-        : (normalizedRole === 'employer' ? 'Recruiter Profile' : 'Job Seeker Profile');
+    const roleLabel = `${getProfileSetupLabel(selectedRole)} Account`;
     const avatarFallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(seedName || 'User')}&background=e9ddff&color=4c1d95&rounded=true&size=256`;
+    const isEmployerSetup = selectedSession.requestedActiveRole === 'employer';
+    const preferenceSectionTitle = isEmployerSetup ? 'Hiring Details' : 'Job Preference';
+    const functionalAreaLabel = isEmployerSetup ? 'Industry' : 'Functional Areas';
+    const functionalAreaPlaceholder = isEmployerSetup ? 'Select industry' : 'Select job title / role';
+    const cityLabel = isEmployerSetup ? 'Primary Hiring City' : 'Preferred City';
+    const salaryLabel = 'Expected Salary';
+    const salaryPlaceholder = 'INR 0 - 5 LPA';
+    const personalSectionTitle = isEmployerSetup ? 'Recruiter Basics' : 'Account Details';
 
+    const functionalAreaOptions = isEmployerSetup ? EMPLOYER_INDUSTRY_OPTIONS : FUNCTIONAL_AREA_OPTIONS;
     const functionalSuggestions = useMemo(
-        () => buildSuggestions(functionalArea, FUNCTIONAL_AREA_OPTIONS),
-        [functionalArea]
+        () => buildSuggestions(functionalArea, functionalAreaOptions),
+        [functionalArea, functionalAreaOptions]
     );
     const citySuggestions = useMemo(
         () => buildSuggestions(preferredCity, CITY_OPTIONS),
@@ -162,8 +220,8 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         [expectedSalary]
     );
     const topFunctionalPicks = useMemo(
-        () => buildSuggestions(functionalArea, FUNCTIONAL_AREA_OPTIONS, 4),
-        [functionalArea]
+        () => buildSuggestions(functionalArea, functionalAreaOptions, 4),
+        [functionalArea, functionalAreaOptions]
     );
     const topCityPicks = useMemo(
         () => buildSuggestions(preferredCity, CITY_OPTIONS, 4),
@@ -180,15 +238,19 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         if (!String(password || '').trim()) return false;
         if (authMode === 'email' && !String(email || '').trim()) return false;
         if (authMode === 'phone' && !String(phoneNumber || '').trim()) return false;
+        if (isEmployerSetup && !String(companyName || '').trim()) return false;
         if (!String(functionalArea || '').trim()) return false;
         if (!String(preferredCity || '').trim()) return false;
-        if (!String(expectedSalary || '').trim()) return false;
+        if (!isEmployerSetup && !String(expectedSalary || '').trim()) return false;
         return true;
-    }, [authMode, email, expectedSalary, functionalArea, password, phoneNumber, preferredCity]);
+    }, [authMode, companyName, email, expectedSalary, functionalArea, isEmployerSetup, password, phoneNumber, preferredCity]);
 
     const handleBack = useCallback(() => {
-        if (navigation.canGoBack()) navigation.goBack();
-    }, [navigation]);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Register',
+        });
+    }, [navigation, selectedRole]);
 
 
 
@@ -214,12 +276,33 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         setSubmitting(true);
         try {
             const name = seedName;
-            const isHybrid = selectedRole === 'hybrid';
-            const mappedRole = selectedRole === 'employer' ? 'recruiter' : 'candidate';
-            const mappedActiveRole = selectedRole === 'employer' ? 'employer' : 'worker';
-            const rolesArr = isHybrid ? ['worker', 'employer'] : [mappedActiveRole];
-
-            await updateUserInfo({
+            const isHybrid = selectedSession.isHybrid;
+            const mappedRole = selectedSession.legacyRole;
+            const mappedActiveRole = selectedSession.requestedActiveRole;
+            const rolesArr = selectedSession.defaultRoles;
+            const pendingPostAuthSetup = mappedActiveRole === 'worker'
+                ? 'worker_profile'
+                : 'employer_profile';
+            const signupSetupDraft = isEmployerSetup
+                ? {
+                    kind: 'employer',
+                    companyName: String(companyName || '').trim(),
+                    industry: String(functionalArea || '').trim(),
+                    location: String(preferredCity || '').trim(),
+                    contactPerson: name,
+                    description: String(bio || '').trim(),
+                    avatarUrl: avatarUri,
+                }
+                : {
+                    kind: 'worker',
+                    fullName: name,
+                    city: String(preferredCity || '').trim(),
+                    roleCategory: inferWorkerRoleCategoryFromSetupArea(functionalArea),
+                    roleName: String(functionalArea || '').trim(),
+                    expectedSalary: estimateMonthlyAmountFromBand(expectedSalary),
+                    avatarUrl: avatarUri,
+                };
+            const sharedProfilePayload = {
                 name,
                 firstName: nameParts.firstName,
                 lastName: nameParts.lastName,
@@ -234,6 +317,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                 functionalArea: String(functionalArea || '').trim(),
                 preferredCity: String(preferredCity || '').trim(),
                 expectedSalary: String(expectedSalary || '').trim(),
+                signupSetupDraft,
                 profileSetup: {
                     dateOfBirth: String(dateOfBirth || '').trim(),
                     gender: String(gender || '').trim(),
@@ -241,6 +325,71 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                     preferredCity: String(preferredCity || '').trim(),
                     expectedSalary: String(expectedSalary || '').trim(),
                 },
+            };
+
+            if (QA_ROLE_BOOTSTRAP_ENABLED) {
+                let data = null;
+                if (INSTANT_PREVIEW_AUTH_ENABLED) {
+                    data = buildPreviewAuthSession({
+                        selectedRole,
+                        email: authMode === 'email' ? safeEmail : '',
+                        phoneNumber: authMode === 'phone' ? safePhone : '',
+                        name,
+                        hasCompletedProfile: false,
+                        profileComplete: false,
+                        extra: {
+                            signupSetupDraft,
+                        },
+                    });
+                } else {
+                    try {
+                        const response = await client.post('/api/auth/dev-bootstrap', {
+                            role: mappedActiveRole,
+                        }, {
+                            __skipUnauthorizedHandler: true,
+                            __skipApiErrorHandler: true,
+                            __allowWhenCircuitOpen: true,
+                            __maxRetries: 1,
+                            timeout: 2500,
+                        });
+                        data = response?.data;
+                    } catch (_bootstrapError) {
+                        data = buildPreviewAuthSession({
+                            selectedRole,
+                            email: authMode === 'email' ? safeEmail : '',
+                            phoneNumber: authMode === 'phone' ? safePhone : '',
+                            name,
+                            hasCompletedProfile: false,
+                            profileComplete: false,
+                            extra: {
+                                signupSetupDraft,
+                            },
+                        });
+                    }
+                }
+
+                if (!data?.token) {
+                    throw new Error('Missing session token');
+                }
+
+                await login(
+                    buildRoleAwareSessionPayload(data, selectedRole, {
+                        ...sharedProfilePayload,
+                        enforceRequestedRole: true,
+                        hasCompletedProfile: false,
+                        profileComplete: false,
+                        hasCompletedOnboarding: true,
+                    }),
+                    {
+                        authEntryRole: selectedRole,
+                        pendingPostAuthSetup,
+                    }
+                );
+                return;
+            }
+
+            await updateUserInfo({
+                ...sharedProfilePayload,
                 role: mappedRole,
                 activeRole: mappedActiveRole,
                 primaryRole: mappedActiveRole,
@@ -266,6 +415,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         expectedSalary,
         functionalArea,
         gender,
+        login,
         nameParts.firstName,
         nameParts.lastName,
         password,
@@ -273,27 +423,33 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         preferredCity,
         seedName,
         selectedRole,
+        selectedSession.defaultRoles,
+        selectedSession.isHybrid,
+        selectedSession.legacyRole,
+        selectedSession.requestedActiveRole,
         submitting,
         updateUserInfo,
     ]);
 
     return (
-        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <LinearGradient colors={GLASS_GRADIENTS.screen} style={styles.container}>
             <View style={styles.bgOrbTop} />
+            <View style={styles.bgOrbMid} />
             <View style={styles.bgOrbBottom} />
-            <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={[styles.content, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 26 }]}
-            >
-                <TouchableOpacity style={styles.backBtn} activeOpacity={0.82} onPress={handleBack}>
-                    <Ionicons name="chevron-back" size={18} color="#7c3aed" />
-                    <Text style={styles.backText}>Back</Text>
-                </TouchableOpacity>
+            <KeyboardAvoidingView style={styles.keyboardShell} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+                <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={[styles.content, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 26 }]}
+                >
+                    <TouchableOpacity style={styles.backBtn} activeOpacity={0.82} onPress={handleBack}>
+                        <Ionicons name="chevron-back" size={18} color={GLASS_PALETTE.accentText} />
+                        <Text style={styles.backText}>Back</Text>
+                    </TouchableOpacity>
 
                 <View style={styles.heroCard}>
                     <View style={styles.stepPill}>
-                        <Ionicons name="sparkles-outline" size={14} color="#6d28d9" />
+                        <Ionicons name="sparkles-outline" size={14} color={GLASS_PALETTE.accentText} />
                         <Text style={styles.stepPillText}>Step 2 of 2</Text>
                     </View>
 
@@ -305,26 +461,26 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                         </View>
                     </View>
 
-                    <Text style={styles.title}>Complete your profile</Text>
-                    <Text style={styles.subtitle}>Smart fields, quick picks, and instant-ready profile setup.</Text>
+                    <Text style={styles.title}>Complete your account</Text>
+                    <Text style={styles.subtitle}>A few details now, then we’ll take you to the right setup flow.</Text>
                 </View>
 
-                <View style={[styles.formCard, { marginTop: 24 }]}>
-                    <View style={styles.sectionHeader}>
-                        <Ionicons name="shield-checkmark-outline" size={15} color="#7c3aed" />
-                        <Text style={styles.sectionHeaderText}>Account Details</Text>
-                    </View>
+                    <View style={[styles.formCard, { marginTop: 24 }]}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="shield-checkmark-outline" size={15} color={GLASS_PALETTE.accentText} />
+                            <Text style={styles.sectionHeaderText}>{personalSectionTitle}</Text>
+                        </View>
                     {authMode === 'email' ? (
                         <View style={styles.fieldBlock}>
                             <Text style={styles.fieldLabel}>Email</Text>
                             <View style={styles.inputShell}>
-                                <Ionicons name="mail-outline" size={16} color="#7c3aed" style={styles.fieldIcon} />
+                                <Ionicons name="mail-outline" size={16} color={GLASS_PALETTE.accentText} style={styles.fieldIcon} />
                                 <TextInput
                                     value={email}
                                     onChangeText={setEmail}
                                     style={styles.input}
                                     placeholder="Enter your email"
-                                    placeholderTextColor="#a6abc0"
+                                    placeholderTextColor={GLASS_PALETTE.textSoft}
                                     autoCapitalize="none"
                                     keyboardType="email-address"
                                 />
@@ -342,7 +498,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                                     onChangeText={setPhoneNumber}
                                     style={styles.phoneInput}
                                     placeholder="Enter your phone number"
-                                    placeholderTextColor="#a6abc0"
+                                    placeholderTextColor={GLASS_PALETTE.textSoft}
                                     keyboardType="phone-pad"
                                 />
                             </View>
@@ -352,61 +508,80 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                     <View style={styles.fieldBlock}>
                         <Text style={styles.fieldLabel}>Password</Text>
                         <View style={styles.inputShell}>
-                            <Ionicons name="lock-closed-outline" size={16} color="#7c3aed" style={styles.fieldIcon} />
+                            <Ionicons name="lock-closed-outline" size={16} color={GLASS_PALETTE.accentText} style={styles.fieldIcon} />
                             <TextInput
                                 value={password}
                                 onChangeText={setPassword}
                                 style={styles.input}
                                 placeholder="Enter a strong login password"
-                                placeholderTextColor="#a6abc0"
+                                placeholderTextColor={GLASS_PALETTE.textSoft}
                                 secureTextEntry
                                 autoCapitalize="none"
                             />
                         </View>
                     </View>
 
-                    <View style={styles.fieldBlock}>
-                        <Text style={styles.fieldLabel}>My Date of Birth</Text>
-                        <View style={styles.inputShell}>
-                            <Ionicons name="calendar-outline" size={16} color="#7c3aed" style={styles.fieldIcon} />
-                            <TextInput
-                                value={dateOfBirth}
-                                onChangeText={setDateOfBirth}
-                                style={styles.input}
-                                placeholder="DD / MM / YYYY"
-                                placeholderTextColor="#a6abc0"
-                                keyboardType="numbers-and-punctuation"
-                            />
+                    {isEmployerSetup ? (
+                        <View style={styles.fieldBlock}>
+                            <Text style={styles.fieldLabel}>Company Name</Text>
+                            <View style={styles.inputShell}>
+                                <Ionicons name="business-outline" size={16} color={GLASS_PALETTE.accentText} style={styles.fieldIcon} />
+                                <TextInput
+                                    value={companyName}
+                                    onChangeText={setCompanyName}
+                                    style={styles.input}
+                                    placeholder="Enter your company name"
+                                    placeholderTextColor={GLASS_PALETTE.textSoft}
+                                    autoCapitalize="words"
+                                />
+                            </View>
                         </View>
-                    </View>
+                    ) : (
+                        <>
+                            <View style={styles.fieldBlock}>
+                                <Text style={styles.fieldLabel}>My Date of Birth</Text>
+                                <View style={styles.inputShell}>
+                                    <Ionicons name="calendar-outline" size={16} color={GLASS_PALETTE.accentText} style={styles.fieldIcon} />
+                                    <TextInput
+                                        value={dateOfBirth}
+                                        onChangeText={setDateOfBirth}
+                                        style={styles.input}
+                                        placeholder="DD / MM / YYYY"
+                                        placeholderTextColor={GLASS_PALETTE.textSoft}
+                                        keyboardType="numbers-and-punctuation"
+                                    />
+                                </View>
+                            </View>
 
-                    <View style={styles.fieldBlock}>
-                        <Text style={styles.fieldLabel}>My Gender</Text>
-                        <View style={styles.genderRow}>
-                            {GENDER_OPTIONS.map((option) => {
-                                const active = option.toLowerCase() === String(gender || '').toLowerCase();
-                                return (
-                                    <TouchableOpacity
-                                        key={option}
-                                        style={[styles.genderChip, active && styles.genderChipActive]}
-                                        onPress={() => setGender(option)}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Text style={[styles.genderChipText, active && styles.genderChipTextActive]}>{option}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                    </View>
+                            <View style={styles.fieldBlock}>
+                                <Text style={styles.fieldLabel}>My Gender</Text>
+                                <View style={styles.genderRow}>
+                                    {GENDER_OPTIONS.map((option) => {
+                                        const active = option.toLowerCase() === String(gender || '').toLowerCase();
+                                        return (
+                                            <TouchableOpacity
+                                                key={option}
+                                                style={[styles.genderChip, active && styles.genderChipActive]}
+                                                onPress={() => setGender(option)}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Text style={[styles.genderChipText, active && styles.genderChipTextActive]}>{option}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
+                        </>
+                    )}
 
                     <View style={styles.sectionDivider} />
-                    <Text style={styles.sectionTitle}>Job Preference</Text>
+                    <Text style={styles.sectionTitle}>{preferenceSectionTitle}</Text>
 
                     <TypeaheadField
-                        label="Functional Areas"
+                        label={functionalAreaLabel}
                         value={functionalArea}
                         onChangeText={setFunctionalArea}
-                        placeholder="Select job title / role"
+                        placeholder={functionalAreaPlaceholder}
                         suggestions={functionalSuggestions}
                         onSelectSuggestion={setFunctionalArea}
                     />
@@ -419,7 +594,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                     </View>
 
                     <TypeaheadField
-                        label="Preferred City"
+                        label={cityLabel}
                         value={preferredCity}
                         onChangeText={setPreferredCity}
                         placeholder="Select city"
@@ -434,22 +609,26 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                         ))}
                     </View>
 
-                    <TypeaheadField
-                        label="Expected Salary"
-                        value={expectedSalary}
-                        onChangeText={setExpectedSalary}
-                        placeholder="INR 0 - 5 LPA"
-                        suggestions={salarySuggestions}
-                        onSelectSuggestion={setExpectedSalary}
-                        autoCapitalize="none"
-                    />
-                    <View style={styles.quickRow}>
-                        {topSalaryPicks.map((item) => (
-                            <TouchableOpacity key={`salary-${item}`} style={styles.quickChip} activeOpacity={0.85} onPress={() => setExpectedSalary(item)}>
-                                <Text style={styles.quickChipText}>{item}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+                    {!isEmployerSetup ? (
+                        <>
+                            <TypeaheadField
+                                label={salaryLabel}
+                                value={expectedSalary}
+                                onChangeText={setExpectedSalary}
+                                placeholder={salaryPlaceholder}
+                                suggestions={salarySuggestions}
+                                onSelectSuggestion={setExpectedSalary}
+                                autoCapitalize="none"
+                            />
+                            <View style={styles.quickRow}>
+                                {topSalaryPicks.map((item) => (
+                                    <TouchableOpacity key={`salary-${item}`} style={styles.quickChip} activeOpacity={0.85} onPress={() => setExpectedSalary(item)}>
+                                        <Text style={styles.quickChipText}>{item}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </>
+                    ) : null}
                 </View>
 
                 <TouchableOpacity
@@ -459,7 +638,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                     disabled={!canSubmit || submitting}
                 >
                     <LinearGradient
-                        colors={['#7c3aed', '#5b21b6']}
+                        colors={GLASS_GRADIENTS.accent}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
                         style={styles.submitGradient}
@@ -467,15 +646,18 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                         {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Create Account</Text>}
                     </LinearGradient>
                 </TouchableOpacity>
-            </ScrollView>
-        </KeyboardAvoidingView>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f7f4ff',
+    },
+    keyboardShell: {
+        flex: 1,
     },
     bgOrbTop: {
         position: 'absolute',
@@ -484,7 +666,16 @@ const styles = StyleSheet.create({
         width: 260,
         height: 260,
         borderRadius: 130,
-        backgroundColor: 'rgba(167,139,250,0.18)',
+        backgroundColor: GLASS_PALETTE.glowLavender,
+    },
+    bgOrbMid: {
+        position: 'absolute',
+        top: '38%',
+        left: -66,
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        backgroundColor: GLASS_PALETTE.glowBlue,
     },
     bgOrbBottom: {
         position: 'absolute',
@@ -493,39 +684,37 @@ const styles = StyleSheet.create({
         width: 240,
         height: 240,
         borderRadius: 120,
-        backgroundColor: 'rgba(196,181,253,0.18)',
+        backgroundColor: GLASS_PALETTE.glowRose,
     },
     content: {
         flexGrow: 1,
         paddingHorizontal: 18,
     },
     backBtn: {
+        ...GLASS_SURFACES.softPanel,
         minHeight: 42,
         alignSelf: 'flex-start',
         flexDirection: 'row',
         alignItems: 'center',
         gap: 3,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 999,
         marginBottom: 8,
     },
     backText: {
-        color: '#7c3aed',
+        color: GLASS_PALETTE.accentText,
         fontSize: 13,
         fontWeight: '700',
     },
     heroCard: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
         marginTop: 4,
         marginBottom: -6,
         borderRadius: 22,
-        borderWidth: 1,
-        borderColor: '#e7ddff',
-        backgroundColor: 'rgba(255,255,255,0.92)',
         paddingHorizontal: 16,
         paddingVertical: 16,
-        shadowColor: '#6d28d9',
-        shadowOpacity: 0.08,
-        shadowOffset: { width: 0, height: 10 },
-        shadowRadius: 16,
-        elevation: 2,
     },
     stepPill: {
         alignSelf: 'flex-start',
@@ -535,11 +724,11 @@ const styles = StyleSheet.create({
         borderRadius: 999,
         paddingHorizontal: 10,
         paddingVertical: 5,
-        backgroundColor: '#efe7ff',
+        backgroundColor: GLASS_PALETTE.accentSoft,
         marginBottom: 10,
     },
     stepPillText: {
-        color: '#5b21b6',
+        color: GLASS_PALETTE.accentText,
         fontSize: 11,
         fontWeight: '800',
         letterSpacing: 0.2,
@@ -555,21 +744,21 @@ const styles = StyleSheet.create({
         height: 44,
         borderRadius: 22,
         borderWidth: 1.5,
-        borderColor: '#d7c8ff',
-        backgroundColor: '#f8f3ff',
+        borderColor: 'rgba(111, 78, 246, 0.14)',
+        backgroundColor: GLASS_PALETTE.surfaceMuted,
     },
     heroIdentityTextWrap: {
         flex: 1,
     },
     heroName: {
-        color: '#271453',
+        color: GLASS_PALETTE.textStrong,
         fontSize: 14,
         fontWeight: '800',
         letterSpacing: -0.1,
     },
     heroRole: {
         marginTop: 2,
-        color: '#7c3aed',
+        color: GLASS_PALETTE.accentText,
         fontSize: 11,
         fontWeight: '700',
     },
@@ -578,11 +767,11 @@ const styles = StyleSheet.create({
         lineHeight: 33,
         fontWeight: '800',
         letterSpacing: -0.6,
-        color: '#1f1446',
+        color: GLASS_PALETTE.textStrong,
     },
     subtitle: {
         marginTop: 4,
-        color: '#7b7e92',
+        color: GLASS_PALETTE.textMuted,
         fontSize: 13,
         lineHeight: 18,
         fontWeight: '600',
@@ -615,37 +804,31 @@ const styles = StyleSheet.create({
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: '#7c3aed',
+        backgroundColor: GLASS_PALETTE.accent,
         borderWidth: 2,
-        borderColor: '#f6f3ff',
+        borderColor: 'rgba(255,255,255,0.92)',
         alignItems: 'center',
         justifyContent: 'center',
     },
     avatarTitle: {
         marginTop: 10,
-        color: '#22154a',
+        color: GLASS_PALETTE.textStrong,
         fontSize: 19,
         fontWeight: '800',
         letterSpacing: -0.1,
     },
     avatarHint: {
         marginTop: 2,
-        color: '#8a8ea5',
+        color: GLASS_PALETTE.textSoft,
         fontSize: 13,
         fontWeight: '600',
     },
     formCard: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
         borderRadius: 22,
-        borderWidth: 1,
-        borderColor: '#e2d6ff',
-        backgroundColor: 'rgba(255,255,255,0.95)',
         paddingHorizontal: 16,
         paddingVertical: 16,
-        shadowColor: '#5b21b6',
-        shadowOpacity: 0.09,
-        shadowOffset: { width: 0, height: 10 },
-        shadowRadius: 24,
-        elevation: 2,
     },
     sectionHeader: {
         flexDirection: 'row',
@@ -655,7 +838,7 @@ const styles = StyleSheet.create({
         marginBottom: 4,
     },
     sectionHeaderText: {
-        color: '#6b21a8',
+        color: GLASS_PALETTE.accentText,
         fontSize: 12,
         fontWeight: '800',
         letterSpacing: 0.2,
@@ -672,18 +855,16 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     fieldLabel: {
-        color: '#32225f',
+        color: GLASS_PALETTE.text,
         fontSize: 13,
         fontWeight: '800',
         marginBottom: 7,
         letterSpacing: 0.2,
     },
     inputShell: {
+        ...GLASS_SURFACES.input,
         minHeight: 50,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#ddd2f7',
-        backgroundColor: '#fbf9ff',
         paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
@@ -692,22 +873,20 @@ const styles = StyleSheet.create({
         marginRight: 8,
     },
     inputShellFocused: {
-        borderColor: '#8b5cf6',
-        backgroundColor: '#f8f3ff',
+        borderColor: GLASS_PALETTE.accent,
+        backgroundColor: 'rgba(255,255,255,0.86)',
     },
     input: {
         flex: 1,
-        color: '#1f133f',
+        color: GLASS_PALETTE.textStrong,
         fontSize: 14,
         fontWeight: '600',
         minHeight: 48,
     },
     phoneRow: {
+        ...GLASS_SURFACES.input,
         minHeight: 50,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#ddd2f7',
-        backgroundColor: '#fbf9ff',
         flexDirection: 'row',
         alignItems: 'center',
         overflow: 'hidden',
@@ -716,12 +895,12 @@ const styles = StyleSheet.create({
         width: 58,
         minHeight: 50,
         borderRightWidth: 1,
-        borderRightColor: '#ddd2f7',
+        borderRightColor: GLASS_PALETTE.borderStrong,
         alignItems: 'center',
         justifyContent: 'center',
     },
     countryCodeText: {
-        color: '#5b21b6',
+        color: GLASS_PALETTE.accentText,
         fontSize: 14,
         fontWeight: '800',
     },
@@ -729,7 +908,7 @@ const styles = StyleSheet.create({
         flex: 1,
         minHeight: 50,
         paddingHorizontal: 12,
-        color: '#1f133f',
+        color: GLASS_PALETTE.textStrong,
         fontSize: 14,
         fontWeight: '600',
     },
@@ -737,7 +916,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#ddd2f7',
+        borderColor: GLASS_PALETTE.borderStrong,
         overflow: 'hidden',
     },
     genderChip: {
@@ -745,15 +924,15 @@ const styles = StyleSheet.create({
         minHeight: 44,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#ffffff',
+        backgroundColor: 'rgba(255,255,255,0.68)',
         borderRightWidth: 1,
-        borderRightColor: '#e9e2fb',
+        borderRightColor: GLASS_PALETTE.border,
     },
     genderChipActive: {
-        backgroundColor: '#7c3aed',
+        backgroundColor: GLASS_PALETTE.accent,
     },
     genderChipText: {
-        color: '#5b21b6',
+        color: GLASS_PALETTE.accentText,
         fontSize: 14,
         fontWeight: '700',
     },
@@ -763,11 +942,11 @@ const styles = StyleSheet.create({
     sectionDivider: {
         marginTop: 16,
         height: 1,
-        backgroundColor: '#efe9ff',
+        backgroundColor: 'rgba(111, 78, 246, 0.12)',
     },
     sectionTitle: {
         marginTop: 10,
-        color: '#7c3aed',
+        color: GLASS_PALETTE.accentText,
         textAlign: 'center',
         fontSize: 21,
         lineHeight: 26,
@@ -775,11 +954,10 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
     },
     suggestionPanel: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.soft,
         marginTop: 6,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e9dfff',
-        backgroundColor: '#f8f4ff',
         overflow: 'hidden',
     },
     suggestionRow: {
@@ -789,10 +967,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         borderBottomWidth: 1,
-        borderBottomColor: '#efe9ff',
+        borderBottomColor: 'rgba(111, 78, 246, 0.08)',
     },
     suggestionText: {
-        color: '#3a2a6e',
+        color: GLASS_PALETTE.text,
         fontSize: 13,
         fontWeight: '600',
     },
@@ -804,27 +982,21 @@ const styles = StyleSheet.create({
         marginBottom: 6,
     },
     quickChip: {
+        ...GLASS_SURFACES.softPanel,
         borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#dbcdfd',
-        backgroundColor: '#f5efff',
         paddingHorizontal: 10,
         paddingVertical: 6,
     },
     quickChipText: {
-        color: '#5b21b6',
+        color: GLASS_PALETTE.accentText,
         fontSize: 11,
         fontWeight: '700',
     },
     submitWrap: {
+        ...GLASS_SHADOWS.accent,
         marginTop: 14,
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.26,
-        shadowRadius: 14,
-        elevation: 4,
     },
     submitWrapDisabled: {
         opacity: 0.55,

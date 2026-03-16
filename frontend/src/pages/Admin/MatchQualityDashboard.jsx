@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import AdminShell from './AdminShell';
+import { buildApiUrl } from '../../config/api';
+import { clearAdminSession, getAdminToken } from '../../utils/adminSession';
 
 const cardStyle = {
   background: '#ffffff',
@@ -26,6 +30,7 @@ const buildSparklinePoints = (trend = [], metricKey) => {
 };
 
 const MatchQualityDashboard = () => {
+  const navigate = useNavigate();
   const [city, setCity] = useState('');
   const [roleCluster, setRoleCluster] = useState('');
   const [from, setFrom] = useState('');
@@ -38,17 +43,11 @@ const MatchQualityDashboard = () => {
   const [calibration, setCalibration] = useState(null);
   const [performanceAlerts, setPerformanceAlerts] = useState(null);
 
-  const userInfo = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem('userInfo') || '{}');
-    } catch (e) {
-      return {};
-    }
-  }, []);
+  const adminToken = useMemo(() => getAdminToken(), []);
 
   const authConfig = useMemo(() => ({
     headers: {
-      Authorization: `Bearer ${userInfo?.token || ''}`,
+      Authorization: `Bearer ${adminToken}`,
     },
     params: {
       ...(city ? { city } : {}),
@@ -56,28 +55,34 @@ const MatchQualityDashboard = () => {
       ...(from ? { from } : {}),
       ...(to ? { to } : {}),
     },
-  }), [city, roleCluster, from, to, userInfo?.token]);
+  }), [adminToken, city, roleCluster, from, to]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const [overviewRes, detailRes, calibrationRes, alertsRes] = await Promise.all([
-        axios.get('/api/analytics/match-quality-overview', authConfig),
-        axios.get('/api/analytics/match-quality-detail', authConfig),
-        axios.get('/api/admin/match-calibration-suggestions', authConfig),
-        axios.get('/api/admin/match-performance-alerts', authConfig),
+        axios.get(buildApiUrl('/api/admin/match-quality-overview'), authConfig),
+        axios.get(buildApiUrl('/api/admin/match-quality-detail'), authConfig),
+        axios.get(buildApiUrl('/api/admin/match-calibration-suggestions'), authConfig),
+        axios.get(buildApiUrl('/api/admin/match-performance-alerts'), authConfig),
       ]);
       setOverview(overviewRes.data || {});
       setDetail(detailRes.data || {});
       setCalibration(calibrationRes.data?.data || null);
       setPerformanceAlerts(alertsRes.data?.data || null);
     } catch (loadError) {
+      if ([401, 403].includes(loadError?.response?.status)) {
+        clearAdminSession();
+        navigate('/admin/login', { replace: true });
+        return;
+      }
+
       setError(loadError?.response?.data?.message || 'Failed to load match quality data');
     } finally {
       setLoading(false);
     }
-  }, [authConfig]);
+  }, [authConfig, navigate]);
 
   useEffect(() => {
     loadData();
@@ -95,10 +100,11 @@ const MatchQualityDashboard = () => {
   ];
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: 24 }}>
+    <AdminShell
+      title="Match Quality Dashboard"
+      subtitle="Monitor conversion quality, drift, and calibration suggestions."
+    >
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        <h1 style={{ margin: 0, color: '#0f172a' }}>Match Quality Dashboard</h1>
-        <p style={{ color: '#475569', marginTop: 8 }}>Monitor conversion quality, drift, and calibration suggestions.</p>
 
         <div style={{ ...cardStyle, marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
           <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" style={{ padding: 10, borderRadius: 8, border: '1px solid #cbd5e1' }} />
@@ -235,7 +241,7 @@ const MatchQualityDashboard = () => {
           </>
         )}
       </div>
-    </div>
+    </AdminShell>
   );
 };
 

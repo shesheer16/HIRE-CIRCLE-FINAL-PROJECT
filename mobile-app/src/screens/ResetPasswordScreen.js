@@ -15,11 +15,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import { logger } from '../utils/logger';
-import { navigateToWelcomeFallback } from '../utils/authNavigation';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
 
 export default function ResetPasswordScreen({ route, navigation }) {
     const insets = useSafeAreaInsets();
     const token = route.params?.token;
+    const selectedRole = (() => {
+        const rawRole = String(route.params?.selectedRole || '').trim();
+        return rawRole ? normalizeSelectedRole(rawRole) : null;
+    })();
 
     const passwordRef = useRef('');
     const confirmPasswordRef = useRef('');
@@ -32,13 +37,11 @@ export default function ResetPasswordScreen({ route, navigation }) {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const handleBackPress = useCallback(() => {
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-            return;
-        }
-
-        navigateToWelcomeFallback(navigation);
-    }, [navigation]);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Login',
+        });
+    }, [navigation, selectedRole]);
 
     const handleResetPassword = useCallback(async () => {
         const password = String(passwordRef.current || '').trim();
@@ -70,7 +73,13 @@ export default function ResetPasswordScreen({ route, navigation }) {
         try {
             await client.put(`/api/users/resetpassword/${token}`, { password });
             Alert.alert('Success', 'Password updated successfully.', [
-                { text: 'Sign in', onPress: () => navigation.navigate('Login') },
+                {
+                    text: 'Sign in',
+                    onPress: () => navigation.navigate(
+                        'Login',
+                        selectedRole ? { selectedRole } : undefined
+                    ),
+                },
             ]);
         } catch (error) {
             logger.error('Reset password failed:', error);

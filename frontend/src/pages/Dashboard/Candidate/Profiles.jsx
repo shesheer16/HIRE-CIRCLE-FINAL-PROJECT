@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
 import { IoLocationOutline, IoMicOutline } from 'react-icons/io5';
 import VideoRecorder from '../../../Components/VideoRecorder';
+import browserSessionApi from '../../../utils/browserSessionApi';
 
 const Profiles = () => {
     const [profile, setProfile] = useState(null);
@@ -10,26 +9,12 @@ const Profiles = () => {
     const [editingIndex, setEditingIndex] = useState(-1);
     const [editFormData, setEditFormData] = useState({});
     const [showRecorder, setShowRecorder] = useState(false);
-    const navigate = useNavigate();
 
     const fetchProfile = useCallback(async () => {
         try {
-            const userInfoString = localStorage.getItem('userInfo');
-
-            if (!userInfoString) {
-                navigate('/');
-                return;
-            }
-
-            const userInfo = JSON.parse(userInfoString);
-
-            const config = {
-                headers: {
-                    Authorization: `Bearer ${userInfo.token}`
-                }
-            };
-
-            const { data } = await axios.get('/api/users/profile', config);
+            const { data } = await browserSessionApi.get('/api/users/profile', {
+                showGlobalErrorNotice: true,
+            });
 
             if (data.profile) {
                 setProfile(data.profile);
@@ -39,7 +24,7 @@ const Profiles = () => {
         } finally {
             setLoading(false);
         }
-    }, [navigate]);
+    }, []);
 
     useEffect(() => {
         fetchProfile();
@@ -67,12 +52,7 @@ const Profiles = () => {
                 skills: editFormData.skills.split(',').map(s => s.trim()).filter(s => s.length > 0)
             };
 
-            const userInfo = JSON.parse(localStorage.getItem('userInfo'));
-            const config = {
-                headers: { Authorization: `Bearer ${userInfo.token}` }
-            };
-
-            const { data } = await axios.put('/api/users/profile', { roleProfiles: updatedRoles }, config);
+            const { data } = await browserSessionApi.put('/api/users/profile', { roleProfiles: updatedRoles });
 
             if (data.profile) {
                 setProfile(data.profile);
@@ -80,7 +60,6 @@ const Profiles = () => {
             }
         } catch (error) {
             console.warn("Error updating profile:", error);
-            alert("Failed to save changes.");
         }
     };
 

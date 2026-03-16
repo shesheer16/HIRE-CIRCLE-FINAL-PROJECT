@@ -2,6 +2,7 @@ const WorkerProfile = require('../models/WorkerProfile');
 const Application = require('../models/Application');
 const Job = require('../models/Job');
 const logger = require('../utils/logger');
+const { backfillStructuredLocations } = require('./locationBackfillService');
 
 const ensureOneActiveRoleProfile = (profiles = []) => {
     const rows = Array.isArray(profiles) ? profiles.filter(Boolean) : [];
@@ -272,12 +273,14 @@ const runSystemIntegrityHardening = async () => {
         const applicationDedupeSummary = await dedupeApplicationsByJobWorker();
         await ensureIntegrityIndexes();
         const migrated = await migrateLegacyJobStatuses();
+        const locationBackfillSummary = await backfillStructuredLocations();
 
         logger.info({
             event: 'system_integrity_hardening_complete',
             dedupeSummary,
             applicationDedupeSummary,
             migrated,
+            locationBackfillSummary,
         });
 
         return {
@@ -285,6 +288,7 @@ const runSystemIntegrityHardening = async () => {
             dedupeSummary,
             applicationDedupeSummary,
             migrated,
+            locationBackfillSummary,
         };
     } catch (error) {
         logger.error({

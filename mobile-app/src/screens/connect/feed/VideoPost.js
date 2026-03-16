@@ -27,13 +27,18 @@ export default memo(VideoPostComponent);
 
 const styles = StyleSheet.create({
     container: {
-        marginTop: 8,
-        borderRadius: 12,
+        marginTop: 0,
+        borderRadius: 18,
         overflow: 'hidden',
-        borderWidth: 0,
-        borderColor: 'transparent',
-        backgroundColor: '#000000',
-        marginBottom: 8,
+        backgroundColor: '#0f0b1f',
+        borderWidth: 1,
+        borderColor: '#e5dcff',
+        shadowColor: '#2a1858',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 16,
+        elevation: 2,
+        marginBottom: 0,
     },
     video: {
         width: '100%',

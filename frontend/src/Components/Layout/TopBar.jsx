@@ -1,12 +1,13 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { IoArrowBack, IoLogOutOutline } from 'react-icons/io5';
+import { logoutWebSession } from '../../utils/webAuthSession';
 
 const TopBar = ({ title }) => {
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    localStorage.removeItem('userInfo');
+  const handleLogout = async () => {
+    await logoutWebSession();
     localStorage.removeItem('selectedRole');
     navigate('/'); // Go back to Landing Page
   };

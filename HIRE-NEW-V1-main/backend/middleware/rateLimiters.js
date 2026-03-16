@@ -67,6 +67,22 @@ const loginAttemptLimiter = createLimiter({
     keyGenerator: (req) => `${readIp(req)}:${normalizeEmail(req.body?.email) || 'anonymous'}`,
 });
 
+const passwordRecoveryLimiter = createLimiter({
+    namespace: 'password-recovery',
+    windowMs: 15 * 60 * 1000,
+    max: Number.parseInt(process.env.RL_PASSWORD_RECOVERY_MAX || '5', 10),
+    message: 'Too many account recovery requests. Try again in 15 minutes.',
+    keyGenerator: (req) => `${readIp(req)}:${normalizeEmail(req.body?.email) || 'anonymous'}`,
+});
+
+const verificationResendLimiter = createLimiter({
+    namespace: 'verification-resend',
+    windowMs: 15 * 60 * 1000,
+    max: Number.parseInt(process.env.RL_VERIFICATION_RESEND_MAX || '5', 10),
+    message: 'Too many verification requests. Try again in 15 minutes.',
+    keyGenerator: (req) => `${readIp(req)}:${normalizeEmail(req.body?.email) || 'anonymous'}`,
+});
+
 const smartInterviewStartLimiter = createLimiter({
     namespace: 'smart-interview-start',
     windowMs: 60 * 60 * 1000,
@@ -110,6 +126,8 @@ const communityCreateLimiter = createLimiter({
 module.exports = {
     otpRequestLimiter,
     loginAttemptLimiter,
+    passwordRecoveryLimiter,
+    verificationResendLimiter,
     smartInterviewStartLimiter,
     applyJobLimiter,
     chatMessageLimiter,

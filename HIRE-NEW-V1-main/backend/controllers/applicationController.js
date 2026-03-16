@@ -45,7 +45,6 @@ const { isRecruiter } = require('../utils/roleGuards');
 const { normalizeApplicationStatus } = require('../workflow/applicationStateMachine');
 const { transitionApplicationStatus } = require('../services/applicationWorkflowService');
 const { queueWebhookEvent } = require('../services/platformWebhookService');
-const { compute_match } = require('../services/computeMatchService');
 const settings = require('../config/settings');
 const mongoose = require('mongoose');
 
@@ -241,26 +240,6 @@ const sendRequest = async (req, res) => {
                     message: 'Application limit reached for current plan. Upgrade to unlock unlimited applications.',
                     code: 'APPLICATION_LIMIT_REACHED',
                     limit: freePlanCap,
-                });
-            }
-        }
-
-        if (normalizedInitiatedBy === 'worker') {
-            const matchResult = await compute_match({
-                profile: resolvedWorkerProfile.toObject ? resolvedWorkerProfile.toObject() : resolvedWorkerProfile,
-                profileUser: resolvedWorkerUser || {},
-                job: job.toObject ? job.toObject() : job,
-            });
-            const minThreshold = Number(settings.MATCH_THRESHOLD || 0.62);
-            const score = Number(matchResult?.score || 0);
-
-            if (!matchResult?.accepted || score < minThreshold) {
-                return res.status(403).json({
-                    message: 'Application blocked below match threshold',
-                    code: 'MATCH_THRESHOLD_NOT_MET',
-                    threshold: minThreshold,
-                    matchScore: matchResult?.matchScore || 0,
-                    matchPercentage: matchResult?.matchPercentage || 0,
                 });
             }
         }
@@ -932,8 +911,9 @@ const getApplications = async (req, res) => {
         }
 
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(parseInt(req.query.limit) || 20, 200);
         const skip = (page - 1) * limit;
+        const skipTotal = String(req.query.skipTotal || '').toLowerCase() === 'true';
 
         const applicationsRaw = await Application.find(query)
             .sort({ updatedAt: -1 })
@@ -989,14 +969,14 @@ const getApplications = async (req, res) => {
             return normalized;
         });
 
-        const total = await Application.countDocuments(query);
+        const total = skipTotal ? applications.length : await Application.countDocuments(query);
 
         res.json({
             success: true,
             count: applications.length,
             total,
             page,
-            pages: Math.ceil(total / limit),
+            pages: skipTotal ? 1 : Math.ceil(total / limit),
             data: applications
         });
     } catch (error) {

@@ -2,7 +2,7 @@ import React, { memo, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { IconUsers } from '../../../components/Icons';
 import { RADIUS } from '../../../theme/theme';
-import { connectPalette, connectShadow } from '../connectPalette';
+import { connectPalette } from '../connectPalette';
 
 function CircleCardComponent({ variant, circle, onOpenCircle, onJoinCircle, pendingJoinCircleIds }) {
     const safeCircle = (circle && typeof circle === 'object') ? circle : {};
@@ -99,15 +99,19 @@ export default memo(CircleCardComponent);
 const styles = StyleSheet.create({
     joinedCard: {
         backgroundColor: connectPalette.surface,
-        borderRadius: RADIUS.xl,
-        padding: 16,
+        borderRadius: 20,
+        padding: 14,
         marginBottom: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         borderWidth: 1,
-        borderColor: connectPalette.line,
-        ...connectShadow,
+        borderColor: '#efe9f8',
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 18,
+        elevation: 2,
     },
     joinedLeft: {
         flexDirection: 'row',
@@ -118,9 +122,11 @@ const styles = StyleSheet.create({
         position: 'relative',
     },
     joinedAvatar: {
-        width: 48,
-        height: 48,
+        width: 44,
+        height: 44,
         borderRadius: RADIUS.full,
+        borderWidth: 1,
+        borderColor: '#e6def8',
     },
     onlineDot: {
         position: 'absolute',
@@ -145,26 +151,32 @@ const styles = StyleSheet.create({
         color: connectPalette.muted,
     },
     openBtn: {
-        backgroundColor: connectPalette.accentSoft,
-        paddingHorizontal: 16,
+        backgroundColor: '#f7f3fc',
+        paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: RADIUS.md,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#ebe2f8',
     },
     openBtnText: {
-        fontSize: 11,
+        fontSize: 10.5,
         fontWeight: '800',
-        color: connectPalette.accentDark,
+        color: '#6a41d8',
     },
 
     exploreCard: {
         backgroundColor: connectPalette.surface,
-        borderRadius: RADIUS.xl,
-        padding: 16,
+        borderRadius: 20,
+        padding: 14,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: connectPalette.line,
+        borderColor: '#efe9f8',
         overflow: 'hidden',
-        ...connectShadow,
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 18,
+        elevation: 2,
     },
     exploreBgIcon: {
         position: 'absolute',
@@ -178,9 +190,11 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     exploreAvatar: {
-        width: 56,
-        height: 56,
-        borderRadius: RADIUS.lg,
+        width: 52,
+        height: 52,
+        borderRadius: RADIUS.full,
+        borderWidth: 1,
+        borderColor: '#e6def8',
     },
     exploreMain: {
         flex: 1,
@@ -199,21 +213,23 @@ const styles = StyleSheet.create({
     exploreCategory: {
         fontSize: 10,
         fontWeight: '800',
-        color: connectPalette.muted,
-        backgroundColor: '#f2f4f8',
+        color: '#6d7487',
+        backgroundColor: '#f8f6fb',
+        borderWidth: 1,
+        borderColor: '#ebe3f8',
         alignSelf: 'flex-start',
         paddingHorizontal: 6,
         paddingVertical: 2,
-        borderRadius: RADIUS.sm,
+        borderRadius: 999,
         marginTop: 4,
     },
     trendingBadge: {
         alignSelf: 'flex-start',
         marginTop: 4,
-        borderRadius: RADIUS.sm,
+        borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#fecaca',
-        backgroundColor: '#fee2e2',
+        borderColor: '#f7d6db',
+        backgroundColor: '#fff4f5',
         paddingHorizontal: 6,
         paddingVertical: 2,
     },
@@ -224,13 +240,15 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
     joinBtn: {
-        backgroundColor: connectPalette.dark,
+        backgroundColor: '#6f4cf6',
         paddingHorizontal: 16,
         paddingVertical: 6,
-        borderRadius: RADIUS.sm,
+        borderRadius: 999,
     },
     joinBtnPending: {
-        backgroundColor: connectPalette.accentSoft,
+        backgroundColor: '#f7f3fc',
+        borderWidth: 1,
+        borderColor: '#ebe2f8',
     },
     joinBtnText: {
         fontSize: 10,
@@ -238,7 +256,7 @@ const styles = StyleSheet.create({
         color: connectPalette.surface,
     },
     joinBtnTextPending: {
-        color: connectPalette.accentDark,
+        color: '#6a41d8',
     },
     exploreDescription: {
         fontSize: 12,
@@ -249,7 +267,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         borderTopWidth: 1,
-        borderTopColor: connectPalette.line,
+        borderTopColor: '#f0e8f8',
         paddingTop: 12,
     },
     exploreAvatarGroup: {
@@ -261,7 +279,7 @@ const styles = StyleSheet.create({
         width: 24,
         height: 24,
         borderRadius: RADIUS.full,
-        backgroundColor: '#edf0f8',
+        backgroundColor: '#f3eef8',
         borderWidth: 2,
         borderColor: connectPalette.surface,
         justifyContent: 'center',

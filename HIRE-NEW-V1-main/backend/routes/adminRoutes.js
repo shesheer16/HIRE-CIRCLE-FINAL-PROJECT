@@ -28,6 +28,10 @@ const {
     getHiringTrajectoryController,
 } = require('../controllers/adminController');
 const {
+    getMatchQualityOverview,
+    getMatchQualityDetail,
+} = require('../controllers/analyticsController');
+const {
     adminIntelligenceDashboard,
     adminStressValidation,
 } = require('../controllers/aiOptimizationController');
@@ -52,6 +56,8 @@ router.post('/city-pipeline', createCityPipelineEntry);
 router.get('/city-pipeline', getCityPipelineEntries);
 router.get('/city-pipeline/summary', getCityPipelineSummary);
 router.put('/city-pipeline/:id', updateCityPipelineEntry);
+router.get('/match-quality-overview', getMatchQualityOverview);
+router.get('/match-quality-detail', getMatchQualityDetail);
 router.get('/match-report', getMatchReport);
 router.get('/match-calibration-suggestions', getMatchCalibrationSuggestions);
 router.get('/match-performance-alerts', getMatchPerformanceAlertsController);

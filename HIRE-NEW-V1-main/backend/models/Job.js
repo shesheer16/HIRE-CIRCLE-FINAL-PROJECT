@@ -171,6 +171,20 @@ const jobSchema = mongoose.Schema(
             type: String,
             required: [true, 'Please add a location'],
         },
+        district: {
+            type: String,
+            default: null,
+            index: true,
+        },
+        mandal: {
+            type: String,
+            default: null,
+            index: true,
+        },
+        locationLabel: {
+            type: String,
+            default: null,
+        },
         geo: {
             type: {
                 type: String,
@@ -240,6 +254,11 @@ const jobSchema = mongoose.Schema(
                 type: String, // e.g., "Heavy Vehicle", "Commercial"
             },
         ],
+        openings: {
+            type: Number,
+            min: 0,
+            default: null,
+        },
         remoteAllowed: {
             type: Boolean,
             default: false,
@@ -340,10 +359,12 @@ const jobSchema = mongoose.Schema(
 jobSchema.index({ employerId: 1 });
 jobSchema.index({ createdAt: -1 });
 jobSchema.index({ location: 1 });
+jobSchema.index({ district: 1, mandal: 1 });
 jobSchema.index({ geo: '2dsphere' }); // Map indexing
 jobSchema.index({ minSalary: 1, maxSalary: 1 });
 jobSchema.index({ isOpen: 1 });
 jobSchema.index({ isOpen: 1, location: 1 });
+jobSchema.index({ isOpen: 1, district: 1, mandal: 1 });
 jobSchema.index({ country: 1, region: 1, remoteAllowed: 1, createdAt: -1 });
 jobSchema.index({ countryCode: 1, regionCode: 1, createdAt: -1 });
 jobSchema.index({ employerId: 1, status: 1, createdAt: -1 });

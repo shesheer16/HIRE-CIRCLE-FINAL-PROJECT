@@ -14,11 +14,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { getAuthAccountLabel, normalizeSelectedRole } from '../utils/authRoleSelection';
+import { GLASS_GRADIENTS, GLASS_PALETTE, GLASS_SHADOWS, GLASS_SURFACES } from '../theme/glass';
 
 export default function RegisterScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const passedRole = String(route?.params?.selectedRole || 'worker').toLowerCase();
-    const selectedRole = ['employer', 'hybrid'].includes(passedRole) ? passedRole : 'worker';
+    const selectedRole = normalizeSelectedRole(route?.params?.selectedRole || 'worker');
+    const accountLabel = useMemo(() => getAuthAccountLabel(selectedRole), [selectedRole]);
 
     const [authMode, setAuthMode] = useState('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -28,8 +31,8 @@ export default function RegisterScreen({ navigation, route }) {
     const [loading, setLoading] = useState(false);
 
     const subtitleText = useMemo(
-        () => `Create your ${selectedRole === 'hybrid' ? 'Hybrid' : (selectedRole === 'employer' ? 'Employer' : 'Job Seeker')} account`,
-        [selectedRole]
+        () => `Create your ${accountLabel} account`,
+        [accountLabel]
     );
 
     const canSubmit = useMemo(() => {
@@ -41,10 +44,11 @@ export default function RegisterScreen({ navigation, route }) {
     }, [authMode, confirmPassword, email, password, phoneNumber]);
 
     const handleBack = useCallback(() => {
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-        }
-    }, [navigation]);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Login',
+        });
+    }, [navigation, selectedRole]);
 
     const openSignIn = useCallback(() => {
         navigation.navigate('Login', { selectedRole });
@@ -92,200 +96,273 @@ export default function RegisterScreen({ navigation, route }) {
     ]);
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-            <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="always"
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 24 },
-                ]}
+        <LinearGradient colors={GLASS_GRADIENTS.screen} style={styles.container}>
+            <View style={styles.bgGlowTop} />
+            <View style={styles.bgGlowMid} />
+            <View style={styles.bgGlowBottom} />
+            <KeyboardAvoidingView
+                style={styles.keyboardShell}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             >
-                <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.8}>
-                    <Ionicons name="chevron-back" size={18} color="#94a3b8" />
-                    <Text style={styles.backBtnText}>Back</Text>
-                </TouchableOpacity>
-
-                <View style={styles.headerBlock}>
-                    <Text style={styles.title}>Create Account</Text>
-                    <Text style={styles.subtitle}>{subtitleText}</Text>
-                </View>
-
-                <View style={styles.segmentWrap}>
-                    <TouchableOpacity
-                        style={[styles.segmentButton, authMode === 'phone' && styles.segmentButtonActive]}
-                        activeOpacity={0.9}
-                        onPress={() => setAuthMode('phone')}
-                    >
-                        <Text style={[styles.segmentText, authMode === 'phone' && styles.segmentTextActive]}>PHONE</Text>
+                <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="always"
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 24 },
+                    ]}
+                >
+                    <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.8}>
+                        <Ionicons name="chevron-back" size={18} color={GLASS_PALETTE.accentText} />
+                        <Text style={styles.backBtnText}>Back</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.segmentButton, authMode === 'email' && styles.segmentButtonActive]}
-                        activeOpacity={0.9}
-                        onPress={() => setAuthMode('email')}
-                    >
-                        <Text style={[styles.segmentText, authMode === 'email' && styles.segmentTextActive]}>EMAIL</Text>
-                    </TouchableOpacity>
-                </View>
 
-                <View style={styles.formBlock}>
-                    {authMode === 'phone' ? (
-                        <View>
-                            <Text style={styles.fieldLabel}>PHONE NUMBER</Text>
-                            <View style={styles.phoneRow}>
-                                <View style={styles.countryCodeWrap}>
-                                    <Text style={styles.countryCodeText}>+91</Text>
+                    <View style={styles.heroCard}>
+                        <View style={styles.heroPill}>
+                            <Ionicons name="sparkles-outline" size={14} color={GLASS_PALETTE.accentText} />
+                            <Text style={styles.heroPillText}>{accountLabel} setup</Text>
+                        </View>
+                        <Text style={styles.title}>Create Account</Text>
+                        <Text style={styles.subtitle}>{subtitleText}</Text>
+                    </View>
+
+                    <View style={styles.formCard}>
+                        <View style={styles.segmentWrap}>
+                            <TouchableOpacity
+                                style={[styles.segmentButton, authMode === 'phone' && styles.segmentButtonActive]}
+                                activeOpacity={0.9}
+                                onPress={() => setAuthMode('phone')}
+                            >
+                                <Text style={[styles.segmentText, authMode === 'phone' && styles.segmentTextActive]}>PHONE</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.segmentButton, authMode === 'email' && styles.segmentButtonActive]}
+                                activeOpacity={0.9}
+                                onPress={() => setAuthMode('email')}
+                            >
+                                <Text style={[styles.segmentText, authMode === 'email' && styles.segmentTextActive]}>EMAIL</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.formBlock}>
+                            {authMode === 'phone' ? (
+                                <View>
+                                    <Text style={styles.fieldLabel}>PHONE NUMBER</Text>
+                                    <View style={styles.phoneRow}>
+                                        <View style={styles.countryCodeWrap}>
+                                            <Text style={styles.countryCodeText}>+91</Text>
+                                        </View>
+                                        <TextInput
+                                            style={styles.phoneInput}
+                                            value={phoneNumber}
+                                            onChangeText={setPhoneNumber}
+                                            keyboardType="phone-pad"
+                                            placeholder="98765 43210"
+                                            placeholderTextColor={GLASS_PALETTE.textSoft}
+                                            maxLength={15}
+                                        />
+                                    </View>
                                 </View>
+                            ) : (
+                                <View>
+                                    <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={email}
+                                        onChangeText={setEmail}
+                                        autoCapitalize="none"
+                                        keyboardType="email-address"
+                                        placeholder="user@example.com"
+                                        placeholderTextColor={GLASS_PALETTE.textSoft}
+                                    />
+                                </View>
+                            )}
+
+                            <View>
+                                <Text style={styles.fieldLabel}>PASSWORD</Text>
                                 <TextInput
-                                    style={styles.phoneInput}
-                                    value={phoneNumber}
-                                    onChangeText={setPhoneNumber}
-                                    keyboardType="phone-pad"
-                                    placeholder="98765 43210"
-                                    placeholderTextColor="#94a3b8"
-                                    maxLength={15}
+                                    style={styles.input}
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry
+                                    placeholder="At least 6 characters"
+                                    placeholderTextColor={GLASS_PALETTE.textSoft}
                                 />
                             </View>
-                        </View>
-                    ) : (
-                        <View>
-                            <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
-                            <TextInput
-                                style={styles.input}
-                                value={email}
-                                onChangeText={setEmail}
-                                autoCapitalize="none"
-                                keyboardType="email-address"
-                                placeholder="user@example.com"
-                                placeholderTextColor="#94a3b8"
-                            />
-                        </View>
-                    )}
 
-                    <View>
-                        <Text style={styles.fieldLabel}>PASSWORD</Text>
-                        <TextInput
-                            style={styles.input}
-                            value={password}
-                            onChangeText={setPassword}
-                            secureTextEntry
-                            placeholder="At least 6 characters"
-                            placeholderTextColor="#94a3b8"
-                        />
+                            <View>
+                                <Text style={styles.fieldLabel}>CONFIRM PASSWORD</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    value={confirmPassword}
+                                    onChangeText={setConfirmPassword}
+                                    secureTextEntry
+                                    placeholder="Re-enter password"
+                                    placeholderTextColor={GLASS_PALETTE.textSoft}
+                                />
+                            </View>
+
+                            <TouchableOpacity
+                                style={[styles.submitWrap, (!canSubmit || loading) && styles.submitWrapDisabled]}
+                                activeOpacity={0.9}
+                                onPress={handleCreateAccount}
+                                disabled={!canSubmit || loading}
+                            >
+                                <LinearGradient
+                                    colors={GLASS_GRADIENTS.accent}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.submitGradient}
+                                >
+                                    {loading ? (
+                                        <ActivityIndicator size="small" color="#ffffff" />
+                                    ) : (
+                                        <Text style={styles.submitText}>Create Account</Text>
+                                    )}
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
-                    <View>
-                        <Text style={styles.fieldLabel}>CONFIRM PASSWORD</Text>
-                        <TextInput
-                            style={styles.input}
-                            value={confirmPassword}
-                            onChangeText={setConfirmPassword}
-                            secureTextEntry
-                            placeholder="Re-enter password"
-                            placeholderTextColor="#94a3b8"
-                        />
+                    <View style={styles.footerCard}>
+                        <View style={styles.footerRow}>
+                            <Text style={styles.footerText}>Already have an account? </Text>
+                            <TouchableOpacity activeOpacity={0.8} onPress={openSignIn}>
+                                <Text style={styles.footerLink}>Sign In</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
-
-                    <TouchableOpacity
-                        style={[styles.submitWrap, (!canSubmit || loading) && styles.submitWrapDisabled]}
-                        activeOpacity={0.9}
-                        onPress={handleCreateAccount}
-                        disabled={!canSubmit || loading}
-                    >
-                        <LinearGradient
-                            colors={['#7c3aed', '#9333ea']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={styles.submitGradient}
-                        >
-                            {loading ? (
-                                <ActivityIndicator size="small" color="#ffffff" />
-                            ) : (
-                                <Text style={styles.submitText}>Create Account</Text>
-                            )}
-                        </LinearGradient>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.footerRow}>
-                    <Text style={styles.footerText}>Already have an account? </Text>
-                    <TouchableOpacity activeOpacity={0.8} onPress={openSignIn}>
-                        <Text style={styles.footerLink}>Sign In</Text>
-                    </TouchableOpacity>
-                </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f4f5f7',
+    },
+    keyboardShell: {
+        flex: 1,
+    },
+    bgGlowTop: {
+        position: 'absolute',
+        top: -120,
+        left: -88,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: GLASS_PALETTE.glowLavender,
+    },
+    bgGlowMid: {
+        position: 'absolute',
+        top: '34%',
+        right: -64,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: GLASS_PALETTE.glowBlue,
+    },
+    bgGlowBottom: {
+        position: 'absolute',
+        right: -84,
+        bottom: -84,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: GLASS_PALETTE.glowRose,
     },
     scrollContent: {
         flexGrow: 1,
         paddingHorizontal: 24,
     },
     backBtn: {
+        ...GLASS_SURFACES.softPanel,
         minHeight: 44,
         alignSelf: 'flex-start',
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 999,
         marginBottom: 22,
     },
     backBtnText: {
         fontSize: 13,
         lineHeight: 18,
-        color: '#94a3b8',
-        fontWeight: '600',
+        color: GLASS_PALETTE.accentText,
+        fontWeight: '700',
     },
-    headerBlock: {
+    heroCard: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
+        borderRadius: 28,
+        paddingHorizontal: 20,
+        paddingVertical: 22,
         marginBottom: 18,
     },
+    heroPill: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        backgroundColor: GLASS_PALETTE.accentSoft,
+        marginBottom: 14,
+    },
+    heroPillText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '700',
+        color: GLASS_PALETTE.accentText,
+    },
     title: {
-        fontSize: 27,
-        lineHeight: 32,
+        fontSize: 30,
+        lineHeight: 34,
         fontWeight: '800',
-        color: '#0f172a',
-        letterSpacing: -0.2,
+        color: GLASS_PALETTE.textStrong,
+        letterSpacing: -0.5,
     },
     subtitle: {
         marginTop: 8,
-        fontSize: 13,
-        lineHeight: 18,
+        fontSize: 14,
+        lineHeight: 20,
         fontWeight: '600',
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
+    },
+    formCard: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
+        borderRadius: 26,
+        padding: 18,
     },
     segmentWrap: {
         flexDirection: 'row',
-        backgroundColor: '#e2e8f0',
-        borderRadius: 14,
+        backgroundColor: 'rgba(235, 239, 255, 0.78)',
+        borderRadius: 16,
         padding: 4,
-        marginTop: 6,
     },
     segmentButton: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: 46,
-        borderRadius: 10,
+        borderRadius: 12,
     },
     segmentButtonActive: {
-        backgroundColor: '#ffffff',
+        backgroundColor: 'rgba(255,255,255,0.88)',
     },
     segmentText: {
         fontSize: 12,
         lineHeight: 16,
         fontWeight: '700',
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
     },
     segmentTextActive: {
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
     },
     formBlock: {
         marginTop: 20,
@@ -296,16 +373,14 @@ const styles = StyleSheet.create({
         fontSize: 11,
         lineHeight: 14,
         fontWeight: '700',
-        color: '#94a3b8',
+        color: GLASS_PALETTE.textSoft,
         letterSpacing: 0.9,
     },
     phoneRow: {
+        ...GLASS_SURFACES.input,
         flexDirection: 'row',
         alignItems: 'center',
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d5dee8',
-        backgroundColor: '#f3f6f9',
         minHeight: 54,
         overflow: 'hidden',
     },
@@ -316,14 +391,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         paddingVertical: 14,
         borderRightWidth: 1,
-        borderRightColor: '#d5dee8',
-        backgroundColor: '#f8fafc',
+        borderRightColor: GLASS_PALETTE.borderStrong,
+        backgroundColor: 'rgba(255,255,255,0.55)',
     },
     countryCodeText: {
         fontSize: 14,
         lineHeight: 18,
         fontWeight: '700',
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
     },
     phoneInput: {
         flex: 1,
@@ -332,30 +407,24 @@ const styles = StyleSheet.create({
         fontSize: 14,
         lineHeight: 19,
         fontWeight: '500',
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
     },
     input: {
+        ...GLASS_SURFACES.input,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d5dee8',
-        backgroundColor: '#f3f6f9',
         minHeight: 54,
         paddingHorizontal: 14,
         paddingVertical: 12,
         fontSize: 14,
         lineHeight: 19,
         fontWeight: '500',
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
     },
     submitWrap: {
+        ...GLASS_SHADOWS.accent,
         marginTop: 10,
-        borderRadius: 14,
+        borderRadius: 18,
         overflow: 'hidden',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.22,
-        shadowRadius: 10,
-        elevation: 4,
     },
     submitWrapDisabled: {
         opacity: 0.55,
@@ -371,9 +440,15 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: '#ffffff',
     },
+    footerCard: {
+        ...GLASS_SURFACES.softPanel,
+        ...GLASS_SHADOWS.soft,
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        marginTop: 18,
+    },
     footerRow: {
-        marginTop: 24,
-        marginBottom: 8,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
@@ -381,13 +456,13 @@ const styles = StyleSheet.create({
     footerText: {
         fontSize: 12,
         lineHeight: 16,
-        color: '#94a3b8',
+        color: GLASS_PALETTE.textSoft,
         fontWeight: '600',
     },
     footerLink: {
         fontSize: 12,
         lineHeight: 16,
-        color: '#7c3aed',
-        fontWeight: '700',
+        color: GLASS_PALETTE.accentText,
+        fontWeight: '800',
     },
 });

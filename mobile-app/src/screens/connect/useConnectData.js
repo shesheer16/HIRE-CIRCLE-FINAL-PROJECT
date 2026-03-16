@@ -8,6 +8,7 @@ import { AuthContext } from '../../context/AuthContext';
 
 const INITIAL_FEED_POSTS = [];
 const FEED_PAGE_SIZE = 20;
+const CONNECT_READ_TIMEOUT_MS = 6500;
 const CONNECT_SAVED_POST_IDS_KEY_PREFIX = '@connect_saved_post_ids_';
 const CONNECT_PENDING_POST_REPORTS_KEY = '@connect_pending_post_reports';
 
@@ -270,6 +271,9 @@ export function useConnectData() {
     const [appliedGigIds, setAppliedGigIds] = useState(new Set());
     const [hiredProIds, setHiredProIds] = useState(new Set());
     const [radarRefreshing, setRadarRefreshing] = useState(false);
+    const [pulseLoading, setPulseLoading] = useState(true);
+    const [pulseError, setPulseError] = useState('');
+    const [nearbyProsError, setNearbyProsError] = useState('');
     const [pulseToast, setPulseToast] = useState(null);
     const pulseAnim = useRef(new Animated.Value(0.3)).current;
     const pulseLoopRef = useRef(null);
@@ -309,6 +313,7 @@ export function useConnectData() {
     const [loadingFeed, setLoadingFeed] = useState(false);
     const [feedPullRefreshing, setFeedPullRefreshing] = useState(false);
     const [loadingMoreFeed, setLoadingMoreFeed] = useState(false);
+    const [feedError, setFeedError] = useState('');
     const [likedPostIds, setLikedPostIds] = useState(new Set());
     const [savedPostIds, setSavedPostIds] = useState(new Set());
     const [likeCountMap, setLikeCountMap] = useState({});
@@ -325,6 +330,8 @@ export function useConnectData() {
     const feedPagingInFlightRef = useRef(false);
     const feedLastLoadMoreAtRef = useRef(0);
     const bootstrapLoadKeyRef = useRef('');
+    const academyMentorsAutoLoadedRef = useRef(false);
+    const nearbyProsAutoLoadedRef = useRef(false);
     const safeCircleMessageCount = Array.isArray(circleMessages) ? circleMessages.length : 0;
     const savedPostsStorageKey = useMemo(
         () => getSavedPostsStorageKey(currentUserId || 'guest'),
@@ -377,7 +384,7 @@ export function useConnectData() {
         return {
             id: String(safePost?._id || Date.now()),
             user: authorName,
-            role: role === 'employer' ? 'Employer' : role === 'worker' ? 'Worker' : String(role),
+            role: role === 'employer' ? 'Employer' : role === 'worker' ? 'Job Seeker' : String(role),
             text: String(safePost?.text || ''),
             time: timeAgo(safePost?.createdAt),
             type: 'text',
@@ -407,7 +414,7 @@ export function useConnectData() {
             author: authorName,
             authorId,
             authorPrimaryRole: authorPrimaryRole === 'employer' ? 'employer' : 'worker',
-            role: post?.user?.primaryRole === 'employer' ? 'Employer' : 'Member',
+            role: post?.user?.primaryRole === 'employer' ? 'Employer' : 'Job Seeker',
             time: timeAgo(post?.createdAt),
             karma: 0,
             text: post?.content || '',
@@ -440,6 +447,7 @@ export function useConnectData() {
     const fetchFeedPosts = useCallback(async (pageToLoad = 1, replace = false, options = {}) => {
         const safePage = Math.max(1, Number(pageToLoad || 1));
         const showRefreshIndicator = Boolean(options?.showRefreshIndicator);
+        setFeedError('');
         if (replace) {
             if (feedRefreshingInFlightRef.current) return;
             feedRefreshingInFlightRef.current = true;
@@ -464,7 +472,8 @@ export function useConnectData() {
         try {
             const { data } = await client.get('/api/feed/posts', {
                 params: { page: safePage, limit: 20, visibility: 'community' },
-                timeout: 7000,
+                timeout: CONNECT_READ_TIMEOUT_MS,
+                __maxRetries: 1,
                 __skipApiErrorHandler: true,
             });
             if (requestId !== feedFetchRequestIdRef.current) return;
@@ -528,9 +537,22 @@ export function useConnectData() {
                 return next;
             });
         } catch (_error) {
-            // Fail silently: keep existing posts on refresh failure,
-            // show empty state on initial load. No intrusive alert.
-            setHasMoreFeed(false);
+            const hasVisiblePosts = feedPosts.length > 0;
+            if (replace) {
+                if (hasVisiblePosts) {
+                    setFeedError(
+                        showRefreshIndicator
+                            ? 'Could not refresh right now. Showing your last loaded posts.'
+                            : 'Could not reload your feed right now. Showing your last loaded posts.'
+                    );
+                } else {
+                    setFeedError('We could not load your feed right now. Pull down or tap retry to try again.');
+                    setHasMoreFeed(false);
+                }
+            } else {
+                setFeedError('Could not load more posts right now. Pull down to refresh and try again.');
+                setHasMoreFeed(false);
+            }
         } finally {
             if (replace) {
                 feedRefreshingInFlightRef.current = false;
@@ -543,7 +565,7 @@ export function useConnectData() {
                 setLoadingMoreFeed(false);
             }
         }
-    }, [hasMoreFeed, mapApiPost]);
+    }, [feedPosts.length, hasMoreFeed, mapApiPost]);
 
     const fetchPostComments = useCallback(async (postId) => {
         const normalizedPostId = String(postId || '').trim();
@@ -780,11 +802,6 @@ export function useConnectData() {
 
     const handlePost = useCallback(async () => {
         if (postingFeed) return;
-        const safeContent = String(composerText || '').trim();
-        if (!safeContent) {
-            Alert.alert('Add your message', 'Please write a short caption before publishing.');
-            return;
-        }
 
         if (isVoiceRecording) {
             await stopVoiceRecording();
@@ -811,6 +828,20 @@ export function useConnectData() {
                     ? 'video'
                     : 'text';
         const mappedLocalType = feedType === 'photo' ? 'gallery' : feedType;
+        const safeContent = String(composerText || '').trim();
+        const resolvedContent = safeContent || (
+            feedType === 'voice'
+                ? 'Shared a voice update.'
+                : feedType === 'photo'
+                    ? 'Shared a photo update.'
+                    : feedType === 'video'
+                        ? 'Shared a video update.'
+                        : ''
+        );
+        if (!resolvedContent) {
+            Alert.alert('Add your message', 'Please write a short message before publishing.');
+            return;
+        }
 
         const mediaPayload = composerMediaAssets
             .map((asset) => ({
@@ -829,10 +860,10 @@ export function useConnectData() {
             author: currentUserName,
             authorId: currentUserId,
             authorPrimaryRole: isEmployerRole ? 'employer' : 'worker',
-            role: isEmployerRole ? 'Employer' : 'Member',
+            role: isEmployerRole ? 'Employer' : 'Job Seeker',
             time: 'Just now',
             karma: 0,
-            text: safeContent,
+            text: resolvedContent,
             likes: 0,
             comments: 0,
             commentEntries: [],
@@ -878,7 +909,7 @@ export function useConnectData() {
         try {
             const { data } = await client.post('/api/feed/posts', {
                 type: feedType,
-                content: safeContent,
+                content: resolvedContent,
                 visibility: FEED_VISIBILITY_OPTIONS.includes(String(composerVisibility || '').toLowerCase())
                     ? String(composerVisibility || '').toLowerCase()
                     : 'community',
@@ -1162,13 +1193,13 @@ export function useConnectData() {
             mode: 'candidate',
             name: displayName,
             avatar,
-            headline: String(safePost?.role || 'Community Member'),
-            industryTag: 'CANDIDATE PROFILE',
+            headline: String(safePost?.role || 'Job Seeker'),
+            industryTag: 'JOB SEEKER PROFILE',
             summary: headline || 'Active in community conversations.',
             experienceYears: 0,
             skills: [],
             highlights: [
-                { label: 'Role', value: String(safePost?.role || 'Member') },
+                { label: 'Role', value: String(safePost?.role || 'Job Seeker') },
                 { label: 'Last Active', value: String(safePost?.time || 'Recently') },
             ],
             workHistory: [],
@@ -1274,9 +1305,14 @@ export function useConnectData() {
 
         setJobPreviewApplying(true);
         try {
+            const workerId = await resolveWorkerApplicationIdentity();
+            if (!workerId) {
+                Alert.alert('Apply failed', 'Complete your worker profile before applying.');
+                return;
+            }
             await client.post('/api/applications', {
                 jobId,
-                workerId: userInfo._id,
+                workerId,
                 initiatedBy: 'worker',
             }, {
                 __skipApiErrorHandler: true,
@@ -1290,7 +1326,7 @@ export function useConnectData() {
         } finally {
             setJobPreviewApplying(false);
         }
-    }, [appliedJobPreviewIds, closeJobPreview, isEmployerRole, jobPreview?._id, showPulseToast, userInfo?._id]);
+    }, [appliedJobPreviewIds, closeJobPreview, isEmployerRole, jobPreview?._id, resolveWorkerApplicationIdentity, showPulseToast, userInfo?._id]);
 
     const handleVouch = useCallback(async (postId, post = null) => {
         try {
@@ -1450,11 +1486,46 @@ export function useConnectData() {
         pulseToastTimeoutRef.current = setTimeout(() => setPulseToast(null), 2500);
     }, []);
 
+    const resolveWorkerApplicationIdentity = useCallback(async () => {
+        const safeStoredWorkerProfileId = String(
+            userInfo?.workerProfileId
+            || await AsyncStorage.getItem('@worker_profile_id')
+            || ''
+        ).trim();
+        if (safeStoredWorkerProfileId) {
+            return safeStoredWorkerProfileId;
+        }
+
+        try {
+            const { data } = await client.get('/api/users/profile', {
+                __skipApiErrorHandler: true,
+                timeout: CONNECT_READ_TIMEOUT_MS,
+                params: { role: 'worker' },
+            });
+            const workerProfileId = String(data?.profile?._id || '').trim();
+            if (workerProfileId) {
+                await AsyncStorage.setItem('@worker_profile_id', workerProfileId);
+                return workerProfileId;
+            }
+        } catch (_error) {
+            // Fall back to user id if worker profile lookup is not available.
+        }
+
+        return String(userInfo?._id || '').trim();
+    }, [userInfo?._id, userInfo?.workerProfileId]);
+
     const fetchPulseItems = useCallback(async () => {
+        const shouldShowLoading = pulseItems.length === 0;
+        if (shouldShowLoading) {
+            setPulseLoading(true);
+        }
+        setPulseError('');
         const requestId = pulseFetchRequestIdRef.current + 1;
         pulseFetchRequestIdRef.current = requestId;
         try {
             const { data } = await client.get('/api/pulse', {
+                timeout: CONNECT_READ_TIMEOUT_MS,
+                __maxRetries: 1,
                 __skipApiErrorHandler: true,
             });
             if (requestId !== pulseFetchRequestIdRef.current) {
@@ -1464,6 +1535,7 @@ export function useConnectData() {
                 ? data.items.filter((item) => item && typeof item === 'object' && !isDemoRecord(item))
                 : [];
             const seen = new Set();
+            const hasServerPulseRanking = items.some((item) => Number.isFinite(Number(item?.pulseRank)));
             const mapped = items
                 .map((item) => ({
                     id: item.id || item._id,
@@ -1473,6 +1545,8 @@ export function useConnectData() {
                     createdAt: item.createdAt || item.timePosted || null,
                     interactionCount: Number(item.interactionCount || 0),
                     engagementScore: Number(item.engagementScore || 0),
+                    pulseRank: Number(item.pulseRank || 0),
+                    localityTier: Number(item.localityTier || 0),
                     rawTimePosted: item.timePosted,
                     rawCategory: item.category,
                     rawEmployer: item.employer,
@@ -1481,6 +1555,9 @@ export function useConnectData() {
                     rawContent: item.content,
                     rawDistance: item.distance,
                     rawLocation: item.location,
+                    rawDistrict: item.district,
+                    rawMandal: item.mandal,
+                    rawLocationLabel: item.locationLabel,
                     rawPay: item.pay,
                     rawSalaryRange: item.salaryRange,
                     rawUrgent: item.urgent,
@@ -1494,6 +1571,10 @@ export function useConnectData() {
                     return true;
                 })
                 .sort((left, right) => {
+                    if (hasServerPulseRanking) {
+                        if (right.pulseRank !== left.pulseRank) return right.pulseRank - left.pulseRank;
+                        if (right.localityTier !== left.localityTier) return right.localityTier - left.localityTier;
+                    }
                     const leftScore = Number(left.engagementScore || 0);
                     const rightScore = Number(right.engagementScore || 0);
                     if (rightScore !== leftScore) return rightScore - leftScore;
@@ -1510,7 +1591,11 @@ export function useConnectData() {
                     jobId: String(item.rawJobId || (String(item.rawPostType || '').toLowerCase() === 'job' ? item.id : '') || '').trim(),
                     title: item.rawTitle || item.rawContent || 'Urgent Requirement',
                     employer: item.rawEmployer || item.rawCompanyName || 'Employer',
-                    distance: item.rawDistance || item.rawLocation || 'Nearby',
+                    companyName: item.rawCompanyName || item.rawEmployer || 'Employer',
+                    distance: item.rawDistance || item.rawLocationLabel || item.rawLocation || 'Nearby',
+                    location: item.rawLocationLabel || item.rawLocation || item.rawDistance || 'Nearby',
+                    district: String(item.rawDistrict || '').trim(),
+                    mandal: String(item.rawMandal || '').trim(),
                     pay: item.rawPay || item.rawSalaryRange || 'Negotiable',
                     urgent: Boolean(item.rawUrgent || item.rawIsPulse),
                     timePosted: timeAgo(item.createdAt || item.rawTimePosted),
@@ -1519,24 +1604,48 @@ export function useConnectData() {
                     categoryColor: '#b45309',
                     postType: String(item.rawPostType || 'status').toLowerCase(),
                     canApply: Boolean(item.rawCanApply) || String(item.rawPostType || '').toLowerCase() === 'job',
+                    pulseRank: item.pulseRank,
+                    localityTier: item.localityTier,
+                    requirements: Array.isArray(item.rawRequirements)
+                        ? item.rawRequirements.filter((entry) => typeof entry === 'string' && entry.trim())
+                        : [],
+                    description: String(item.rawContent || item.rawTitle || '').trim(),
+                    createdAt: item.createdAt || null,
                 }));
             setPulseItems(mapped);
-        } catch (error) {
+            setPulseError('');
+            if (shouldShowLoading) {
+                setPulseLoading(false);
+            }
+        } catch (_error) {
             if (requestId !== pulseFetchRequestIdRef.current) {
                 return;
             }
-            setPulseItems([]);
+            if (pulseItems.length > 0) {
+                setPulseError('Could not refresh Pulse right now. Showing your last live radar.');
+            } else {
+                setPulseError('Pulse is unavailable right now. Pull down or tap retry to try again.');
+            }
+            if (shouldShowLoading) {
+                setPulseLoading(false);
+            }
         }
-    }, []);
+    }, [pulseItems.length]);
 
     const fetchNearbyPros = useCallback(async () => {
         if (!isEmployerRole) {
             setNearbyPros([]);
+            setNearbyProsError('');
             return;
         }
 
+        setNearbyProsError('');
         try {
-            const jobsResponse = await client.get('/api/jobs/my-jobs', { __skipApiErrorHandler: true });
+            const jobsResponse = await client.get('/api/jobs/my-jobs', {
+                __skipApiErrorHandler: true,
+                timeout: CONNECT_READ_TIMEOUT_MS,
+                __maxRetries: 1,
+            });
             const jobs = Array.isArray(jobsResponse?.data)
                 ? jobsResponse.data
                 : (Array.isArray(jobsResponse?.data?.data) ? jobsResponse.data.data : []);
@@ -1551,6 +1660,7 @@ export function useConnectData() {
 
             if (!safeJobs.length) {
                 setNearbyPros([]);
+                setNearbyProsError('');
                 return;
             }
 
@@ -1559,6 +1669,8 @@ export function useConnectData() {
                     try {
                         const response = await client.get(`/api/matches/employer/${String(job._id).trim()}`, {
                             __skipApiErrorHandler: true,
+                            timeout: CONNECT_READ_TIMEOUT_MS,
+                            __maxRetries: 1,
                         });
                         return { job, response };
                     } catch (_error) {
@@ -1591,7 +1703,7 @@ export function useConnectData() {
                         workerId,
                         jobId: String(job?._id || '').trim(),
                         name: workerName || 'Professional',
-                        role: String(firstRole?.roleName || item?.tier || 'Worker').trim() || 'Worker',
+                        role: String(firstRole?.roleName || item?.tier || 'Job Seeker').trim() || 'Job Seeker',
                         distance: String(worker?.city || job?.location || 'Nearby').trim() || 'Nearby',
                         karma: String(Math.round(Number(item?.trustScore || item?.matchScore || 0))),
                         available: worker?.isAvailable !== false,
@@ -1630,8 +1742,10 @@ export function useConnectData() {
                 .slice(0, 20);
 
             setNearbyPros(ranked);
+            setNearbyProsError('');
         } catch (_error) {
             setNearbyPros([]);
+            setNearbyProsError('Nearby job seeker matches could not load right now.');
         }
     }, [isEmployerRole]);
 
@@ -1656,9 +1770,14 @@ export function useConnectData() {
             return;
         }
         try {
+            const workerId = await resolveWorkerApplicationIdentity();
+            if (!workerId) {
+                showPulseToast('Complete your worker profile before applying.');
+                return;
+            }
             await client.post('/api/applications', {
                 jobId,
-                workerId: userInfo?._id,
+                workerId,
                 initiatedBy: 'worker',
             }, {
                 __skipApiErrorHandler: true,
@@ -1673,7 +1792,7 @@ export function useConnectData() {
             }
             showPulseToast('Could not apply right now. Please retry.');
         }
-    }, [isEmployerRole, showPulseToast, userInfo?._id]);
+    }, [isEmployerRole, resolveWorkerApplicationIdentity, showPulseToast]);
 
     const handleHirePro = useCallback(async (pro) => {
         if (!isEmployerRole) {
@@ -1685,7 +1804,7 @@ export function useConnectData() {
         const jobId = String(pro?.jobId || '').trim();
         const candidateName = String(pro?.name || 'Professional').trim() || 'Professional';
         if (!workerId || !jobId) {
-            showPulseToast('Candidate invite requires a valid worker and job.');
+            showPulseToast('Job seeker invite requires a valid worker and job.');
             return;
         }
 
@@ -1731,6 +1850,7 @@ export function useConnectData() {
 
     const fetchAcademyData = useCallback(async (options = {}) => {
         const refreshMentorsOnly = Boolean(options?.refreshMentorsOnly);
+        const includeMentorMatch = options?.includeMentorMatch !== false;
 
         if (refreshMentorsOnly) {
             setAcademyRefreshingMentors(true);
@@ -1742,11 +1862,29 @@ export function useConnectData() {
         try {
             const requests = [];
             if (!refreshMentorsOnly) {
-                requests.push(client.get('/api/academy/courses', { __skipApiErrorHandler: true }));
-                requests.push(client.get('/api/academy/enrolled', { __skipApiErrorHandler: true }));
+                requests.push(client.get('/api/academy/courses', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }));
+                requests.push(client.get('/api/academy/enrolled', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }));
             }
-            requests.push(client.get('/api/academy/mentor-match', { __skipApiErrorHandler: true }));
-            requests.push(client.get('/api/academy/mentor-requests', { __skipApiErrorHandler: true }));
+            if (includeMentorMatch) {
+                requests.push(client.get('/api/academy/mentor-match', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }));
+            }
+            requests.push(client.get('/api/academy/mentor-requests', {
+                __skipApiErrorHandler: true,
+                timeout: CONNECT_READ_TIMEOUT_MS,
+                __maxRetries: 1,
+            }));
 
             const settled = await Promise.allSettled(requests);
             let cursor = 0;
@@ -1757,7 +1895,7 @@ export function useConnectData() {
                 coursesResult = settled[cursor++];
                 enrolledResult = settled[cursor++];
             }
-            const mentorsResult = settled[cursor++];
+            const mentorsResult = includeMentorMatch ? settled[cursor++] : null;
             const mentorRequestsResult = settled[cursor];
 
             if (!refreshMentorsOnly) {
@@ -1780,7 +1918,7 @@ export function useConnectData() {
             if (mentorsResult?.status === 'fulfilled') {
                 const mentors = mapMentorMatchRows(mentorsResult.value?.data?.mentors);
                 setAcademyMentors(mentors);
-            } else if (refreshMentorsOnly) {
+            } else if (includeMentorMatch && refreshMentorsOnly) {
                 showPulseToast('AI Mentor Match is temporarily unavailable.');
             }
 
@@ -1818,10 +1956,28 @@ export function useConnectData() {
                 __skipApiErrorHandler: true,
             });
             setEnrolledCourseIds((prev) => new Set(prev).add(id));
+            setEnrolledCourses((prev) => {
+                const safePrev = Array.isArray(prev) ? prev : [];
+                if (safePrev.some((item) => String(item?.courseId || '').trim() === String(id))) {
+                    return safePrev;
+                }
+                const matchedCourse = Array.isArray(academyCourses)
+                    ? academyCourses.find((course) => String(course?.id || course?._id || '').trim() === String(id))
+                    : null;
+                return [
+                    {
+                        courseId: String(id),
+                        startedAt: new Date().toISOString(),
+                        progressPercent: 0,
+                        course: matchedCourse || null,
+                    },
+                    ...safePrev,
+                ];
+            });
         } catch (error) {
             Alert.alert('Enrollment Failed', 'Could not enroll right now.');
         }
-    }, []);
+    }, [academyCourses]);
 
     const handleConnectMentor = useCallback(async (id) => {
         const mentorId = String(id || '').trim();
@@ -1888,9 +2044,21 @@ export function useConnectData() {
 
         try {
             const settled = await Promise.allSettled([
-                client.get('/api/bounties', { __skipApiErrorHandler: true }),
-                client.get('/api/bounties/mine', { __skipApiErrorHandler: true }),
-                client.get('/api/growth/referrals', { __skipApiErrorHandler: true }),
+                client.get('/api/bounties', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
+                client.get('/api/bounties/mine', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
+                client.get('/api/growth/referrals', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
             ]);
             const [bountyResult, mineResult, referralResult] = settled;
             const allFailed = settled.every((result) => result.status === 'rejected');
@@ -2170,34 +2338,63 @@ export function useConnectData() {
 
         try {
             const [allResult, myResult] = await Promise.allSettled([
-                client.get('/api/circles', { __skipApiErrorHandler: true }),
-                client.get('/api/circles/my', { __skipApiErrorHandler: true }),
+                client.get('/api/circles', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
+                client.get('/api/circles/my', {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
             ]);
 
-            if (allResult.status === 'fulfilled') {
-                const allCircles = Array.isArray(allResult.value?.data?.circles)
-                    ? allResult.value.data.circles.filter((circle) => circle && typeof circle === 'object' && !isDemoRecord(circle))
-                    : [];
-                setCirclesData(allCircles);
-                setPendingJoinCircleIds(new Set(
-                    allCircles
-                        .filter((circle) => Boolean(circle?.joinRequestPending))
-                        .map((circle) => String(circle?._id || ''))
-                        .filter(Boolean)
-                ));
-            } else {
-                setCirclesData([]);
-                setPendingJoinCircleIds(new Set());
-                setCirclesError('Could not load communities right now.');
-            }
+            const allCircles = allResult.status === 'fulfilled' && Array.isArray(allResult.value?.data?.circles)
+                ? allResult.value.data.circles.filter((circle) => circle && typeof circle === 'object' && !isDemoRecord(circle))
+                : [];
+            const myCircles = myResult.status === 'fulfilled' && Array.isArray(myResult.value?.data?.circles)
+                ? myResult.value.data.circles.filter((circle) => circle && typeof circle === 'object' && !isDemoRecord(circle))
+                : [];
 
-            if (myResult.status === 'fulfilled') {
-                const myCircles = Array.isArray(myResult.value?.data?.circles)
-                    ? myResult.value.data.circles.filter((circle) => circle && typeof circle === 'object' && !isDemoRecord(circle))
-                    : [];
-                setJoinedCircles(new Set(myCircles.map((circle) => String(circle?._id || '')).filter(Boolean)));
-            } else {
-                setJoinedCircles(new Set());
+            const mergedCircleMap = new Map();
+            allCircles.forEach((circle) => {
+                const circleId = String(circle?._id || '').trim();
+                if (!circleId) return;
+                mergedCircleMap.set(circleId, circle);
+            });
+            myCircles.forEach((circle) => {
+                const circleId = String(circle?._id || '').trim();
+                if (!circleId) return;
+                const existing = mergedCircleMap.get(circleId) || {};
+                mergedCircleMap.set(circleId, {
+                    ...existing,
+                    ...circle,
+                    isJoined: true,
+                });
+            });
+
+            const mergedCircles = Array.from(mergedCircleMap.values());
+            const joinedCircleIds = new Set(
+                (myCircles.length > 0 ? myCircles : mergedCircles.filter((circle) => Boolean(circle?.isJoined)))
+                    .map((circle) => String(circle?._id || '').trim())
+                    .filter(Boolean)
+            );
+            const pendingJoinIds = new Set(
+                mergedCircles
+                    .filter((circle) => Boolean(circle?.joinRequestPending))
+                    .map((circle) => String(circle?._id || '').trim())
+                    .filter(Boolean)
+            );
+
+            setCirclesData(mergedCircles);
+            setJoinedCircles(joinedCircleIds);
+            setPendingJoinCircleIds(pendingJoinIds);
+
+            if (allResult.status !== 'fulfilled' && myResult.status === 'fulfilled') {
+                setCirclesError('Could not load explore communities right now. Showing your communities.');
+            } else if (allResult.status !== 'fulfilled' && myResult.status !== 'fulfilled') {
+                setCirclesError('Could not load communities right now.');
             }
         } catch (_error) {
             setCirclesData([]);
@@ -2282,9 +2479,21 @@ export function useConnectData() {
 
         try {
             const [communityRes, postsRes, membersRes] = await Promise.all([
-                client.get(`/api/circles/${circleId}`, { __skipApiErrorHandler: true }),
-                client.get(`/api/circles/${circleId}/posts`, { __skipApiErrorHandler: true }),
-                client.get(`/api/circles/${circleId}/members`, { __skipApiErrorHandler: true }),
+                client.get(`/api/circles/${circleId}`, {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
+                client.get(`/api/circles/${circleId}/posts`, {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
+                client.get(`/api/circles/${circleId}/members`, {
+                    __skipApiErrorHandler: true,
+                    timeout: CONNECT_READ_TIMEOUT_MS,
+                    __maxRetries: 1,
+                }),
             ]);
             const community = (communityRes?.data?.community && typeof communityRes.data.community === 'object')
                 ? communityRes.data.community
@@ -2524,6 +2733,7 @@ export function useConnectData() {
         setLoadingFeed(false);
         setFeedPullRefreshing(false);
         setLoadingMoreFeed(false);
+        setFeedError('');
         setLikedPostIds(new Set());
         setLikeCountMap({});
         setCommentsByPostId({});
@@ -2539,6 +2749,9 @@ export function useConnectData() {
         setAppliedGigIds(new Set());
         setHiredProIds(new Set());
         setRadarRefreshing(false);
+        setPulseLoading(true);
+        setPulseError('');
+        setNearbyProsError('');
 
         setCirclesData([]);
         setJoinedCircles(new Set());
@@ -2547,6 +2760,7 @@ export function useConnectData() {
         setCircleMembers([]);
         setCirclesLoading(false);
         setCirclesRefreshing(false);
+        setCirclesError('');
         setCircleDetailLoading(false);
         setCircleCustomRates([]);
         setShowCircleRateForm(false);
@@ -2558,6 +2772,7 @@ export function useConnectData() {
         setReferredBountyIds(new Set());
         setBountiesLoading(false);
         setBountiesRefreshing(false);
+        setBountiesError('');
         setBountyActionInFlightId('');
         setBountyCreating(false);
         setReferringBounty(null);
@@ -2572,6 +2787,7 @@ export function useConnectData() {
         setConnectedMentorIds(new Set());
         setAcademyLoading(false);
         setAcademyRefreshingMentors(false);
+        setAcademyError('');
 
         setPulseToast(null);
         setBountyToast(null);
@@ -2642,12 +2858,13 @@ export function useConnectData() {
         if (!currentUserId) return;
         if (bootstrapLoadKeyRef.current === nextKey) return;
         bootstrapLoadKeyRef.current = nextKey;
+        academyMentorsAutoLoadedRef.current = false;
+        nearbyProsAutoLoadedRef.current = false;
 
         fetchFeedPosts(1, true);
         const backgroundBootstrapTimer = setTimeout(() => {
             fetchPulseItems();
-            fetchNearbyPros();
-            fetchAcademyData({ refreshMentorsOnly: false });
+            fetchAcademyData({ refreshMentorsOnly: false, includeMentorMatch: false });
             fetchCircles();
             fetchBounties();
         }, 180);
@@ -2660,11 +2877,29 @@ export function useConnectData() {
         isEmployerRole,
         fetchFeedPosts,
         fetchPulseItems,
-        fetchNearbyPros,
         fetchAcademyData,
         fetchCircles,
         fetchBounties,
     ]);
+
+    useEffect(() => {
+        if (String(activeTab || '').toLowerCase() !== 'pulse') return;
+        if (!isEmployerRole) return;
+        if (nearbyProsAutoLoadedRef.current) return;
+        nearbyProsAutoLoadedRef.current = true;
+        fetchNearbyPros();
+    }, [activeTab, fetchNearbyPros, isEmployerRole]);
+
+    useEffect(() => {
+        if (String(activeTab || '').toLowerCase() !== 'academy') return;
+        if (academyMentorsAutoLoadedRef.current) return;
+        academyMentorsAutoLoadedRef.current = true;
+        const hasOverviewData = academyCourses.length > 0 || enrolledCourses.length > 0;
+        fetchAcademyData({
+            refreshMentorsOnly: hasOverviewData,
+            includeMentorMatch: true,
+        });
+    }, [activeTab, academyCourses.length, enrolledCourses.length, fetchAcademyData]);
 
     useEffect(() => {
         if (pulseLoopRef.current) {
@@ -2725,6 +2960,7 @@ export function useConnectData() {
         loadingFeed,
         feedPullRefreshing,
         loadingMoreFeed,
+        feedError,
         composerOpen,
         composerMediaType,
         composerText,
@@ -2746,6 +2982,7 @@ export function useConnectData() {
         jobPreviewApplying,
         hasAppliedToPreviewJob: jobPreview?._id ? appliedJobPreviewIds.has(String(jobPreview._id)) : false,
         onRefreshFeed: handleRefreshFeed,
+        onRetryFeed: () => fetchFeedPosts(1, true),
         onLoadMoreFeed: handleLoadMoreFeed,
         onMediaButtonClick: handleMediaButtonClick,
         onInputAreaClick: handleInputAreaClick,
@@ -2774,6 +3011,7 @@ export function useConnectData() {
         loadingFeed,
         feedPullRefreshing,
         loadingMoreFeed,
+        feedError,
         composerOpen,
         composerMediaType,
         composerText,
@@ -2789,6 +3027,7 @@ export function useConnectData() {
         commentInputMap,
         currentUserId,
         handleRefreshFeed,
+        fetchFeedPosts,
         handleLoadMoreFeed,
         handleMediaButtonClick,
         handleInputAreaClick,
@@ -2825,8 +3064,12 @@ export function useConnectData() {
         appliedGigIds,
         hiredProIds,
         radarRefreshing,
+        pulseLoading,
+        pulseError,
+        nearbyProsError,
         pulseAnim,
         onRefreshRadar: handleRefreshRadar,
+        onRetryPulse: handleRefreshRadar,
         onApplyGig: handleApplyGig,
         onHirePro: handleHirePro,
     }), [
@@ -2836,6 +3079,9 @@ export function useConnectData() {
         appliedGigIds,
         hiredProIds,
         radarRefreshing,
+        pulseLoading,
+        pulseError,
+        nearbyProsError,
         pulseAnim,
         handleRefreshRadar,
         handleApplyGig,

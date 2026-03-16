@@ -3,6 +3,7 @@ import {
     View,
     Text,
     FlatList,
+    RefreshControl,
     StyleSheet,
     TouchableOpacity,
     Image,
@@ -12,6 +13,8 @@ import {
     Pressable,
     TextInput,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,61 +24,15 @@ import CelebrationConfetti from '../components/CelebrationConfetti';
 import client from '../api/client';
 import { validateApplicationsResponse } from '../utils/apiValidator';
 import { useAppStore } from '../store/AppStore';
-
-const STATUS_ALIAS_MAP = {
-    requested: 'applied',
-    pending: 'applied',
-    apply: 'applied',
-    interview: 'interview_requested',
-    accepted: 'offer_accepted',
-    offer_proposed: 'offer_sent',
-    shortlisted_by_employer: 'shortlisted',
-    interview_scheduled: 'interview_requested',
-    offered: 'offer_sent',
-    hired_candidate: 'hired',
-};
-
-const STATUS_LABEL_MAP = {
-    applied: 'Applied',
-    shortlisted: 'Shortlisted',
-    interview_requested: 'Accepted',
-    interview_completed: 'Accepted',
-    offer_sent: 'Accepted',
-    offer_accepted: 'Accepted',
-    rejected: 'Rejected',
-    hired: 'Hired',
-    archived: 'Archived',
-    withdrawn: 'Rejected',
-    expired: 'Rejected',
-    offer_declined: 'Rejected',
-};
-
-const FILTER_STATUS_GROUPS = {
-    All: null,
-    Applied: new Set(['applied']),
-    Shortlisted: new Set(['shortlisted']),
-    Accepted: new Set([
-        'accepted',
-        'interview_requested',
-        'interview_completed',
-        'offer_sent',
-        'offer_accepted',
-    ]),
-    Rejected: new Set(['rejected', 'withdrawn', 'expired', 'offer_declined']),
-    Hired: new Set(['hired']),
-    Archived: new Set(['archived']),
-};
-
-const CHAT_READY_STATUSES = new Set(['interview_requested', 'interview_completed', 'offer_sent', 'offer_accepted', 'hired']);
-const FILTER_OPTIONS = ['All', 'Applied', 'Shortlisted', 'Accepted', 'Rejected', 'Hired', 'Archived'];
-
-const normalizeStatus = (status) => {
-    const normalized = String(status || '').trim().toLowerCase();
-    if (!normalized) return 'applied';
-    return STATUS_ALIAS_MAP[normalized] || normalized;
-};
-
-const mapStatusLabel = (status) => STATUS_LABEL_MAP[normalizeStatus(status)] || 'Applied';
+import { SCREEN_CHROME, SHADOWS } from '../theme/theme';
+import {
+    APPLICATION_FILTER_OPTIONS,
+    CHAT_READY_APPLICATION_STATUSES,
+    doesApplicationStatusMatchFilter,
+    getApplicationStatusLabel,
+    normalizeApplicationStatus,
+} from '../utils/applicationPresentation';
+import { getProfileGateMessage, isProfileRoleGateError } from '../utils/profileReadiness';
 
 const normalizeSearchText = (value) => (
     String(value || '')
@@ -132,10 +89,34 @@ const formatTimeLabel = (value) => {
     return date.toLocaleDateString();
 };
 
-const isProfileRoleGateError = (error) => {
-    const status = Number(error?.response?.status || 0);
-    return status === 403;
+const APPLICATION_CACHE_KEYS = {
+    employer: '@applications_cache_employer',
+    worker: '@applications_cache_worker',
 };
+
+const PremiumStateCard = ({
+    icon = 'alert-circle-outline',
+    accent = '#6d28d9',
+    title,
+    subtitle,
+    actionLabel,
+    onAction,
+}) => (
+    <View style={styles.stateCardWrap}>
+        <View style={styles.stateCard}>
+            <View style={[styles.stateIconBubble, { backgroundColor: `${accent}14` }]}>
+                <Ionicons name={icon} size={22} color={accent} />
+            </View>
+            <Text style={styles.stateTitle}>{title}</Text>
+            {subtitle ? <Text style={styles.stateSubtitle}>{subtitle}</Text> : null}
+            {actionLabel && typeof onAction === 'function' ? (
+                <TouchableOpacity style={styles.statePrimaryAction} onPress={onAction} activeOpacity={0.86}>
+                    <Text style={styles.statePrimaryActionText}>{actionLabel}</Text>
+                </TouchableOpacity>
+            ) : null}
+        </View>
+    </View>
+);
 
 export default function ApplicationsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
@@ -145,11 +126,15 @@ export default function ApplicationsScreen({ navigation }) {
 
     const [applications, setApplications] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState('');
+    const [inlineErrorMessage, setInlineErrorMessage] = useState('');
+    const [softLoadIssue, setSoftLoadIssue] = useState('');
     const [searchDraft, setSearchDraft] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('All');
+    const [profileGateMessage, setProfileGateMessage] = useState('');
     const [showFilterModal, setShowFilterModal] = useState(false);
     const [showHireConfetti, setShowHireConfetti] = useState(false);
     const mountedRef = useRef(true);
@@ -158,6 +143,7 @@ export default function ApplicationsScreen({ navigation }) {
     const initialLoadCompletedRef = useRef(false);
     const applicationsRef = useRef([]);
     const fetchRequestIdRef = useRef(0);
+    const applicationCacheKey = isEmployer ? APPLICATION_CACHE_KEYS.employer : APPLICATION_CACHE_KEYS.worker;
 
     const mapApplicationItem = useCallback((item) => {
         const job = item?.job || {};
@@ -168,17 +154,17 @@ export default function ApplicationsScreen({ navigation }) {
             .map((part) => String(part || '').trim())
             .filter(Boolean)
             .join(' ')
-            || String(worker?.name || worker?.user?.name || worker?.displayName || 'Candidate').trim();
+            || String(worker?.name || worker?.user?.name || worker?.displayName || 'Job Seeker').trim();
         const employerName = employer?.companyName || employer?.name || job?.companyName || 'Employer';
 
         const statusRaw = String(item?.status || '').toLowerCase();
-        const statusCanonical = normalizeStatus(statusRaw);
-        const statusLabel = mapStatusLabel(statusCanonical);
+        const statusCanonical = normalizeApplicationStatus(statusRaw);
+        const statusLabel = getApplicationStatusLabel(statusCanonical);
         const counterpartyName = isEmployer ? workerName : employerName;
         const counterpartyRole = isEmployer
             ? String(worker?.roleProfiles?.[0]?.roleName || worker?.currentRole || worker?.title || '').trim()
             : String(job?.title || item?.jobTitle || '').trim();
-        const fallbackPreview = CHAT_READY_STATUSES.has(statusCanonical)
+        const fallbackPreview = CHAT_READY_APPLICATION_STATUSES.has(statusCanonical)
             ? 'Tap to open chat'
             : `Status: ${statusLabel}`;
         const searchText = [
@@ -202,7 +188,7 @@ export default function ApplicationsScreen({ navigation }) {
         const normalizedSearchText = normalizeSearchText(searchText);
         const statusTokens = new Set([
             statusCanonical,
-            normalizeStatus(statusRaw),
+            normalizeApplicationStatus(statusRaw),
             normalizeSearchText(statusLabel).replace(/\s+/g, '_'),
             normalizeSearchText(statusLabel),
         ].filter(Boolean));
@@ -218,37 +204,84 @@ export default function ApplicationsScreen({ navigation }) {
             statusLabel,
             timeLabel: formatTimeLabel(item?.updatedAt),
             avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(counterpartyName)}&background=7c3aed&color=fff`,
-            isChatReady: CHAT_READY_STATUSES.has(statusCanonical),
+            isChatReady: CHAT_READY_APPLICATION_STATUSES.has(statusCanonical),
             searchText: normalizedSearchText,
             statusTokens,
         };
     }, [isEmployer]);
 
-    const fetchApplications = useCallback(async () => {
+    const readCachedApplications = useCallback(async () => {
+        const raw = await AsyncStorage.getItem(applicationCacheKey);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    }, [applicationCacheKey]);
+
+    const writeCachedApplications = useCallback(async (list = []) => {
+        if (!Array.isArray(list)) return;
+        await AsyncStorage.setItem(applicationCacheKey, JSON.stringify(list.slice(0, 200)));
+    }, [applicationCacheKey]);
+
+    const fetchApplications = useCallback(async ({ refresh = false } = {}) => {
         const requestId = fetchRequestIdRef.current + 1;
         fetchRequestIdRef.current = requestId;
         try {
             if (!mountedRef.current) return;
             setError('');
-            if (!initialLoadCompletedRef.current && applicationsRef.current.length === 0) {
+            setInlineErrorMessage('');
+            setSoftLoadIssue('');
+            setProfileGateMessage('');
+            if (refresh) {
+                setIsRefreshing(true);
+            } else if (!initialLoadCompletedRef.current && applicationsRef.current.length === 0) {
                 setIsLoading(true);
             }
 
-            const { data } = await client.get('/api/applications', {
-                __skipApiErrorHandler: true,
-                __maxRetries: 0,
-                __disableBaseFallback: true,
-                timeout: 5500,
-                params: {
-                    // Load a bigger window so search/filter works across recent app history.
-                    limit: 200,
-                    includeArchived: true,
+            let list = null;
+            let lastError = null;
+            const requestPlans = [
+                {
+                    timeout: 12000,
+                    params: {
+                        limit: 160,
+                        includeArchived: true,
+                        skipTotal: true,
+                    },
                 },
-            });
-            const list = validateApplicationsResponse(data);
+                {
+                    timeout: 8000,
+                    params: {
+                        limit: 80,
+                        includeArchived: false,
+                        skipTotal: true,
+                    },
+                },
+            ];
+
+            for (const plan of requestPlans) {
+                try {
+                    const { data } = await client.get('/api/applications', {
+                        __skipApiErrorHandler: true,
+                        __maxRetries: 0,
+                        timeout: plan.timeout,
+                        params: plan.params,
+                    });
+                    list = validateApplicationsResponse(data);
+                    lastError = null;
+                    break;
+                } catch (requestError) {
+                    lastError = requestError;
+                }
+            }
+
+            if (lastError) {
+                throw lastError;
+            }
+
             const mapped = list.map(mapApplicationItem).filter((item) => item.applicationId);
             if (mountedRef.current && requestId === fetchRequestIdRef.current) {
                 setApplications(mapped);
+                writeCachedApplications(mapped).catch(() => null);
                 if (!hireCelebrationShownRef.current && mapped.some((item) => item.statusCanonical === 'hired')) {
                     hireCelebrationShownRef.current = true;
                     setShowHireConfetti(true);
@@ -262,22 +295,47 @@ export default function ApplicationsScreen({ navigation }) {
                 if (mountedRef.current) {
                     setApplications([]);
                     setError('');
+                    setInlineErrorMessage('');
+                    setProfileGateMessage(getProfileGateMessage({ role: isEmployer ? 'employer' : 'worker' }));
                 }
                 return;
             }
             if (mountedRef.current) {
-                if (applicationsRef.current.length === 0) {
+                let persistedCache = [];
+                try {
+                    persistedCache = await readCachedApplications();
+                } catch (_cacheError) {
+                    persistedCache = [];
+                }
+                const hasCachedApplications = applicationsRef.current.length > 0 || persistedCache.length > 0;
+                if (applicationsRef.current.length === 0 && persistedCache.length > 0) {
+                    setApplications(persistedCache);
+                } else if (!hasCachedApplications) {
                     setApplications([]);
                 }
-                setError('');
+                if (hasCachedApplications) {
+                    setError('');
+                    setInlineErrorMessage('Couldn’t refresh applications. Showing your latest updates.');
+                    setSoftLoadIssue('');
+                } else if (isEmployer) {
+                    setError('');
+                    setInlineErrorMessage('');
+                    setSoftLoadIssue('Live applicant refresh is taking longer than usual. Pull down to try again.');
+                } else {
+                    setError('Couldn’t load applications right now.');
+                    setInlineErrorMessage('');
+                    setSoftLoadIssue('');
+                }
+                setProfileGateMessage('');
             }
         } finally {
             if (mountedRef.current && requestId === fetchRequestIdRef.current) {
                 setIsLoading(false);
+                setIsRefreshing(false);
                 initialLoadCompletedRef.current = true;
             }
         }
-    }, [mapApplicationItem]);
+    }, [isEmployer, mapApplicationItem, readCachedApplications, writeCachedApplications]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -304,29 +362,23 @@ export default function ApplicationsScreen({ navigation }) {
         }, [fetchApplications])
     );
 
-    useEffect(() => {
-        fetchApplications();
-    }, [fetchApplications]);
-
     const visibleApplications = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return applications.filter((item) => {
-            const allowedStatuses = FILTER_STATUS_GROUPS[selectedFilter] || null;
-            const itemStatusTokens = item?.statusTokens instanceof Set
-                ? item.statusTokens
-                : new Set([
-                    normalizeStatus(item?.statusCanonical),
-                    normalizeStatus(item?.statusRaw),
-                ].filter(Boolean));
-            const statusPass = !allowedStatuses
-                || Array.from(itemStatusTokens).some((token) => allowedStatuses.has(token));
+            const statusPass = doesApplicationStatusMatchFilter(item?.statusCanonical, selectedFilter);
             if (!statusPass) return false;
 
             if (!query) return true;
             return String(item.searchText || '').includes(query);
         });
     }, [applications, searchQuery, selectedFilter]);
-    const hasBlockingError = false;
+    const totalApplications = applications.length;
+    const chatReadyCount = useMemo(
+        () => applications.filter((item) => item.isChatReady).length,
+        [applications]
+    );
+    const currentStageCount = visibleApplications.length;
+    const hasBlockingError = Boolean(error) && applications.length === 0 && !profileGateMessage;
 
     const openChat = useCallback((item) => {
         if (!item?.applicationId) {
@@ -356,6 +408,7 @@ export default function ApplicationsScreen({ navigation }) {
         setIsSearchOpen(true);
     }, []);
     const closeSearch = useCallback(() => {
+        searchInputRef.current?.blur?.();
         setIsSearchOpen(false);
         setSearchDraft('');
         setSearchQuery('');
@@ -367,89 +420,138 @@ export default function ApplicationsScreen({ navigation }) {
     }, [openChat]);
 
     const renderItem = ({ item }) => (
-        <TouchableOpacity style={styles.row} activeOpacity={0.72} onPress={() => handleOpenApplication(item)}>
-            <View style={styles.avatarWrap}>
-                <Image source={{ uri: item.avatar }} style={styles.avatar} />
-                <View style={styles.avatarStatusDot} />
-            </View>
-
-            <View style={styles.rowBody}>
-                <View style={styles.rowTop}>
-                    <Text style={styles.nameText} numberOfLines={1}>{item.counterpartyName}</Text>
-                    <Text style={styles.timeText}>{item.timeLabel}</Text>
+        <TouchableOpacity style={styles.rowCard} activeOpacity={0.82} onPress={() => handleOpenApplication(item)}>
+            <View style={styles.rowCardGlow} />
+            <View style={styles.row}>
+                <View style={styles.avatarWrap}>
+                    <Image source={{ uri: item.avatar }} style={styles.avatar} />
+                    <View style={styles.avatarStatusDot} />
                 </View>
 
-                <Text style={styles.jobTitleText} numberOfLines={1}>{item.jobTitle}</Text>
+                <View style={styles.rowBody}>
+                    <View style={styles.rowTop}>
+                        <View style={styles.nameBlock}>
+                            <Text style={styles.nameText} numberOfLines={1}>{item.counterpartyName}</Text>
+                        </View>
+                        <View style={styles.rowMeta}>
+                            <Text style={styles.timeText}>{item.timeLabel}</Text>
+                        </View>
+                    </View>
 
-                <View style={styles.rowBottom}>
-                    <Text style={styles.previewText} numberOfLines={1}>{item.preview}</Text>
-                    {item.isChatReady ? (
-                        <View style={styles.readyBadge} />
-                    ) : (
-                        <Text style={styles.statusText}>{item.statusLabel}</Text>
-                    )}
+                    <Text style={styles.jobTitleText} numberOfLines={1}>{item.jobTitle}</Text>
+                    <View style={styles.rowSignalRail}>
+                        <View style={[styles.statusPill, item.isChatReady && styles.statusPillReady]}>
+                            <Text style={[styles.statusPillText, item.isChatReady && styles.statusPillTextReady]}>
+                                {item.isChatReady ? 'Chat ready' : item.statusLabel}
+                            </Text>
+                        </View>
+                        {item.counterpartyRole ? (
+                            <View style={styles.secondarySignalPill}>
+                                <Text style={styles.secondarySignalText} numberOfLines={1}>{item.counterpartyRole}</Text>
+                            </View>
+                        ) : null}
+                    </View>
+
+                    <View style={styles.rowBottom}>
+                        <Text style={styles.previewText} numberOfLines={1}>{item.preview}</Text>
+                        <View style={styles.rowChevronBubble}>
+                            <Ionicons name="chevron-forward" size={15} color="#94a3b8" />
+                        </View>
+                    </View>
                 </View>
             </View>
         </TouchableOpacity>
     );
 
     return (
-        <View style={styles.container}>
+        <LinearGradient colors={isEmployer ? ['#f9fbff', '#f3f5ff', '#fbfcff'] : ['#f5f7fb', '#f5f7fb', '#f5f7fb']} style={styles.container}>
+            {isEmployer ? <View style={styles.employerGlowTop} /> : null}
+            {isEmployer ? <View style={styles.employerGlowBottom} /> : null}
             <CelebrationConfetti visible={showHireConfetti} onEnd={() => setShowHireConfetti(false)} />
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-                <View style={styles.headerTopRow}>
-                    <Text style={styles.headerTitle}>Applications</Text>
-                    <View style={styles.headerControls}>
-                        {isSearchOpen ? (
-                            <View style={styles.searchWrap}>
-                                <Ionicons name="search" size={18} style={styles.searchIcon} />
-                                <TextInput
-                                    ref={searchInputRef}
-                                    style={styles.searchInput}
-                                    value={searchDraft}
-                                    onChangeText={handleSearchChange}
-                                    placeholder="Search chats"
-                                    placeholderTextColor="#94a3b8"
-                                    autoCorrect={false}
-                                    autoCapitalize="none"
-                                    returnKeyType="search"
-                                    onSubmitEditing={() => setSearchQuery(String(searchDraft || '').trim())}
-                                />
-                                <TouchableOpacity
-                                    style={styles.searchClearBtn}
-                                    onPress={searchDraft ? clearSearchOnly : closeSearch}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="close" size={14} color="#64748b" />
-                                </TouchableOpacity>
-                            </View>
-                        ) : (
+                <LinearGradient
+                    colors={isEmployer ? ['#6d28d9', '#9333ea'] : ['#7c3aed', '#a855f7']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.headerBarShell}
+                >
+                    <View style={styles.headerTopRow}>
+                        <View style={styles.headerTitleWrap}>
+                            <Text style={styles.headerEyebrow}>{isEmployer ? 'Hiring pipeline' : 'Application tracker'}</Text>
+                            <Text style={styles.headerTitle}>{isEmployer ? 'Apps' : 'Applications'}</Text>
+                        </View>
+                        <View style={styles.headerControls}>
                             <TouchableOpacity
-                                style={styles.searchToggleBtn}
-                                onPress={openSearch}
+                                style={[styles.searchToggleBtn, isSearchOpen && styles.searchToggleBtnActive]}
+                                onPress={isSearchOpen ? closeSearch : openSearch}
                                 activeOpacity={0.85}
                                 hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                             >
-                                <Ionicons name="search" size={18} color="#f8fafc" />
+                                <Ionicons name={isSearchOpen ? 'close' : 'search'} size={18} color="#6d28d9" />
                             </TouchableOpacity>
-                        )}
-                        <TouchableOpacity
-                            style={[styles.filterBtn, selectedFilter !== 'All' && styles.filterBtnActive]}
-                            onPress={() => setShowFilterModal(true)}
-                            activeOpacity={0.8}
-                            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-                        >
-                            <Ionicons
-                                name="options-outline"
-                                size={18}
-                                color={selectedFilter !== 'All' ? '#ede9fe' : 'rgba(255,255,255,0.92)'}
-                            />
-                        </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.filterBtn, selectedFilter !== 'All' && styles.filterBtnActive]}
+                                onPress={() => {
+                                    searchInputRef.current?.blur?.();
+                                    setShowFilterModal(true);
+                                }}
+                                activeOpacity={0.8}
+                                hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                            >
+                                <Ionicons
+                                    name="options-outline"
+                                    size={18}
+                                    color="#6d28d9"
+                                />
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                </View>
-                <Text style={styles.headerSubtitle}>
-                    {selectedFilter === 'All' ? 'Active conversations with employers' : `Filter: ${selectedFilter}`}
-                </Text>
+                </LinearGradient>
+                {isSearchOpen ? (
+                    <View style={styles.searchDock}>
+                        <View style={styles.searchWrap}>
+                            <Ionicons name="search" size={18} style={styles.searchIcon} />
+                            <TextInput
+                                ref={searchInputRef}
+                                style={styles.searchInput}
+                                value={searchDraft}
+                                onChangeText={handleSearchChange}
+                                placeholder="Search applications"
+                                placeholderTextColor="#94a3b8"
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                                onSubmitEditing={() => setSearchQuery(String(searchDraft || '').trim())}
+                            />
+                            <TouchableOpacity
+                                style={styles.searchClearBtn}
+                                onPress={searchDraft ? clearSearchOnly : closeSearch}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="close" size={14} color="#64748b" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ) : null}
+                {isEmployer ? (
+                    <View style={styles.employerTopRail}>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                        </View>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{`${currentStageCount} visible`}</Text>
+                        </View>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{`${chatReadyCount} chat ready`}</Text>
+                        </View>
+                    </View>
+                ) : null}
+                {inlineErrorMessage ? (
+                    <View style={styles.inlineErrorBanner}>
+                        <Ionicons name="alert-circle-outline" size={15} color="#b45309" />
+                        <Text style={styles.inlineErrorText}>{inlineErrorMessage}</Text>
+                    </View>
+                ) : null}
             </View>
 
             {isLoading ? (
@@ -460,12 +562,15 @@ export default function ApplicationsScreen({ navigation }) {
                     <SkeletonLoader height={72} style={styles.skeleton} />
                 </View>
             ) : hasBlockingError ? (
-                <EmptyState
-                    icon="⚠️"
-                    title="Couldn’t load data"
-                    subtitle="Pull down to refresh."
-                    actionLabel="Retry"
-                    onAction={fetchApplications}
+                <PremiumStateCard
+                    icon="cloud-offline-outline"
+                    accent="#7c3aed"
+                    title={isEmployer ? 'Applicant inbox is taking longer than usual' : 'Applications are taking longer than usual'}
+                    subtitle={isEmployer
+                        ? 'Retry now and we’ll reconnect to your latest applicant list.'
+                        : 'Retry now and we’ll reconnect to your latest application list.'}
+                    actionLabel="Retry now"
+                    onAction={() => fetchApplications({ refresh: true })}
                 />
             ) : (
                 <FlatList
@@ -476,21 +581,57 @@ export default function ApplicationsScreen({ navigation }) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="always"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                    refreshControl={(
+                        <RefreshControl
+                            refreshing={isRefreshing}
+                            onRefresh={() => fetchApplications({ refresh: true })}
+                            tintColor="#7c3aed"
+                            colors={['#7c3aed']}
+                        />
+                    )}
                     removeClippedSubviews={Platform.OS === 'android'}
                     maxToRenderPerBatch={12}
                     windowSize={10}
                     initialNumToRender={12}
+                    ListHeaderComponent={isEmployer ? (
+                        <View style={styles.listHeaderWrap}>
+                            <Text style={styles.listHeaderTitle}>Live applicants</Text>
+                            <View style={styles.listHeaderCount}>
+                                <Text style={styles.listHeaderCountText}>{visibleApplications.length}</Text>
+                            </View>
+                        </View>
+                    ) : null}
                     ListEmptyComponent={
                         <EmptyState
-                            icon={applications.length > 0 ? '🔎' : (isEmployer ? '📥' : '📋')}
-                            title={applications.length > 0 ? 'No results' : (isEmployer ? 'No candidates yet' : 'No applications yet')}
-                            subtitle={applications.length > 0
+                            icon={profileGateMessage ? '🧩' : (applications.length > 0 ? '🔎' : (isEmployer ? '📥' : '📋'))}
+                            title={profileGateMessage
+                                ? 'Finish your profile'
+                                : softLoadIssue
+                                    ? 'Refreshing applicant list'
+                                    : (applications.length > 0 ? 'No results' : (isEmployer ? 'No job seekers yet' : 'No applications yet'))}
+                            subtitle={profileGateMessage
+                                ? profileGateMessage
+                                : softLoadIssue
+                                    ? softLoadIssue
+                                : (applications.length > 0
                                 ? 'Try clearing search or filters.'
                                 : (isEmployer
-                                    ? 'Your job posts will surface matches here'
-                                    : 'Apply to jobs to start conversations')}
-                            actionLabel={applications.length > 0 ? 'Clear Filters' : (isEmployer ? 'Post a Need' : 'Browse Jobs')}
+                                    ? 'Applications from job seekers will appear here as they move into your pipeline.'
+                                    : 'Apply to jobs to start conversations'))}
+                            actionLabel={profileGateMessage
+                                ? 'Complete Profile'
+                                : softLoadIssue
+                                    ? 'Retry now'
+                                    : (applications.length > 0 ? 'Clear Filters' : (isEmployer ? 'Post a Job' : 'Browse Jobs'))}
                             onAction={() => {
+                                if (profileGateMessage) {
+                                    navigation.navigate(isEmployer ? 'EmployerProfileCreate' : 'ProfileSetupWizard');
+                                    return;
+                                }
+                                if (softLoadIssue) {
+                                    fetchApplications({ refresh: true });
+                                    return;
+                                }
                                 if (applications.length > 0) {
                                     clearSearchAndFilters();
                                     return;
@@ -513,7 +654,67 @@ export default function ApplicationsScreen({ navigation }) {
                     onPress={() => setShowFilterModal(false)}
                 >
                     <Pressable style={styles.filterSheet} onPress={(event) => event.stopPropagation()}>
-                        <Text style={styles.filterSheetTitle}>Filter Applications</Text>
+                        <View style={styles.filterSheetHandle} />
+                        <Text style={styles.filterSheetTitle}>{isEmployer ? 'Pipeline filters' : 'Application stages'}</Text>
+                        {isEmployer ? (
+                            <View style={styles.filterHeroCard}>
+                                <View style={styles.filterHeroTopRow}>
+                                    <View style={styles.heroBadge}>
+                                        <Text style={styles.heroBadgeText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                                    </View>
+                                    <View style={styles.heroPill}>
+                                        <Text style={styles.heroPillText}>Hiring side</Text>
+                                    </View>
+                                </View>
+                                <Text style={styles.filterHeroTitle}>Track every applicant clearly</Text>
+                                <Text style={styles.filterHeroSubtitle}>Choose a stage, then review the list without extra dashboard noise.</Text>
+                                <View style={styles.heroStatsRow}>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Total</Text>
+                                        <Text style={styles.heroStatValue}>{totalApplications}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Visible</Text>
+                                        <Text style={styles.heroStatValue}>{currentStageCount}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Chat ready</Text>
+                                        <Text style={styles.heroStatValue}>{chatReadyCount}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={styles.filterHeroCard}>
+                                <View style={styles.filterHeroTopRow}>
+                                    <View style={styles.heroBadge}>
+                                        <Text style={styles.heroBadgeText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                                    </View>
+                                    <View style={styles.heroPill}>
+                                        <Text style={styles.heroPillText}>Job seeker side</Text>
+                                    </View>
+                                </View>
+                                <Text style={styles.filterHeroTitle}>Track every application clearly</Text>
+                                <Text style={styles.filterHeroSubtitle}>
+                                    {selectedFilter === 'All'
+                                        ? 'See the full pipeline from applied to hired.'
+                                        : `Showing ${selectedFilter.toLowerCase()} stage now.`}
+                                </Text>
+                                <View style={styles.heroStatsRow}>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Total</Text>
+                                        <Text style={styles.heroStatValue}>{totalApplications}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Visible</Text>
+                                        <Text style={styles.heroStatValue}>{currentStageCount}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Chat ready</Text>
+                                        <Text style={styles.heroStatValue}>{chatReadyCount}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        )}
                         <TouchableOpacity
                             style={styles.clearFiltersAction}
                             onPress={() => {
@@ -522,12 +723,12 @@ export default function ApplicationsScreen({ navigation }) {
                             }}
                             activeOpacity={0.75}
                         >
-                            <Text style={styles.clearFiltersActionText}>Reset Search + Filters</Text>
+                            <Text style={styles.clearFiltersActionText}>Reset search + filters</Text>
                         </TouchableOpacity>
-                        {FILTER_OPTIONS.map((option) => (
+                        {APPLICATION_FILTER_OPTIONS.map((option) => (
                             <TouchableOpacity
                                 key={option}
-                                style={styles.filterOption}
+                                style={[styles.filterOption, selectedFilter === option && styles.filterOptionActive]}
                                 onPress={() => {
                                     setSelectedFilter(option);
                                     setShowFilterModal(false);
@@ -545,19 +746,59 @@ export default function ApplicationsScreen({ navigation }) {
                     </Pressable>
                 </Pressable>
             </Modal>
-        </View>
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+    },
+    employerGlowTop: {
+        position: 'absolute',
+        top: -96,
+        right: -72,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: 'rgba(139, 108, 255, 0.16)',
+    },
+    employerGlowBottom: {
+        position: 'absolute',
+        left: -54,
+        bottom: -72,
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        backgroundColor: 'rgba(96, 165, 250, 0.14)',
     },
     header: {
-        backgroundColor: '#7c3aed',
-        paddingHorizontal: 16,
+        backgroundColor: 'transparent',
+        paddingHorizontal: 0,
         paddingBottom: 10,
+    },
+    headerBarShell: {
+        borderRadius: 0,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.18)',
+        paddingHorizontal: 18,
+        paddingVertical: 12,
+        ...SHADOWS.md,
+    },
+    employerTopRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+        paddingHorizontal: 16,
+    },
+    employerSignalChip: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    employerSignalText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
     },
     headerTopRow: {
         flexDirection: 'row',
@@ -565,38 +806,54 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: 12,
     },
+    headerTitleWrap: {
+        flex: 1,
+    },
+    headerEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: 'rgba(255,255,255,0.82)',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+        marginBottom: 4,
+    },
     headerTitle: {
-        fontSize: 20,
+        fontSize: 25,
         fontWeight: '800',
         color: '#ffffff',
     },
     headerControls: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'flex-end',
         gap: 8,
     },
     searchToggleBtn: {
-        width: 36,
-        height: 36,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        width: 40,
+        height: 40,
         borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.38)',
+        backgroundColor: '#ffffff',
         alignItems: 'center',
         justifyContent: 'center',
     },
+    searchToggleBtnActive: {
+        borderColor: '#ffffff',
+        backgroundColor: '#ffffff',
+    },
+    searchDock: {
+        marginTop: 12,
+        paddingHorizontal: 16,
+    },
     searchWrap: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1,
         borderColor: '#e2e8f0',
         backgroundColor: '#ffffff',
-        borderRadius: 18,
-        paddingHorizontal: 10,
-        height: 38,
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        minHeight: 44,
     },
     searchIcon: {
         color: '#64748b',
@@ -619,24 +876,146 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     filterBtn: {
-        width: 36,
-        height: 36,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        width: 40,
+        height: 40,
         borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.38)',
+        backgroundColor: '#ffffff',
         alignItems: 'center',
         justifyContent: 'center',
     },
     filterBtnActive: {
-        borderColor: '#ede9fe',
-        backgroundColor: '#8b5cf6',
+        borderColor: '#ffffff',
+        backgroundColor: '#ffffff',
     },
-    headerSubtitle: {
-        marginTop: 4,
+    heroCard: {
+        ...SCREEN_CHROME.heroSurface,
+        marginTop: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+    heroTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    heroBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    heroBadgeText: {
         fontSize: 11,
-        color: '#e9d5ff',
-        fontWeight: '500',
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    heroPill: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    heroPillText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
+    },
+    heroTitle: {
+        marginTop: 14,
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.4,
+    },
+    heroSubtitle: {
+        marginTop: 5,
+        fontSize: 12.5,
+        lineHeight: 18,
+        color: '#64748b',
+        fontWeight: '600',
+    },
+    heroStatsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 14,
+    },
+    heroStatCard: {
+        ...SCREEN_CHROME.metricTile,
+    },
+    heroStatLabel: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+        color: '#94a3b8',
+    },
+    heroStatValue: {
+        marginTop: 6,
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    inlineErrorBanner: {
+        marginTop: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#fed7aa',
+        backgroundColor: '#fff7ed',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    inlineErrorText: {
+        flex: 1,
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#9a3412',
+    },
+    stateCardWrap: {
+        flex: 1,
+        paddingHorizontal: 16,
+        paddingTop: 18,
+        justifyContent: 'center',
+    },
+    stateCard: {
+        ...SCREEN_CHROME.heroSurface,
+        alignItems: 'center',
+        paddingHorizontal: 18,
+        paddingVertical: 24,
+    },
+    stateIconBubble: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 14,
+    },
+    stateTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        textAlign: 'center',
+    },
+    stateSubtitle: {
+        marginTop: 8,
+        fontSize: 13,
+        lineHeight: 19,
+        fontWeight: '600',
+        color: '#64748b',
+        textAlign: 'center',
+    },
+    statePrimaryAction: {
+        marginTop: 16,
+        borderRadius: 16,
+        backgroundColor: '#7c3aed',
+        paddingHorizontal: 18,
+        paddingVertical: 13,
+    },
+    statePrimaryActionText: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#ffffff',
     },
     loaderWrap: {
         paddingHorizontal: 16,
@@ -647,26 +1026,69 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     listContent: {
-        paddingTop: 4,
+        paddingTop: 8,
+        paddingHorizontal: 16,
         paddingBottom: 24,
+    },
+    listHeaderWrap: {
+        marginBottom: 10,
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    listHeaderTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.2,
+    },
+    listHeaderCount: {
+        minWidth: 36,
+        height: 36,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+    },
+    listHeaderCountText: {
+        color: '#6d28d9',
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    rowCard: {
+        ...SCREEN_CHROME.contentCard,
+        position: 'relative',
+        marginBottom: 12,
+        overflow: 'hidden',
+        borderRadius: 24,
+    },
+    rowCardGlow: {
+        position: 'absolute',
+        top: -20,
+        right: -12,
+        width: 92,
+        height: 92,
+        borderRadius: 46,
+        backgroundColor: 'rgba(124,58,237,0.06)',
     },
     row: {
         flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 13,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eef2f7',
-        backgroundColor: '#ffffff',
+        alignItems: 'flex-start',
+        paddingHorizontal: 15,
+        paddingVertical: 15,
     },
     avatarWrap: {
         marginRight: 12,
         position: 'relative',
     },
     avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         borderWidth: 1,
         borderColor: '#e2e8f0',
     },
@@ -683,54 +1105,96 @@ const styles = StyleSheet.create({
     },
     rowBody: {
         flex: 1,
-        minHeight: 50,
-        justifyContent: 'center',
+        minHeight: 52,
+    },
+    nameBlock: {
+        flex: 1,
+        marginRight: 10,
     },
     rowTop: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     nameText: {
-        flex: 1,
-        fontSize: 14,
-        fontWeight: '700',
+        fontSize: 14.5,
+        fontWeight: '800',
         color: '#111827',
-        marginRight: 8,
+    },
+    counterpartyRoleText: {
+        marginTop: 3,
+        fontSize: 11.5,
+        color: '#64748b',
+        fontWeight: '700',
+    },
+    rowMeta: {
+        alignItems: 'flex-end',
     },
     timeText: {
-        fontSize: 12,
+        marginTop: 5,
+        fontSize: 11.5,
         color: '#94a3b8',
-        fontWeight: '500',
+        fontWeight: '600',
     },
     jobTitleText: {
-        marginTop: 2,
-        fontSize: 12,
-        color: '#7c3aed',
-        fontWeight: '700',
+        marginTop: 8,
+        fontSize: 13,
+        color: '#111827',
+        fontWeight: '800',
+        letterSpacing: -0.1,
+    },
+    rowSignalRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 10,
     },
     rowBottom: {
-        marginTop: 2,
+        marginTop: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     previewText: {
         flex: 1,
-        fontSize: 12,
+        fontSize: 12.5,
         color: '#64748b',
         marginRight: 8,
-    },
-    statusText: {
-        fontSize: 11,
-        color: '#94a3b8',
         fontWeight: '600',
     },
-    readyBadge: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#9333ea',
+    rowChevronBubble: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#edf1f7',
+    },
+    statusPill: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    statusPillReady: {
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    statusPillText: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#64748b',
+    },
+    statusPillTextReady: {
+        color: '#6d28d9',
+    },
+    secondarySignalPill: {
+        ...SCREEN_CHROME.signalChip,
+        maxWidth: '70%',
+    },
+    secondarySignalText: {
+        fontSize: 10.5,
+        fontWeight: '700',
+        color: '#64748b',
     },
     filterOverlay: {
         flex: 1,
@@ -738,28 +1202,59 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     filterSheet: {
+        ...SCREEN_CHROME.heroSurface,
         backgroundColor: '#fff',
-        borderTopLeftRadius: 18,
-        borderTopRightRadius: 18,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
         paddingHorizontal: 16,
-        paddingTop: 14,
+        paddingTop: 12,
         paddingBottom: 24,
     },
+    filterSheetHandle: {
+        width: 54,
+        height: 5,
+        borderRadius: 999,
+        backgroundColor: '#d7dfeb',
+        alignSelf: 'center',
+        marginBottom: 14,
+    },
     filterSheetTitle: {
-        fontSize: 16,
-        fontWeight: '700',
+        fontSize: 18,
+        fontWeight: '800',
         color: '#0f172a',
         marginBottom: 10,
+    },
+    filterHeroCard: {
+        ...SCREEN_CHROME.heroSurface,
+        marginBottom: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+    filterHeroTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    filterHeroTitle: {
+        marginTop: 14,
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.3,
+    },
+    filterHeroSubtitle: {
+        marginTop: 5,
+        fontSize: 12,
+        lineHeight: 18,
+        color: '#64748b',
+        fontWeight: '600',
     },
     clearFiltersAction: {
         alignSelf: 'flex-start',
         marginBottom: 8,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f5f3ff',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
     },
     clearFiltersActionText: {
         fontSize: 12,
@@ -767,20 +1262,26 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     filterOption: {
-        minHeight: 44,
-        borderRadius: 10,
+        flex: 0,
+        minHeight: 48,
+        borderRadius: 16,
         paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        ...SCREEN_CHROME.metricTile,
+        marginBottom: 8,
+    },
+    filterOptionActive: {
+        ...SCREEN_CHROME.signalChipAccent,
     },
     filterOptionText: {
         fontSize: 14,
         color: '#334155',
-        fontWeight: '500',
+        fontWeight: '700',
     },
     filterOptionTextActive: {
         color: '#7c3aed',
-        fontWeight: '700',
+        fontWeight: '800',
     },
 });

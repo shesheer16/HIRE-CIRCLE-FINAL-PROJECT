@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 
-const DEFAULT_API_PORT = '5001';
+const DEFAULT_API_PORT = '3000';
+const LEGACY_API_PORT = '5001';
 const DEFAULT_API_BASE = `http://localhost:${DEFAULT_API_PORT}/api`;
 const LOOPBACK_HOST_PATTERN = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i;
 const SAFE_PRIVATE_IP_PATTERN = /^(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/;
@@ -70,12 +71,15 @@ const buildApiBaseCandidates = (rawValue) => {
     const primary = resolveApiBaseUrl(rawValue);
     const apiPort = extractPortFromUrl(rawValue || primary);
     const lanHost = resolveExpoLanHost();
+    const fallbackPorts = Array.from(new Set([apiPort, DEFAULT_API_PORT, LEGACY_API_PORT].filter(Boolean)));
     const normalizedCandidates = [
         primary,
-        lanHost ? `http://${lanHost}:${apiPort}/api` : null,
-        `http://localhost:${apiPort}/api`,
-        `http://127.0.0.1:${apiPort}/api`,
-        `http://10.0.2.2:${apiPort}/api`,
+        ...fallbackPorts.flatMap((port) => ([
+            lanHost ? `http://${lanHost}:${port}/api` : null,
+            `http://localhost:${port}/api`,
+            `http://127.0.0.1:${port}/api`,
+            `http://10.0.2.2:${port}/api`,
+        ])),
     ]
         .filter(Boolean)
         .map((item) => String(item).trim().replace(/\/+$/, ''))

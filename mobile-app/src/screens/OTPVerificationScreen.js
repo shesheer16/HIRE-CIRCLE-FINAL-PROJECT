@@ -15,7 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
-import { navigateToWelcomeFallback } from '../utils/authNavigation';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
 import CelebrationConfetti from '../components/CelebrationConfetti';
 
 const OTP_LENGTH = 6;
@@ -24,6 +25,10 @@ const RESEND_COOLDOWN_SECONDS = 30;
 export default function OTPVerificationScreen({ route, navigation }) {
     const insets = useSafeAreaInsets();
     const { login } = useContext(AuthContext);
+    const selectedRole = useMemo(() => {
+        const rawRole = String(route.params?.selectedRole || '').trim();
+        return rawRole ? normalizeSelectedRole(rawRole) : null;
+    }, [route.params?.selectedRole]);
     const intent = useMemo(
         () => String(route.params?.intent || '').trim().toLowerCase(),
         [route.params?.intent],
@@ -93,13 +98,11 @@ export default function OTPVerificationScreen({ route, navigation }) {
     }, [clearTimer, initialOtpDispatched, route.params?.initialError, startTimer]);
 
     const handleBackPress = useCallback(() => {
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-            return;
-        }
-
-        navigateToWelcomeFallback(navigation);
-    }, [navigation]);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Login',
+        });
+    }, [navigation, selectedRole]);
 
     const handleOtpChange = useCallback((text, index) => {
         const digit = String(text || '').replace(/\D/g, '').slice(-1);
@@ -164,14 +167,20 @@ export default function OTPVerificationScreen({ route, navigation }) {
 
             if ((intent === 'signup' || intent === 'signin' || intent === 'login') && data?.token) {
                 runSuccessTransition(() => {
-                    login(data);
+                    login(data, selectedRole ? { authEntryRole: selectedRole } : undefined);
                 });
                 return;
             }
 
             runSuccessTransition(() => {
                 Alert.alert('Verified', 'Verification complete.', [
-                    { text: 'Continue', onPress: () => navigation.navigate('Login') },
+                    {
+                        text: 'Continue',
+                        onPress: () => navigation.navigate(
+                            'Login',
+                            selectedRole ? { selectedRole } : undefined
+                        ),
+                    },
                 ]);
             });
         } catch (error) {
@@ -179,7 +188,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
         } finally {
             setLoading(false);
         }
-    }, [identity.value, intent, login, navigation, otpPayload, successScale]);
+    }, [identity.value, intent, login, navigation, otpPayload, selectedRole, successScale]);
 
     const resendOtp = useCallback(async () => {
         if (loading || resendTimer > 0 || !identity.value) return;

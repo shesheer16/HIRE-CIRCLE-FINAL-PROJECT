@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthContext } from '../context/AuthContext';
@@ -8,13 +10,18 @@ import client from '../api/client';
 import { logger } from '../utils/logger';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
 import { useAppStore } from '../store/AppStore';
+import { deriveAuthEntryRoleFromUser } from '../utils/authEntryState';
+import { buildPreviewAuthSession, isInstantPreviewAuthEnabled } from '../utils/previewAuthSession';
 import FeedbackModal from '../components/FeedbackModal';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useTheme } from '../theme/ThemeProvider';
-import { RADIUS, SHADOWS, SPACING } from '../theme/theme';
+import { RADIUS, SCREEN_CHROME, SHADOWS, SPACING } from '../theme/theme';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import Constants from 'expo-constants';
+import { getAccountRoleLabel } from '../utils/profileReadiness';
+
+const INSTANT_PREVIEW_AUTH_ENABLED = isInstantPreviewAuthEnabled();
 
 const withTimeout = (promise, timeoutMs, timeoutMessage) => {
     let timeoutId;
@@ -66,9 +73,18 @@ const resolveAllowedRoles = (user = {}, fallbackPrimaryRole = 'worker') => {
     return [inferredPrimaryRole];
 };
 
+const SETTINGS_SECTION_META = Object.freeze({
+    Account: { icon: 'person-circle-outline', tint: '#ede9fe', iconColor: '#6d28d9' },
+    Privacy: { icon: 'shield-checkmark-outline', tint: '#e0f2fe', iconColor: '#0284c7' },
+    'Saved Posts': { icon: 'bookmark-outline', tint: '#fae8ff', iconColor: '#a21caf' },
+    Notifications: { icon: 'notifications-outline', tint: '#dcfce7', iconColor: '#15803d' },
+    'Role & Preferences': { icon: 'options-outline', tint: '#fee2e2', iconColor: '#c2410c' },
+    Support: { icon: 'sparkles-outline', tint: '#fef3c7', iconColor: '#b45309' },
+});
+
 export default function SettingsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
-    const { logout, userInfo, updateUserInfo } = React.useContext(AuthContext);
+    const { logout, userInfo, updateUserInfo, rememberAuthEntryRole } = React.useContext(AuthContext);
     const { role: appRole, setRole } = useAppStore();
     const { mode, toggleTheme, palette } = useTheme();
     const { t } = useTranslation();
@@ -147,7 +163,7 @@ export default function SettingsScreen({ navigation }) {
                 const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
                 setProfileHeader({
                     name: fullName || user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
+                    role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
                     avatar: profile.avatar || profile.logoUrl || null,
                 });
@@ -158,7 +174,7 @@ export default function SettingsScreen({ navigation }) {
                 setAccountPhoneNumber(String(user?.phoneNumber || 'Not set'));
                 setProfileHeader({
                     name: user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
+                    role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
                     avatar: null,
                 });
@@ -250,6 +266,12 @@ export default function SettingsScreen({ navigation }) {
 
     const performLocalSignOut = async () => {
         try {
+            const rememberedRole = deriveAuthEntryRoleFromUser({
+                ...(userInfo || {}),
+                activeRole: primaryRole || userInfo?.activeRole,
+                primaryRole: primaryRole || userInfo?.primaryRole,
+            });
+            await rememberAuthEntryRole?.(rememberedRole);
             await SecureStore.deleteItemAsync('selectedRole');
             await logout();
         } catch (error) {
@@ -278,7 +300,7 @@ export default function SettingsScreen({ navigation }) {
         SecureStore.setItemAsync('selectedRole', normalizedResolvedRole).catch(() => { });
         setProfileHeader((prev) => ({
             ...prev,
-            role: normalizedResolvedRole === 'employer' ? 'Recruiter' : 'Candidate',
+            role: getAccountRoleLabel(normalizedResolvedRole),
         }));
 
         const fallbackRoleContract = {
@@ -299,7 +321,14 @@ export default function SettingsScreen({ navigation }) {
             capabilities: roleContract?.capabilities || fallbackRoleContract.capabilities,
             hasSelectedRole: true,
         });
-    }, [primaryRole, setRole, updateUserInfo, userInfo]);
+        await rememberAuthEntryRole?.(deriveAuthEntryRoleFromUser({
+            ...(userInfo || {}),
+            ...(bootstrapPayload || {}),
+            accountMode: userInfo?.accountMode,
+            activeRole: roleContract?.activeRole || fallbackRoleContract.activeRole,
+            primaryRole: roleContract?.primaryRole || fallbackRoleContract.primaryRole,
+        }));
+    }, [primaryRole, rememberAuthEntryRole, setRole, updateUserInfo, userInfo]);
 
     const attemptRoleSwitchServerSide = React.useCallback(async (nextRole) => {
         try {
@@ -317,6 +346,17 @@ export default function SettingsScreen({ navigation }) {
     }, []);
 
     const attemptRoleBootstrap = React.useCallback(async (resolvedRole) => {
+        if (INSTANT_PREVIEW_AUTH_ENABLED) {
+            return buildPreviewAuthSession({
+                selectedRole: resolvedRole === 'employer' ? 'employer' : 'worker',
+                email: userInfo?.email || '',
+                phoneNumber: userInfo?.phoneNumber || '',
+                name: userInfo?.name || '',
+                hasCompletedProfile: Boolean(userInfo?.hasCompletedProfile ?? userInfo?.profileComplete ?? true),
+                profileComplete: Boolean(userInfo?.profileComplete ?? userInfo?.hasCompletedProfile ?? true),
+            });
+        }
+
         try {
             const { data } = await client.post('/api/auth/dev-bootstrap', {
                 role: resolvedRole,
@@ -335,7 +375,7 @@ export default function SettingsScreen({ navigation }) {
         } catch (_error) {
             return null;
         }
-    }, []);
+    }, [userInfo?.email, userInfo?.hasCompletedProfile, userInfo?.name, userInfo?.phoneNumber, userInfo?.profileComplete]);
 
     const handleRoleToggle = async () => {
         if (isSwitchingRole) return;
@@ -347,7 +387,7 @@ export default function SettingsScreen({ navigation }) {
         if (!canToggleRoles) {
             Alert.alert(
                 'Role switching not available',
-                'Your account is set up for a single role. If you need both roles, please create a new Hybrid account.',
+                'Your account is set up for a single role. If you need both roles, please create a dual-role account.',
                 [{ text: 'OK' }]
             );
             return;
@@ -363,7 +403,7 @@ export default function SettingsScreen({ navigation }) {
             setRole(nextRole);
             setProfileHeader((prev) => ({
                 ...prev,
-                role: nextRole === 'employer' ? 'Recruiter' : 'Candidate',
+                role: getAccountRoleLabel(nextRole),
             }));
             SecureStore.setItemAsync('selectedRole', nextRole).catch(() => { });
 
@@ -381,16 +421,22 @@ export default function SettingsScreen({ navigation }) {
             ).catch((error) => {
                 logger.warn('Local role persistence delayed:', error?.message || error);
             });
+            await rememberAuthEntryRole?.(deriveAuthEntryRoleFromUser({
+                ...(userInfo || {}),
+                accountMode: userInfo?.accountMode,
+                activeRole: nextRole,
+                primaryRole: nextRole,
+            }));
 
             animateRoleSwitchToast(
                 nextRole === 'employer'
-                    ? 'Recruiter mode enabled'
-                    : 'Candidate mode enabled'
+                    ? 'Employer mode enabled'
+                    : 'Job Seeker mode enabled'
             );
             if (nextRole === 'worker') {
                 Alert.alert(
                     'Role switched',
-                    'Your seeker profile is active. View matching jobs now?',
+                    'Your Job Seeker profile is active. View matching jobs now?',
                     [
                         { text: 'Later', style: 'cancel' },
                         {
@@ -419,7 +465,7 @@ export default function SettingsScreen({ navigation }) {
             setRole(previousRole);
             setProfileHeader((prev) => ({
                 ...prev,
-                role: previousRole === 'employer' ? 'Recruiter' : 'Candidate',
+                role: getAccountRoleLabel(previousRole),
             }));
             Alert.alert('Role switch failed', 'Please try again.');
         } finally {
@@ -482,6 +528,21 @@ export default function SettingsScreen({ navigation }) {
         : (pushPermissionStatus === 'expo_go'
             ? 'Use development build'
             : (pushPermissionStatus === 'denied' ? 'Denied' : 'Not set'));
+    const safeFirstName = String(profileHeader.name || 'You').trim().split(/\s+/)[0] || 'You';
+    const enabledNotificationCount = [
+        notifNewMatches,
+        notifMessages,
+        notifJobAlerts,
+        notifAppUpdates,
+    ].filter(Boolean).length;
+    const heroStats = [
+        {
+            label: 'Plan',
+            value: subscriptionPlan === 'free' ? 'Free' : String(subscriptionPlan || 'free').toUpperCase(),
+        },
+        { label: 'Saved', value: String(savedPostsCount) },
+        { label: 'Alerts', value: String(enabledNotificationCount) },
+    ];
 
     const handleRequestPushPermission = async () => {
         if (isExpoGo) {
@@ -558,31 +619,82 @@ export default function SettingsScreen({ navigation }) {
     }, [clearSavedPosts, savedPostsCount]);
 
     const renderHeader = () => (
-        <View style={[styles.profileHeader, { paddingTop: insets.top + 16 }]}>
-            <Image
-                source={{
-                    uri: profileHeader.avatar ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=7c3aed&color=fff`
-                }}
-                style={styles.avatar}
-            />
-            <View>
-                <Text style={styles.userName}>{profileHeader.name}</Text>
-                <Text style={styles.userRole}>{profileHeader.role}{profileHeader.email ? ` • ${profileHeader.email}` : ''}</Text>
-                {subscriptionPlan !== 'free' ? (
-                    <View style={styles.premiumBadge}>
-                        <Text style={styles.premiumBadgeText}>PREMIUM</Text>
-                    </View>
-                ) : null}
+        <View style={styles.headerWrap}>
+            <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+                <View style={styles.topBarCopy}>
+                    <Text style={styles.topBarEyebrow}>Settings</Text>
+                    <Text style={styles.topBarTitle}>Hi, {safeFirstName}</Text>
+                </View>
+                <TouchableOpacity
+                    style={styles.topBarAction}
+                    activeOpacity={0.86}
+                    onPress={() => setFeedbackModalVisible(true)}
+                >
+                    <Ionicons name="sparkles-outline" size={18} color="#6d28d9" />
+                </TouchableOpacity>
             </View>
+
+            <LinearGradient colors={['rgba(255,255,255,0.98)', '#f7f4ff']} style={styles.profileHeader}>
+                <View style={styles.profileHeaderTopRow}>
+                    <Image
+                        source={{
+                            uri: profileHeader.avatar ||
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=7c3aed&color=fff`
+                        }}
+                        style={styles.avatar}
+                    />
+                    <View style={styles.profileHeaderCopy}>
+                        <View style={styles.profileRolePill}>
+                            <Ionicons name="shield-checkmark-outline" size={11} color="#6d28d9" />
+                            <Text style={styles.profileRolePillText}>{profileHeader.role}</Text>
+                        </View>
+                        <Text style={styles.userName}>{profileHeader.name}</Text>
+                        <Text style={styles.userRole} numberOfLines={1}>
+                            {profileHeader.email || 'Account details stay here'}
+                        </Text>
+                    </View>
+                </View>
+
+                <View style={styles.heroStatsRow}>
+                    {heroStats.map((stat) => (
+                        <View key={stat.label} style={styles.heroStatCard}>
+                            <Text style={styles.heroStatValue}>{stat.value}</Text>
+                            <Text style={styles.heroStatLabel}>{stat.label}</Text>
+                        </View>
+                    ))}
+                </View>
+
+                <View style={styles.heroActionRow}>
+                    {subscriptionPlan !== 'free' ? (
+                        <View style={styles.premiumBadge}>
+                            <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.neutralBadge}>
+                            <Text style={styles.neutralBadgeText}>Core plan</Text>
+                        </View>
+                    )}
+                    {canSwitchRole ? (
+                        <View style={styles.neutralBadge}>
+                            <Text style={styles.neutralBadgeText}>Hybrid ready</Text>
+                        </View>
+                    ) : null}
+                </View>
+            </LinearGradient>
         </View>
     );
 
-    const renderSectionTextHeader = (title) => (
-        <View style={styles.sectionHeaderBg}>
-            <Text style={styles.sectionTitle}>{title}</Text>
-        </View>
-    );
+    const renderSectionTextHeader = (title) => {
+        const meta = SETTINGS_SECTION_META[title] || SETTINGS_SECTION_META.Account;
+        return (
+            <View style={styles.sectionHeaderBg}>
+                <View style={[styles.sectionHeaderIconWrap, { backgroundColor: meta.tint }]}>
+                    <Ionicons name={meta.icon} size={15} color={meta.iconColor} />
+                </View>
+                <Text style={styles.sectionTitle}>{title}</Text>
+            </View>
+        );
+    };
 
     const renderRow = (
         label,
@@ -603,7 +715,11 @@ export default function SettingsScreen({ navigation }) {
         >
             <Text style={styles.rowLabel}>{label}</Text>
             <View style={styles.rowRight}>
-                {value && <Text style={styles.rowValue}>{value}</Text>}
+                {value ? (
+                    <View style={styles.rowValuePill}>
+                        <Text style={styles.rowValue}>{value}</Text>
+                    </View>
+                ) : null}
                 {isSwitch && (
                     <Switch
                         value={switchValue}
@@ -622,7 +738,9 @@ export default function SettingsScreen({ navigation }) {
     const canSwitchRole = String(userInfo?.accountMode || '').toLowerCase() === 'hybrid';
 
     return (
-        <View style={[styles.container, { backgroundColor: palette.background }]}>
+        <LinearGradient colors={['#f9fbff', palette.background || '#f4f7fc', '#fbfcff']} style={styles.container}>
+            <View style={styles.settingsGlowTop} />
+            <View style={styles.settingsGlowBottom} />
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                 {renderHeader()}
 
@@ -649,7 +767,7 @@ export default function SettingsScreen({ navigation }) {
                     <View style={styles.sectionCard}>
                         {renderSectionTextHeader('Account')}
                         {canSwitchRole && renderRow(
-                            'Recruiter Mode',
+                            'Employer Mode',
                             isSwitchingRole ? 'Switching…' : (primaryRole === 'employer' ? 'On' : 'Off'),
                             false,
                             true,
@@ -659,7 +777,7 @@ export default function SettingsScreen({ navigation }) {
                             null,
                             isSwitchingRole
                         )}
-                        {renderRow('Current Role', primaryRole === 'employer' ? 'Recruiter' : 'Candidate')}
+                        {renderRow('Current Role', getAccountRoleLabel(primaryRole))}
                         {renderRow(
                             'HireCircle Plans',
                             subscriptionPlan === 'free' ? 'Free' : String(subscriptionPlan || 'free').toUpperCase(),
@@ -796,7 +914,7 @@ export default function SettingsScreen({ navigation }) {
                 onClose={() => setFeedbackModalVisible(false)}
                 onSubmit={handleSubmitFeedback}
             />
-        </View>
+        </LinearGradient>
     );
 }
 
@@ -807,6 +925,24 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: 40,
+    },
+    settingsGlowTop: {
+        position: 'absolute',
+        top: -120,
+        right: -80,
+        width: 240,
+        height: 240,
+        borderRadius: 120,
+        backgroundColor: 'rgba(124, 58, 237, 0.14)',
+    },
+    settingsGlowBottom: {
+        position: 'absolute',
+        bottom: -140,
+        left: -100,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: 'rgba(59, 130, 246, 0.10)',
     },
     roleSwitchToast: {
         marginHorizontal: SPACING.md,
@@ -826,24 +962,61 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         textAlign: 'center',
     },
-    profileHeader: {
-        backgroundColor: '#ffffff',
-        paddingHorizontal: SPACING.lg,
-        paddingBottom: SPACING.md + 2,
+    headerWrap: {
+        paddingHorizontal: SPACING.md,
+        paddingBottom: SPACING.sm,
+    },
+    topBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+    },
+    topBarCopy: {
+        flex: 1,
+    },
+    topBarEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#7c8798',
+        letterSpacing: 1,
+        textTransform: 'uppercase',
+    },
+    topBarTitle: {
+        marginTop: 2,
+        fontSize: 28,
+        fontWeight: '800',
+        letterSpacing: -0.6,
+        color: '#0f172a',
+    },
+    topBarAction: {
+        ...SCREEN_CHROME.actionButton,
+        ...SCREEN_CHROME.actionButtonPrimary,
+    },
+    profileHeader: {
+        ...SCREEN_CHROME.heroSurface,
+        paddingHorizontal: SPACING.lg,
+        paddingVertical: SPACING.lg,
         marginBottom: SPACING.md,
     },
+    profileHeaderTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    profileHeaderCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
     avatar: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 72,
+        height: 72,
+        borderRadius: 36,
         marginRight: 16,
+        borderWidth: 3,
+        borderColor: 'rgba(255,255,255,0.95)',
     },
     userName: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: '800',
         color: '#0f172a',
         marginBottom: 2,
@@ -853,15 +1026,64 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '500',
     },
+    profileRolePill: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginBottom: 8,
+    },
+    profileRolePillText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#6d28d9',
+        letterSpacing: 0.3,
+        textTransform: 'uppercase',
+    },
+    heroStatsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 18,
+    },
+    heroStatCard: {
+        ...SCREEN_CHROME.metricTile,
+        alignItems: 'flex-start',
+        borderRadius: 18,
+        paddingVertical: 14,
+    },
+    heroStatValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    heroStatLabel: {
+        marginTop: 4,
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#7c8798',
+        textTransform: 'uppercase',
+        letterSpacing: 0.45,
+    },
+    heroActionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 14,
+    },
     premiumBadge: {
-        marginTop: 6,
         alignSelf: 'flex-start',
         borderRadius: 999,
         borderWidth: 1,
         borderColor: '#c7d2fe',
         backgroundColor: '#eef2ff',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
     },
     premiumBadgeText: {
         fontSize: 10,
@@ -869,36 +1091,61 @@ const styles = StyleSheet.create({
         color: '#4338ca',
         letterSpacing: 0.4,
     },
-    sectionsContainer: {
-        paddingHorizontal: SPACING.md,
-        gap: 12,
-    },
-    sectionCard: {
-        backgroundColor: '#ffffff',
-        borderRadius: 12,
+    neutralBadge: {
+        borderRadius: 999,
         borderWidth: 1,
         borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    neutralBadgeText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#64748b',
+        letterSpacing: 0.35,
+        textTransform: 'uppercase',
+    },
+    sectionsContainer: {
+        paddingHorizontal: SPACING.md,
+        gap: 14,
+    },
+    sectionCard: {
+        ...SCREEN_CHROME.contentCard,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: '#e7ecf4',
         overflow: 'hidden',
     },
     sectionHeaderBg: {
-        backgroundColor: '#f8fafc',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        backgroundColor: '#fbfcff',
         paddingHorizontal: SPACING.md,
-        paddingVertical: 10,
+        paddingVertical: 12,
         borderBottomWidth: 1,
         borderBottomColor: '#f1f5f9',
     },
+    sectionHeaderIconWrap: {
+        width: 30,
+        height: 30,
+        borderRadius: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     sectionTitle: {
-        fontSize: 12,
-        fontWeight: 'bold',
-        color: '#64748b',
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#334155',
         textTransform: 'uppercase',
-        letterSpacing: 0.5,
+        letterSpacing: 0.55,
     },
     row: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingVertical: 14,
+        paddingVertical: 15,
         paddingHorizontal: SPACING.md,
     },
     rowBorder: {
@@ -916,28 +1163,36 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         flexShrink: 0,
+        gap: 6,
+    },
+    rowValuePill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
     },
     rowValue: {
-        fontSize: 14,
-        color: '#94a3b8',
-        fontWeight: '500',
-        marginRight: 6,
+        fontSize: 12,
+        color: '#64748b',
+        fontWeight: '700',
     },
     arrowIcon: {
         fontSize: 20,
         color: '#94a3b8',
-        marginLeft: 4,
         lineHeight: 20,
     },
     signOutButton: {
-        backgroundColor: '#fef2f2',
-        borderRadius: 12,
+        backgroundColor: '#fff5f5',
+        borderRadius: 18,
         borderWidth: 1,
         borderColor: '#fee2e2',
-        paddingVertical: 13,
+        paddingVertical: 15,
         alignItems: 'center',
         marginTop: 6,
         marginBottom: 24,
+        ...SHADOWS.sm,
     },
     signOutText: {
         color: '#dc2626',

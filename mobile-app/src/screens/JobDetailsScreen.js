@@ -16,6 +16,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { trackEvent } from '../services/analytics';
 import { FEATURE_MATCH_UI_V1 } from '../config';
 import { useAppStore } from '../store/AppStore';
+import {
+    buildFreshnessSignals,
+    buildMatchGaps,
+    buildMatchReasons,
+    formatRelativeTimeLabel,
+    getMatchScoreSourceMeta,
+} from '../utils/matchUi';
+import { resolveStructuredLocation } from '../utils/locationPresentation';
 
 const { width } = Dimensions.get('window');
 
@@ -30,16 +38,7 @@ const buildSimilarJobs = (job) => {
             salary: String(item?.salaryRange || 'Salary not listed'),
         }));
     }
-
-    const baseTitle = String(job?.title || 'Role');
-    const baseLocation = String(job?.location || 'Location not listed');
-    const baseSalary = String(job?.salaryRange || 'Salary not listed');
-    const baseCompany = String(job?.companyName || 'Hiring company');
-
-    return [
-        { id: 'alt-1', title: `${baseTitle} - Day Shift`, company: baseCompany, location: baseLocation, salary: baseSalary },
-        { id: 'alt-2', title: `${baseTitle} - Immediate Joiner`, company: baseCompany, location: baseLocation, salary: baseSalary },
-    ];
+    return [];
 };
 
 const FUNNEL_DATA = [
@@ -108,6 +107,54 @@ const resolveJobId = (job = {}) => {
     return '';
 };
 
+const resolveCompanyImage = (job = {}) => String(
+    job?.companyLogoUrl
+    || job?.logoUrl
+    || job?.companyBrandPhoto
+    || job?.employerProfile?.logoUrl
+    || job?.bannerImage
+    || job?.bannerUrl
+    || ''
+).trim();
+
+const resolveOpenings = (job = {}) => {
+    const directValue = Number(job?.openings);
+    if (Number.isFinite(directValue) && directValue > 0) {
+        return Math.max(1, Math.round(directValue));
+    }
+
+    const requirements = Array.isArray(job?.requirements) ? job.requirements : [];
+    for (const requirement of requirements) {
+        const match = String(requirement || '').match(/openings?\s*:\s*(\d+)/i);
+        if (match) {
+            const parsed = Number(match[1]);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                return Math.max(1, Math.round(parsed));
+            }
+        }
+    }
+
+    return null;
+};
+
+const resolveSecondaryStat = (job = {}) => {
+    const explicitType = String(job?.type || job?.employmentType || job?.jobType || '').trim();
+    if (explicitType) {
+        return { label: 'TYPE', value: explicitType };
+    }
+
+    const shift = String(job?.shift || '').trim();
+    if (shift) {
+        return { label: 'SHIFT', value: `${shift} Shift` };
+    }
+
+    if (typeof job?.remoteAllowed === 'boolean') {
+        return { label: 'MODE', value: job.remoteAllowed ? 'Remote' : 'On-site' };
+    }
+
+    return { label: 'STATUS', value: job?.activelyHiring === false ? 'Paused' : 'Hiring now' };
+};
+
 export default function JobDetailsScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
     const {
@@ -120,8 +167,10 @@ export default function JobDetailsScreen({ navigation, route }) {
         explainability: routeExplainability,
         entrySource,
     } = route.params || {};
+    const routeJobId = resolveJobId(job || {});
     const [applying, setApplying] = useState(false);
     const [applied, setApplied] = useState(false);
+    const [liveJob, setLiveJob] = useState(job || null);
 
     const [isSaved, setIsSaved] = useState(false);
     const [loadingAI, setLoadingAI] = useState(false);
@@ -133,6 +182,9 @@ export default function JobDetailsScreen({ navigation, route }) {
     const [matchTier, setMatchTier] = useState(String(routeTier || '').toUpperCase() || null);
     const [probabilityExplainability, setProbabilityExplainability] = useState(routeExplainability || {});
     const [matchModelVersionUsed, setMatchModelVersionUsed] = useState(null);
+    const [matchScoreSource, setMatchScoreSource] = useState(String(job?.matchScoreSource || '').trim());
+    const [probabilisticFallbackUsed, setProbabilisticFallbackUsed] = useState(Boolean(job?.probabilisticFallbackUsed || job?.fallbackUsed));
+    const [scoreTimeline, setScoreTimeline] = useState(job?.timelineTransparency || null);
     const [subscriptionPlan, setSubscriptionPlan] = useState('free');
     const applyScale = useRef(new Animated.Value(1)).current;
     const successBurstOpacity = useRef(new Animated.Value(0)).current;
@@ -141,29 +193,57 @@ export default function JobDetailsScreen({ navigation, route }) {
     const isMatchUiEnabled = featureFlags?.FEATURE_MATCH_UI_V1 ?? FEATURE_MATCH_UI_V1;
     const isEmployer = viewerRole === 'employer';
 
+    useEffect(() => {
+        setLiveJob(job || null);
+    }, [job]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const hydrateLatestJob = async () => {
+            if (!routeJobId) return;
+            try {
+                const { data } = await client.get(`/api/jobs/${routeJobId}`, {
+                    __skipApiErrorHandler: true,
+                    __disableBaseFallback: true,
+                    __maxRetries: 0,
+                    timeout: 6000,
+                });
+                const latestJob = data?.data || null;
+                if (!isMounted || !latestJob || typeof latestJob !== 'object') return;
+                setLiveJob((prev) => ({ ...(prev || {}), ...latestJob }));
+            } catch (_error) {
+                // Keep route data when a refresh is unavailable.
+            }
+        };
+
+        hydrateLatestJob();
+        return () => {
+            isMounted = false;
+        };
+    }, [routeJobId]);
+
     // Safely handle missing params
-    const safeJob = job || {
+    const safeJob = liveJob || job || {
         title: 'Open Position',
         companyName: 'Hiring Company',
         location: 'Location to be shared',
         salaryRange: 'Salary to be discussed',
-        type: 'Full-time',
+        type: '',
         requirements: ['Role requirements shared after apply'],
         description: 'The employer will share complete role details once your application is shortlisted.',
     };
+    const structuredLocation = resolveStructuredLocation(safeJob);
+    const resolvedLocationLabel = structuredLocation.locationLabel || safeJob.location || 'Location to be shared';
     const safeJobId = resolveJobId(safeJob);
     const routeMatchProbability = toProbabilityRatio(routeFinalScore)
         ?? toProbabilityRatio(matchScore)
         ?? toProbabilityRatio(job?.matchProbability)
         ?? toProbabilityRatio(job?.finalScore)
         ?? toProbabilityRatio(job?.matchScore)
-        ?? (String(routeTier || '').toUpperCase() === 'STRONG'
-            ? 0.9
-            : (String(routeTier || '').toUpperCase() === 'GOOD'
-                ? 0.78
-                : (String(routeTier || '').toUpperCase() === 'POSSIBLE' ? 0.65 : null)));
+        ?? null;
     const safeMatchScore = Number.isFinite(Number(matchScore)) ? Number(matchScore) : Math.round((routeMatchProbability || 0) * 100);
-    const safeFitReason = fitReason || `Your profile is a strong match for this ${safeJob.title} role based on your 8 years of experience.`;
+    const safeFitReason = fitReason || `This role overlaps with the core signals in your profile.`;
     const fallbackProbability = routeMatchProbability ?? 0;
 
     useEffect(() => {
@@ -275,6 +355,9 @@ export default function JobDetailsScreen({ navigation, route }) {
                 setMatchTier(resolvedTier);
                 setProbabilityExplainability(data?.explainability || {});
                 setMatchModelVersionUsed(data?.matchModelVersionUsed || null);
+                setMatchScoreSource(String(data?.matchScoreSource || '').trim());
+                setProbabilisticFallbackUsed(Boolean(data?.probabilisticFallbackUsed || data?.fallbackUsed));
+                setScoreTimeline(data?.timelineTransparency || null);
 
                 trackEvent('MATCH_DETAIL_VIEWED', {
                     workerId: resolvedWorkerId,
@@ -290,6 +373,9 @@ export default function JobDetailsScreen({ navigation, route }) {
                 setMatchProbability(fallbackProbability);
                 setMatchTier(resolvedTier);
                 setProbabilityExplainability(routeExplainability || {});
+                setMatchScoreSource(String(job?.matchScoreSource || '').trim());
+                setProbabilisticFallbackUsed(Boolean(job?.probabilisticFallbackUsed || job?.fallbackUsed));
+                setScoreTimeline(job?.timelineTransparency || null);
 
                 trackEvent('MATCH_DETAIL_VIEWED', {
                     workerId: resolvedWorkerId,
@@ -479,6 +565,7 @@ export default function JobDetailsScreen({ navigation, route }) {
     const effectiveTier = isMatchUiEnabled
         ? (matchTier || tierFromProbability(displayProbability))
         : (String(routeTier || '').toUpperCase() || tierFromProbability(displayProbability));
+    const hasRealMatchScore = displayProbability > 0;
 
     const resolvedExplainability = isMatchUiEnabled
         ? (probabilityExplainability || {})
@@ -501,6 +588,10 @@ export default function JobDetailsScreen({ navigation, route }) {
         { label: 'Distance', value: distanceFitPercent },
     ];
     const similarJobs = buildSimilarJobs(safeJob);
+    const secondaryStat = resolveSecondaryStat(safeJob);
+    const openingsCount = resolveOpenings(safeJob);
+    const companyImageUri = resolveCompanyImage(safeJob)
+        || `https://ui-avatars.com/api/?name=${encodeURIComponent(String(safeJob?.companyName || 'Company'))}&background=7c3aed&color=fff&size=512`;
     const employerTrust = {
         verified: Boolean(safeJob?.verifiedCompany || safeJob?.trustedCompany || safeJob?.trustBadge),
         responseTime: String(safeJob?.responseTimeLabel || safeJob?.employer?.responseTimeLabel || 'Responds fast'),
@@ -508,15 +599,47 @@ export default function JobDetailsScreen({ navigation, route }) {
         rating: Number(safeJob?.employerRating || safeJob?.rating || safeJob?.employer?.rating || 0),
     };
     const matchedSkills = Array.isArray(safeJob?.requirements) ? safeJob.requirements.slice(0, 8) : [];
+    const distanceContextKm = Number.isFinite(Number(safeJob?.distanceKm))
+        ? Number(safeJob.distanceKm)
+        : Number(resolvedExplainability?.apRegional?.distanceKm || safeJob?.job?.distanceKm || 0);
+    const fallbackMatchReasons = buildMatchReasons({
+        explainability: resolvedExplainability,
+        distanceKm: distanceContextKm,
+        max: 3,
+    }).map((item) => item.label);
+    const matchGapBullets = buildMatchGaps({
+        explainability: resolvedExplainability,
+        distanceKm: distanceContextKm,
+        max: 3,
+    }).map((item) => item.label);
     const whyMatchBullets = Array.isArray(explanation) && explanation.length
         ? explanation.slice(0, 3)
-        : [safeFitReason];
+        : (Array.isArray(resolvedExplainability?.topReasons) && resolvedExplainability.topReasons.length
+            ? resolvedExplainability.topReasons.slice(0, 3)
+            : (fallbackMatchReasons.length ? fallbackMatchReasons : [safeFitReason]));
+    const scoreSourceMeta = getMatchScoreSourceMeta({
+        matchScoreSource,
+        matchModelVersionUsed,
+        probabilisticFallbackUsed,
+    });
+    const confidencePercent = Math.round(clamp01(resolvedExplainability?.confidenceScore || 0) * 100);
+    const freshnessSignals = buildFreshnessSignals({
+        ...safeJob,
+        openings: openingsCount ?? safeJob?.openings,
+        responseTimeLabel: employerTrust.responseTime,
+        activelyHiring: safeJob?.activelyHiring !== false,
+        timelineTransparency: scoreTimeline || safeJob?.timelineTransparency || null,
+    });
+    const lastActiveLabel = formatRelativeTimeLabel(
+        scoreTimeline?.workerLastActiveAt,
+        { prefix: 'Active', fallback: '' }
+    );
 
     const handleShareJob = async () => {
         try {
             await Share.share({
                 title: safeJob?.title || 'Job Opportunity',
-                message: `${safeJob?.title || 'Job'} at ${safeJob?.companyName || 'Company'}\n${safeJob?.location || 'Location'}\nSalary: ${safeJob?.salaryRange || 'Not listed'}`,
+                message: `${safeJob?.title || 'Job'} at ${safeJob?.companyName || 'Company'}\n${resolvedLocationLabel}\nSalary: ${safeJob?.salaryRange || 'Not listed'}`,
             });
         } catch (_error) {
             Alert.alert('Share failed', 'Could not open share sheet right now.');
@@ -530,8 +653,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                 <View style={styles.bannerContainer}>
                     <Image
                         source={{
-                            uri: String(safeJob?.bannerImage || safeJob?.bannerUrl || '').trim()
-                                || `https://ui-avatars.com/api/?name=${encodeURIComponent(String(safeJob?.companyName || 'Company'))}&background=7c3aed&color=fff&size=512`,
+                            uri: companyImageUri,
                         }}
                         style={styles.bannerImage}
                     />
@@ -557,8 +679,17 @@ export default function JobDetailsScreen({ navigation, route }) {
                     {/* Header Info */}
                     <View style={styles.heroHeader}>
                         <View style={styles.heroFlex}>
+                            <View style={styles.companyHeroRow}>
+                                <Image source={{ uri: companyImageUri }} style={styles.companyHeroAvatar} />
+                                <View style={styles.companyHeroCopy}>
+                                    <Text style={styles.companyHeroEyebrow}>Hiring company</Text>
+                                    <Text style={styles.companyHeroName} numberOfLines={1}>{safeJob.companyName}</Text>
+                                    <Text style={styles.companyHeroMeta} numberOfLines={1}>
+                                        {[safeJob.companyIndustry, resolvedLocationLabel].filter(Boolean).join(' • ') || 'Employer details available below'}
+                                    </Text>
+                                </View>
+                            </View>
                             <Text style={styles.jobTitle}>{safeJob.title}</Text>
-                            <Text style={styles.companyName}>{safeJob.companyName}</Text>
                             <View style={styles.heroBadgeRow}>
                                 {safeJob?.urgentHiring ? (
                                     <View style={[styles.heroBadge, styles.heroBadgeUrgent]}>
@@ -572,11 +703,11 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 ) : null}
                             </View>
                         </View>
-                        {!isEmployer && (
+                        {!isEmployer && hasRealMatchScore ? (
                             <View style={styles.matchScoreBadge}>
                                 <Text style={styles.matchScoreText}>{displayMatchPercent}%</Text>
                             </View>
-                        )}
+                        ) : null}
                     </View>
 
                     {/* Quick Stats: Salary & Type */}
@@ -585,9 +716,15 @@ export default function JobDetailsScreen({ navigation, route }) {
                             <Text style={styles.quickStatLabel}>SALARY</Text>
                             <Text style={styles.quickStatValue}>{safeJob.salaryRange}</Text>
                         </View>
-                        <View style={[styles.quickStatCard, { marginLeft: 16 }]}>
-                            <Text style={styles.quickStatLabel}>TYPE</Text>
-                            <Text style={styles.quickStatValue}>{safeJob.type}</Text>
+                        {openingsCount ? (
+                            <View style={[styles.quickStatCard, styles.quickStatCardSpaced]}>
+                                <Text style={styles.quickStatLabel}>OPENINGS</Text>
+                                <Text style={styles.quickStatValue}>{String(openingsCount)}</Text>
+                            </View>
+                        ) : null}
+                        <View style={[styles.quickStatCard, styles.quickStatCardSpaced]}>
+                            <Text style={styles.quickStatLabel}>{secondaryStat.label}</Text>
+                            <Text style={styles.quickStatValue}>{secondaryStat.value}</Text>
                         </View>
                     </View>
 
@@ -607,6 +744,25 @@ export default function JobDetailsScreen({ navigation, route }) {
                                     <Text style={styles.trustInlineText}>Rating {employerTrust.rating.toFixed(1)}</Text>
                                 </>
                             ) : null}
+                        </View>
+                    ) : null}
+
+                    {!isEmployer && hasRealMatchScore ? (
+                        <View style={styles.matchMetaRail}>
+                            <View style={[styles.matchMetaPill, styles.matchMetaPillAccent]}>
+                                <IconSparkles size={12} color="#6d28d9" />
+                                <Text style={[styles.matchMetaPillText, styles.matchMetaPillTextAccent]}>{scoreSourceMeta.label}</Text>
+                            </View>
+                            {confidencePercent > 0 ? (
+                                <View style={styles.matchMetaPill}>
+                                    <Text style={styles.matchMetaPillText}>{confidencePercent}% confidence</Text>
+                                </View>
+                            ) : null}
+                            {freshnessSignals.slice(0, 2).map((signal) => (
+                                <View key={signal.id} style={styles.matchMetaPill}>
+                                    <Text style={styles.matchMetaPillText}>{signal.label}</Text>
+                                </View>
+                            ))}
                         </View>
                     ) : null}
 
@@ -650,7 +806,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                         </View>
                     ) : null}
 
-                    {!isEmployer ? (
+                    {!isEmployer && hasRealMatchScore ? (
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Why This Match</Text>
                             {whyMatchBullets.map((bullet, index) => (
@@ -659,10 +815,24 @@ export default function JobDetailsScreen({ navigation, route }) {
                         </View>
                     ) : null}
 
+                    {!isEmployer && matchGapBullets.length > 0 ? (
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>What To Improve</Text>
+                            {matchGapBullets.map((gap, index) => (
+                                <Text key={`gap-${index}`} style={styles.matchGapText}>• {String(gap || '').trim()}</Text>
+                            ))}
+                            {lastActiveLabel ? (
+                                <Text style={styles.matchGapHint}>{lastActiveLabel}</Text>
+                            ) : null}
+                        </View>
+                    ) : null}
+
                     {/* Location */}
                     <View style={styles.locationBox}>
                         <IconMapPin size={16} color="#64748b" />
-                        <Text style={styles.locationText}>{safeJob.location}</Text>
+                        <Text style={styles.locationText}>
+                            {openingsCount ? `${resolvedLocationLabel} • ${openingsCount} opening${openingsCount === 1 ? '' : 's'}` : resolvedLocationLabel}
+                        </Text>
                     </View>
 
                     {/* Description */}
@@ -711,7 +881,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 ))}
                             </View>
                         </View>
-                    ) : (
+                    ) : hasRealMatchScore ? (
                         <View style={styles.smartMatchWrap}>
                             <LinearGradient
                                 colors={['#eef2ff', '#f5f3ff']}
@@ -745,6 +915,12 @@ export default function JobDetailsScreen({ navigation, route }) {
                                     ) : null}
 
                                     <Text style={styles.explainabilityHeading}>Match breakdown</Text>
+                                    <View style={styles.matchSourceRow}>
+                                        <Text style={styles.matchSourceLabel}>Score source</Text>
+                                        <Text style={styles.matchSourceValue}>
+                                            {scoreSourceMeta.label}{scoreSourceMeta.detail ? ` • ${scoreSourceMeta.detail}` : ''}
+                                        </Text>
+                                    </View>
                                     <View style={styles.explainabilityGrid}>
                                         {breakdownRows.map((row) => (
                                             <View key={row.label} style={styles.explainabilityRow}>
@@ -770,10 +946,6 @@ export default function JobDetailsScreen({ navigation, route }) {
                                             High likelihood of success — this role aligns strongly with your profile.
                                         </Text>
                                     ) : null}
-
-                                    {matchModelVersionUsed ? (
-                                        <Text style={styles.modelVersionText}>Model: {matchModelVersionUsed}</Text>
-                                    ) : null}
                                 </View>
                             )}
                             <View style={styles.smartMatchTextContainer}>
@@ -794,7 +966,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 onUnlock={() => navigation.navigate('Subscription')}
                             />
                         </View>
-                    )}
+                    ) : null}
 
                     {/* Company Info Section */}
                     {!isEmployer && safeJob?.companyName && (
@@ -806,7 +978,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 </View>
                             </View>
                             <View style={styles.companyCard}>
-                                <Image source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(safeJob.companyName)}&background=7c3aed&color=fff` }} style={styles.companyLogo} />
+                                <Image source={{ uri: companyImageUri }} style={styles.companyLogo} />
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.companyDesc} numberOfLines={3}>
                                         {safeJob?.companyDescription || 'Company overview will be shared by the employer as part of the hiring conversation.'}
@@ -823,7 +995,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                     )}
 
                     {/* Similar Jobs Carousel */}
-                    {!isEmployer && (
+                    {!isEmployer && similarJobs.length > 0 ? (
                         <View style={styles.similarSection}>
                             <Text style={styles.sectionTitle}>Similar Jobs</Text>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.similarScroll}>
@@ -839,7 +1011,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 ))}
                             </ScrollView>
                         </View>
-                    )}
+                    ) : null}
 
                     <View style={{ height: 100 }} />
                 </View>
@@ -901,6 +1073,43 @@ const styles = StyleSheet.create({
     },
     heroHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
     heroFlex: { flex: 1, paddingRight: 16 },
+    companyHeroRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 14,
+    },
+    companyHeroAvatar: {
+        width: 54,
+        height: 54,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+    },
+    companyHeroCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    companyHeroEyebrow: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#7c8798',
+        textTransform: 'uppercase',
+        letterSpacing: 0.9,
+    },
+    companyHeroName: {
+        marginTop: 2,
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    companyHeroMeta: {
+        marginTop: 3,
+        fontSize: 11.5,
+        fontWeight: '700',
+        color: '#64748b',
+    },
     jobTitle: { fontSize: 30, fontWeight: '700', color: '#0f172a', marginBottom: 4, lineHeight: 36 },
     companyName: { fontSize: 15, fontWeight: '500', color: '#2563eb' },
     heroBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
@@ -913,8 +1122,9 @@ const styles = StyleSheet.create({
     matchScoreBadge: { backgroundColor: '#e8f0ff', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, borderWidth: 1, borderColor: '#bfd5ff' },
     matchScoreText: { fontSize: 16, fontWeight: '600', color: '#1d4ed8' },
 
-    quickStatsRow: { flexDirection: 'row', marginBottom: 16 },
+    quickStatsRow: { flexDirection: 'row', marginBottom: 16, gap: 12 },
     quickStatCard: { flex: 1, backgroundColor: '#f8fbff', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#dbe3ec', alignItems: 'center' },
+    quickStatCardSpaced: { marginLeft: 0 },
     quickStatLabel: { fontSize: 11, fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.4 },
     quickStatValue: { fontSize: 15, fontWeight: '600', color: '#1e293b' },
     trustStrip: {
@@ -952,6 +1162,36 @@ const styles = StyleSheet.create({
         color: '#94a3b8',
         fontSize: 10,
         fontWeight: '700',
+    },
+    matchMetaRail: {
+        marginTop: -4,
+        marginBottom: 16,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    matchMetaPill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    matchMetaPillAccent: {
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+    },
+    matchMetaPillText: {
+        color: '#475569',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    matchMetaPillTextAccent: {
+        color: '#5b21b6',
     },
     detailsActionRow: {
         marginBottom: 16,
@@ -1003,6 +1243,8 @@ const styles = StyleSheet.create({
     sectionTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a', marginBottom: 12 },
     descriptionText: { fontSize: 15, lineHeight: 22, color: '#475569', fontWeight: '400' },
     whyMatchText: { fontSize: 14, color: '#475569', lineHeight: 22, marginBottom: 6 },
+    matchGapText: { fontSize: 14, color: '#7c2d12', lineHeight: 22, marginBottom: 6 },
+    matchGapHint: { marginTop: 4, fontSize: 11.5, fontWeight: '700', color: '#64748b' },
 
     tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     skillTag: { backgroundColor: '#f8fbff', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: '#dbe3ec' },
@@ -1064,6 +1306,28 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '600',
     },
+    matchSourceRow: {
+        marginBottom: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 9,
+        borderRadius: 10,
+        backgroundColor: '#f8fbff',
+        borderWidth: 1,
+        borderColor: '#dbe3ec',
+    },
+    matchSourceLabel: {
+        color: '#64748b',
+        fontSize: 10.5,
+        fontWeight: '800',
+        letterSpacing: 0.2,
+        textTransform: 'uppercase',
+    },
+    matchSourceValue: {
+        marginTop: 3,
+        color: '#1f2937',
+        fontSize: 12,
+        fontWeight: '700',
+    },
     explainabilityGrid: {
         gap: 10,
     },
@@ -1117,12 +1381,6 @@ const styles = StyleSheet.create({
         borderColor: '#bbf7d0',
         borderRadius: 10,
         padding: 8,
-    },
-    modelVersionText: {
-        marginTop: 8,
-        fontSize: 10,
-        color: '#64748b',
-        fontWeight: '500',
     },
     smartMatchTextContainer: {
         marginTop: 4,

@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { RADIUS } from '../../../theme/theme';
-import { connectPalette, connectShadow } from '../connectPalette';
+import { connectPalette } from '../connectPalette';
 
 const OPEN_STATUSES = new Set(['open', 'reviewing']);
 
@@ -184,12 +184,16 @@ export default memo(BountyCardComponent);
 const styles = StyleSheet.create({
     card: {
         backgroundColor: connectPalette.surface,
-        borderRadius: RADIUS.xl,
-        padding: 18,
+        borderRadius: 20,
+        padding: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: connectPalette.line,
-        ...connectShadow,
+        borderColor: '#efe9f8',
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 18,
+        elevation: 2,
     },
     topRow: {
         flexDirection: 'row',
@@ -208,9 +212,9 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     logo: {
-        width: 42,
-        height: 42,
-        borderRadius: RADIUS.md,
+        width: 40,
+        height: 40,
+        borderRadius: RADIUS.full,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -231,7 +235,7 @@ const styles = StyleSheet.create({
         color: connectPalette.muted,
     },
     statusBadge: {
-        borderRadius: RADIUS.sm,
+        borderRadius: 999,
         paddingHorizontal: 8,
         paddingVertical: 4,
     },
@@ -240,19 +244,25 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
     statusUrgent: {
-        backgroundColor: connectPalette.danger,
+        backgroundColor: '#ffe4e6',
+        borderWidth: 1,
+        borderColor: '#fecdd3',
     },
     statusUrgentText: {
-        color: connectPalette.surface,
+        color: '#b91c1c',
     },
     statusOpen: {
-        backgroundColor: connectPalette.accentSoft,
+        backgroundColor: '#f7f3fc',
+        borderWidth: 1,
+        borderColor: '#ebe2f8',
     },
     statusOpenText: {
-        color: connectPalette.accentDark,
+        color: '#6a41d8',
     },
     statusReviewing: {
-        backgroundColor: '#eaf4ff',
+        backgroundColor: '#eef6ff',
+        borderWidth: 1,
+        borderColor: '#dbeafe',
     },
     statusReviewingText: {
         color: '#2563eb',
@@ -278,7 +288,7 @@ const styles = StyleSheet.create({
     descriptionText: {
         fontSize: 12,
         lineHeight: 18,
-        color: connectPalette.muted,
+        color: '#7c8398',
         marginBottom: 12,
     },
     metaRow: {
@@ -291,7 +301,7 @@ const styles = StyleSheet.create({
     },
     metaLabel: {
         fontSize: 10,
-        color: connectPalette.subtle,
+        color: '#8a91a3',
         fontWeight: '700',
         marginBottom: 2,
     },
@@ -305,39 +315,44 @@ const styles = StyleSheet.create({
     },
     primaryButton: {
         flex: 1,
-        backgroundColor: connectPalette.dark,
-        borderRadius: RADIUS.md,
+        backgroundColor: '#6f4cf6',
+        borderRadius: 14,
         paddingVertical: 11,
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 8,
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.16,
+        shadowRadius: 12,
+        elevation: 2,
     },
     primaryButtonDisabled: {
-        backgroundColor: '#374151',
-        opacity: 0.75,
+        backgroundColor: '#e4ddf9',
+        opacity: 0.8,
     },
     primaryButtonText: {
         color: connectPalette.surface,
         fontSize: 11,
-        fontWeight: '900',
+        fontWeight: '800',
     },
     secondaryButton: {
         minWidth: 92,
         borderWidth: 1,
-        borderColor: connectPalette.lineStrong,
-        borderRadius: RADIUS.md,
+        borderColor: '#ebe2f8',
+        borderRadius: 14,
         paddingHorizontal: 12,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: connectPalette.surface,
     },
     secondaryButtonDisabled: {
-        backgroundColor: '#f3f4f6',
-        borderColor: '#e5e7eb',
+        backgroundColor: '#f7f3fc',
+        borderColor: '#ece4f8',
     },
     secondaryButtonText: {
         color: connectPalette.text,
         fontSize: 10,
-        fontWeight: '900',
+        fontWeight: '800',
     },
 });

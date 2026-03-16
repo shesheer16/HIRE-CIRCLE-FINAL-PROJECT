@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import browserSessionApi from '../../../utils/browserSessionApi';
 
 const PIPELINE_STEPS = ['Applied', 'Shortlisted', 'Interviewing', 'Offer', 'Hired'];
 const LEGACY_ALIAS = {
@@ -77,18 +77,6 @@ const normalizeStatus = (value) => {
     return LEGACY_ALIAS[normalized] || normalized;
 };
 
-const getAuthConfig = () => {
-    const raw = localStorage.getItem('userInfo');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.token) return null;
-    return {
-        headers: {
-            Authorization: `Bearer ${parsed.token}`,
-        },
-    };
-};
-
 const CandidateApplications = () => {
     const [applications, setApplications] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -97,17 +85,11 @@ const CandidateApplications = () => {
     const fetchApplications = useCallback(async () => {
         try {
             setLoading(true);
-            const config = getAuthConfig();
-            if (!config) {
-                setError('Session expired. Please login again.');
-                setApplications([]);
-                return;
-            }
-            const { data } = await axios.get('/api/applications', config);
+            const { data } = await browserSessionApi.get('/api/applications');
             const rows = Array.isArray(data?.data) ? data.data : [];
             setApplications(rows);
             setError('');
-        } catch (_error) {
+        } catch (_requestError) {
             setError('Failed to load applications.');
         } finally {
             setLoading(false);
@@ -227,4 +209,3 @@ const CandidateApplications = () => {
 };
 
 export default CandidateApplications;
-
