@@ -126,30 +126,6 @@ const PremiumStateCard = ({
     </View>
 );
 
-const PremiumStateCard = ({
-    icon = 'alert-circle-outline',
-    accent = '#6d28d9',
-    title,
-    subtitle,
-    actionLabel,
-    onAction,
-}) => (
-    <View style={styles.stateCardWrap}>
-        <View style={styles.stateCard}>
-            <View style={[styles.stateIconBubble, { backgroundColor: `${accent}14` }]}>
-                <Ionicons name={icon} size={22} color={accent} />
-            </View>
-            <Text style={styles.stateTitle}>{title}</Text>
-            {subtitle ? <Text style={styles.stateSubtitle}>{subtitle}</Text> : null}
-            {actionLabel && typeof onAction === 'function' ? (
-                <TouchableOpacity style={styles.statePrimaryAction} onPress={onAction} activeOpacity={0.86}>
-                    <Text style={styles.statePrimaryActionText}>{actionLabel}</Text>
-                </TouchableOpacity>
-            ) : null}
-        </View>
-    </View>
-);
-
 export default function ApplicationsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const role = useAppStore(state => state.role);
