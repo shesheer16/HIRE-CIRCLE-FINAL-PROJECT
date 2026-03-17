@@ -314,6 +314,23 @@ const styles = StyleSheet.create({
         width: 5, height: 5, borderRadius: 2.5,
         backgroundColor: PALETTE.accentDeep,
     },
+    heroPill: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        backgroundColor: GLASS_PALETTE.accentSoft,
+        marginBottom: 14,
+    },
+    heroPillText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '700',
+        color: GLASS_PALETTE.accentText,
+    },
     title: {
         fontSize: 25, fontWeight: '800',
         color: PALETTE.textPrimary, textAlign: 'center',
@@ -419,6 +436,14 @@ const styles = StyleSheet.create({
     },
     dividerText: {
         fontSize: 13, fontWeight: '500', color: PALETTE.textTertiary,
+    },
+    footerCard: {
+        ...GLASS_SURFACES.softPanel,
+        ...GLASS_SHADOWS.soft,
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        marginTop: 18,
     },
     footerRow: {
         flexDirection: 'row', justifyContent: 'center',

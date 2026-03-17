@@ -78,6 +78,9 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         width: '100%',
     },
+    tabButtonPressable: {
+        borderRadius: 16,
+    },
     tabButton: {
         flex: 1,
         alignItems: 'center',

@@ -584,7 +584,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: '#ffffff',
+        backgroundColor: 'rgba(255,255,255,0.94)',
     },
     headerIconBtn: {
         width: 36,

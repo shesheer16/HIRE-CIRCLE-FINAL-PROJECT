@@ -1017,6 +1017,14 @@ export default function JobsScreen() {
         filterModalVisible,
         searchRadiusKm,
     ]);
+    fetchJobsLatestRef.current = fetchJobs;
+
+    useEffect(() => {
+        if (filterModalVisible) return;
+        if (!shouldRefetchAfterFilterApplyRef.current) return;
+        shouldRefetchAfterFilterApplyRef.current = false;
+        fetchJobs({ isRefresh: false });
+    }, [appliedDistrict, appliedMandal, fetchJobs, filterModalVisible, searchRadiusKm]);
 
     const scheduleFetchJobs = useCallback(() => {
         if (fetchDebounceRef.current) {
@@ -1289,6 +1297,49 @@ export default function JobsScreen() {
             setJobs([]);
         }
     }, [shouldShowManualBrowseUi]);
+
+    const handleOpenFilters = useCallback(() => {
+        setDistrictFilter(appliedDistrict);
+        setMandalFilter(appliedMandal);
+        setMinSalaryFilter(appliedMinSalary > 0 ? String(appliedMinSalary) : '');
+        setMinMatchFilter(isMatchProfileMissing ? 0 : appliedMinMatch);
+        setDraftSearchRadiusKm(searchRadiusKm > 0 ? searchRadiusKm : 0);
+        clearInputBlurTimeout('district');
+        clearInputBlurTimeout('mandal');
+        setIsDistrictFocused(false);
+        setIsMandalFocused(false);
+        setFilterModalVisible(true);
+    }, [appliedDistrict, appliedMandal, appliedMinMatch, appliedMinSalary, clearInputBlurTimeout, isMatchProfileMissing, searchRadiusKm]);
+
+    const handleSelectDistrictSuggestion = useCallback((value) => {
+        const safeValue = String(value || '').trim();
+        clearInputBlurTimeout('district');
+        clearInputBlurTimeout('mandal');
+        Keyboard.dismiss();
+        setDistrictFilter(safeValue);
+        setMandalFilter('');
+        setIsDistrictFocused(false);
+        setIsMandalFocused(false);
+    }, [clearInputBlurTimeout]);
+
+    const handleSelectMandalSuggestion = useCallback((value) => {
+        const safeValue = String(value || '').trim();
+        clearInputBlurTimeout('mandal');
+        Keyboard.dismiss();
+        setMandalFilter(safeValue);
+        setIsMandalFocused(false);
+    }, [clearInputBlurTimeout]);
+
+    const handleDistrictFocus = useCallback(() => {
+        clearInputBlurTimeout('district');
+        setIsDistrictFocused(true);
+    }, [clearInputBlurTimeout]);
+
+    const handleMandalFocus = useCallback(() => {
+        if (!String(districtFilter || '').trim()) return;
+        clearInputBlurTimeout('mandal');
+        setIsMandalFocused(true);
+    }, [clearInputBlurTimeout, districtFilter]);
 
     const handleOpenFilters = useCallback(() => {
         setDistrictFilter(appliedDistrict);
@@ -2037,6 +2088,10 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'flex-end',
     },
+    filterModalKeyboardWrap: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
     filterModalSheet: {
         backgroundColor: PALETTE.surface,
         borderTopLeftRadius: 14,
@@ -2074,6 +2129,13 @@ const styles = StyleSheet.create({
         lineHeight: 17,
         fontWeight: '600',
         color: PALETTE.textSecondary,
+    },
+    filterModalSubtitle: {
+        marginTop: 4,
+        fontSize: 11.5,
+        lineHeight: 17,
+        fontWeight: '600',
+        color: '#64748b',
     },
     filterModalClose: {
         width: 30,
@@ -2356,12 +2418,34 @@ const styles = StyleSheet.create({
         color: PALETTE.textSecondary,
         fontWeight: '600',
     },
+    matchHintCard: {
+        backgroundColor: '#f8fafc',
+        borderRadius: 20,
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        borderWidth: 1,
+        borderColor: '#e5eaf2',
+        marginBottom: 24,
+    },
+    matchHintTitle: {
+        fontSize: 12.5,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    matchHintText: {
+        marginTop: 4,
+        fontSize: 11.5,
+        lineHeight: 18,
+        color: '#64748b',
+        fontWeight: '600',
+    },
     filterActions: {
         flexDirection: 'row',
         gap: 12,
         paddingBottom: 24,
     },
     clearBtn: {
+        ...SCREEN_CHROME.actionButton,
         flex: 1,
         backgroundColor: PALETTE.backgroundSoft,
         paddingVertical: 14,
@@ -2379,6 +2463,10 @@ const styles = StyleSheet.create({
         backgroundColor: PALETTE.accent,
         borderRadius: 10,
         alignItems: 'center',
+        ...SHADOWS.sm,
+    },
+    applyBtnDisabled: {
+        opacity: 0.45,
     },
     applyBtnDisabled: {
         opacity: 0.45,

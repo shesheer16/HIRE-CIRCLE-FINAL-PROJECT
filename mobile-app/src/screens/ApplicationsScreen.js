@@ -126,6 +126,30 @@ const PremiumStateCard = ({
     </View>
 );
 
+const PremiumStateCard = ({
+    icon = 'alert-circle-outline',
+    accent = '#6d28d9',
+    title,
+    subtitle,
+    actionLabel,
+    onAction,
+}) => (
+    <View style={styles.stateCardWrap}>
+        <View style={styles.stateCard}>
+            <View style={[styles.stateIconBubble, { backgroundColor: `${accent}14` }]}>
+                <Ionicons name={icon} size={22} color={accent} />
+            </View>
+            <Text style={styles.stateTitle}>{title}</Text>
+            {subtitle ? <Text style={styles.stateSubtitle}>{subtitle}</Text> : null}
+            {actionLabel && typeof onAction === 'function' ? (
+                <TouchableOpacity style={styles.statePrimaryAction} onPress={onAction} activeOpacity={0.86}>
+                    <Text style={styles.statePrimaryActionText}>{actionLabel}</Text>
+                </TouchableOpacity>
+            ) : null}
+        </View>
+    </View>
+);
+
 export default function ApplicationsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const role = useAppStore(state => state.role);
@@ -628,7 +652,9 @@ const renderItem = ({ item }) => (
     );
 
     return (
-        <View style={styles.container}>
+        <LinearGradient colors={isEmployer ? ['#f9fbff', '#f3f5ff', '#fbfcff'] : ['#f5f7fb', '#f5f7fb', '#f5f7fb']} style={styles.container}>
+            {isEmployer ? <View style={styles.employerGlowTop} /> : null}
+            {isEmployer ? <View style={styles.employerGlowBottom} /> : null}
             <CelebrationConfetti visible={showHireConfetti} onEnd={() => setShowHireConfetti(false)} />
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
                 <View style={styles.headerBarShell}>
@@ -902,7 +928,7 @@ const renderItem = ({ item }) => (
                     </Pressable>
                 </Pressable>
             </Modal>
-        </View>
+        </LinearGradient>
     );
 }
 
@@ -936,6 +962,29 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '800',
         color: PALETTE.textSecondary,
+    },
+    headerBarShell: {
+        borderRadius: 0,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.18)',
+        paddingHorizontal: 18,
+        paddingVertical: 12,
+        ...SHADOWS.md,
+    },
+    employerTopRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+        paddingHorizontal: 16,
+    },
+    employerSignalChip: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    employerSignalText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
     },
     headerTopRow: {
         flexDirection: 'row',
@@ -1194,6 +1243,51 @@ const styles = StyleSheet.create({
         borderRadius: 46,
         backgroundColor: 'rgba(124,58,237,0.06)',
     },
+    listHeaderWrap: {
+        marginBottom: 10,
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    listHeaderTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.2,
+    },
+    listHeaderCount: {
+        minWidth: 36,
+        height: 36,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+    },
+    listHeaderCountText: {
+        color: '#6d28d9',
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    rowCard: {
+        ...SCREEN_CHROME.contentCard,
+        position: 'relative',
+        marginBottom: 12,
+        overflow: 'hidden',
+        borderRadius: 24,
+    },
+    rowCardGlow: {
+        position: 'absolute',
+        top: -20,
+        right: -12,
+        width: 92,
+        height: 92,
+        borderRadius: 46,
+        backgroundColor: 'rgba(124,58,237,0.06)',
+    },
     row: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -1348,6 +1442,14 @@ const styles = StyleSheet.create({
         height: 4,
         borderRadius: 2,
         backgroundColor: PALETTE.separator,
+        alignSelf: 'center',
+        marginBottom: 14,
+    },
+    filterSheetHandle: {
+        width: 54,
+        height: 5,
+        borderRadius: 999,
+        backgroundColor: '#d7dfeb',
         alignSelf: 'center',
         marginBottom: 14,
     },

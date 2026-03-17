@@ -23,6 +23,10 @@ const PulseGigCard = memo(function PulseGigCardComponent({
         onOpenGigDetails?.(gig);
     }, [gig, onOpenGigDetails]);
 
+    const handleOpenDetails = useCallback(() => {
+        onOpenGigDetails?.(gig);
+    }, [gig, onOpenGigDetails]);
+
     return (
         <View style={styles.gigCard}>
             <View style={styles.gigHeaderRow}>
@@ -572,6 +576,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
+        marginLeft: 'auto',
     },
     statusPill: {
         borderRadius: 999,

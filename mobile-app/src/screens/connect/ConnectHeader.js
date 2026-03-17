@@ -6,6 +6,16 @@ import CharmTitle from '../../components/CharmTitle';
 import { RADIUS, SCREEN_CHROME, SPACING } from '../../theme/theme';
 import { connectPalette } from './connectPalette';
 
+function BrandMark() {
+    return (
+        <View style={styles.logoMark}>
+            <View style={styles.logoRingOuter} />
+            <View style={styles.logoRingMiddle} />
+            <View style={styles.logoRingInner} />
+        </View>
+    );
+}
+
 function ConnectHeaderComponent({
     onNotificationsPress,
     onComposePress,

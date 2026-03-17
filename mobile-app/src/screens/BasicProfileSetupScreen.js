@@ -253,6 +253,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
     },
     backBtn: {
+        ...GLASS_SURFACES.softPanel,
         minHeight: 42,
         alignSelf: 'flex-start',
         flexDirection: 'row',

@@ -257,6 +257,36 @@ export default function JobDetailsScreen({ navigation, route }) {
         };
     }, [routeJobId]);
 
+    useEffect(() => {
+        setLiveJob(job || null);
+    }, [job]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const hydrateLatestJob = async () => {
+            if (!routeJobId) return;
+            try {
+                const { data } = await client.get(`/api/jobs/${routeJobId}`, {
+                    __skipApiErrorHandler: true,
+                    __disableBaseFallback: true,
+                    __maxRetries: 0,
+                    timeout: 6000,
+                });
+                const latestJob = data?.data || null;
+                if (!isMounted || !latestJob || typeof latestJob !== 'object') return;
+                setLiveJob((prev) => ({ ...(prev || {}), ...latestJob }));
+            } catch (_error) {
+                // Keep route data when a refresh is unavailable.
+            }
+        };
+
+        hydrateLatestJob();
+        return () => {
+            isMounted = false;
+        };
+    }, [routeJobId]);
+
     // Safely handle missing params
     const safeJob = liveJob || job || {
         title: 'Open Position',

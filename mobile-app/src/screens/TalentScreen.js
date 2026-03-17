@@ -814,7 +814,7 @@ export default function TalentScreen({ navigation, route }) {
                         </View>
                     </View>
                 </Modal>
-            </View>
+            </LinearGradient>
         );
     }
 
@@ -971,7 +971,7 @@ export default function TalentScreen({ navigation, route }) {
                         />
                     )}
                 </View>
-            </View>
+            </LinearGradient>
         );
     }
 
@@ -1924,6 +1924,424 @@ const styles = StyleSheet.create({
     },
     screenSurface: {
         backgroundColor: '#FFFFFF',
+    },
+    headerChrome: {
+        ...SCREEN_CHROME.headerSurface,
+        paddingHorizontal: 18,
+        paddingBottom: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        ...SHADOWS.sm,
+        zIndex: 10,
+    },
+    talentHeaderTitleWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    talentHeaderEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#7c8798',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    talentHeaderTitle: {
+        marginTop: 3,
+        color: '#111827',
+        fontSize: 26,
+        fontWeight: '800',
+        letterSpacing: -0.5,
+    },
+    employeeGlowTop: {
+        position: 'absolute',
+        top: -96,
+        right: -72,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: 'rgba(139, 108, 255, 0.16)',
+    },
+    employeeGlowBottom: {
+        position: 'absolute',
+        left: -54,
+        bottom: -72,
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        backgroundColor: 'rgba(96, 165, 250, 0.14)',
+    },
+    employeeTopBar: {
+        paddingHorizontal: 18,
+        paddingBottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    talentTopBarBackBtn: {
+        ...SCREEN_CHROME.actionButton,
+        width: 42,
+        height: 42,
+        borderRadius: 18,
+    },
+    employeeTopBarCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    employeeTopBarEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#7c8798',
+        letterSpacing: 0.9,
+        textTransform: 'uppercase',
+    },
+    employeeTopBarTitle: {
+        marginTop: 2,
+        fontSize: 24,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.5,
+    },
+    employeeTopBarAction: {
+        ...SHADOWS.sm,
+        borderRadius: 20,
+        overflow: 'hidden',
+    },
+    employeeTopBarActionGradient: {
+        width: 46,
+        height: 46,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    scrollContent: {
+        paddingHorizontal: 16,
+        paddingBottom: 26,
+    },
+    employeeOverviewCard: {
+        ...SCREEN_CHROME.heroSurface,
+        borderRadius: 26,
+        padding: 18,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.52)',
+    },
+    employeeOverviewTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+    },
+    employeeOverviewAvatar: {
+        width: 62,
+        height: 62,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.94)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.72)',
+    },
+    talentHeroGlyphWrap: {
+        width: 62,
+        height: 62,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5f3ff',
+        borderWidth: 1,
+        borderColor: '#e9ddff',
+    },
+    employeeOverviewCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    employeeOverviewPill: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+        alignSelf: 'flex-start',
+        gap: 6,
+        marginBottom: 8,
+    },
+    employeeOverviewPillText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#6d28d9',
+        letterSpacing: 0.3,
+    },
+    employeeOverviewTitle: {
+        fontSize: 26,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.55,
+    },
+    employeeOverviewSubtitle: {
+        marginTop: 4,
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    employeeOverviewMetrics: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginTop: 14,
+    },
+    talentInsightRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+    },
+    talentInsightChip: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    talentInsightChipAccent: {
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    talentInsightChipText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#64748b',
+    },
+    talentInsightChipTextAccent: {
+        color: '#6d28d9',
+    },
+    employeeOverviewMetricPill: {
+        ...SCREEN_CHROME.metricTile,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    employeeOverviewMetricValue: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.3,
+    },
+    employeeOverviewMetricLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#64748b',
+    },
+    employeeOverviewActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 16,
+    },
+    employeeOverviewPrimaryAction: {
+        flex: 1,
+        borderRadius: 16,
+        overflow: 'hidden',
+        ...SHADOWS.md,
+    },
+    employeeOverviewPrimaryActionGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 7,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+    },
+    employeeOverviewPrimaryActionText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    employeeOverviewSecondaryAction: {
+        minWidth: 114,
+        ...SCREEN_CHROME.signalChip,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        justifyContent: 'center',
+        gap: 7,
+    },
+    employeeOverviewSecondaryActionText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#6d28d9',
+    },
+    empProfileCard: {
+        ...SCREEN_CHROME.contentCard,
+        padding: 15,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.52)',
+        marginBottom: 14,
+    },
+    empProfTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+        gap: 10,
+    },
+    empProfIdentityWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        minWidth: 0,
+        gap: 12,
+    },
+    talentPoolAvatarWrap: {
+        width: 50,
+        height: 50,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5f3ff',
+        borderWidth: 1,
+        borderColor: '#e9ddff',
+    },
+    talentCandidateAvatarWrap: {
+        width: 50,
+        height: 50,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#ede9fe',
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+    },
+    talentCandidateAvatarText: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    talentCandidateAvatarImage: {
+        width: 50,
+        height: 50,
+        borderRadius: 17,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#f5f3ff',
+    },
+    empProfTitleWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    empProfTitle: {
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#111827',
+        letterSpacing: -0.3,
+    },
+    empProfSubtitle: {
+        marginTop: 4,
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 17,
+        color: '#64748b',
+    },
+    empProfBadgeRow: {
+        flexDirection: 'row',
+        gap: 6,
+        alignItems: 'center',
+    },
+    empProfDefaultBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    empProfDefaultText: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#6d28d9',
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+    empProfMetaRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 10,
+    },
+    empProfMetaChip: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    empProfMetaChipPrimary: {
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    empProfMetaChipAccent: {
+        borderColor: '#d1fae5',
+        backgroundColor: '#ecfdf5',
+    },
+    empProfMetaChipText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#64748b',
+    },
+    empProfMetaChipTextPrimary: {
+        color: '#6d28d9',
+    },
+    empProfMetaChipTextAccent: {
+        color: '#047857',
+    },
+    talentCandidateSummary: {
+        marginBottom: 10,
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    empProfFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    empProfLocRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        flex: 1,
+        minWidth: 0,
+    },
+    empProfLocText: {
+        fontSize: 11.5,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    empProfEditBtn: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+    },
+    empProfEditText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    talentPanelHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        marginBottom: 10,
+    },
+    talentPanelTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    talentPanelBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    talentPanelBadgeText: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    aiExplanationWrap: {
+        gap: 8,
+    },
+    talentDecisionCard: {
+        paddingBottom: 16,
+    },
+    screenSurface: {
+        backgroundColor: '#f6f8fc',
     },
     headerChrome: {
         ...SCREEN_CHROME.headerSurface,

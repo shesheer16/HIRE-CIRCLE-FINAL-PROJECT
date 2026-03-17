@@ -621,6 +621,54 @@ export default function SettingsScreen({ navigation }) {
                     ))}
                 </View>
             </View>
+
+            <LinearGradient colors={['rgba(255,255,255,0.98)', '#f7f4ff']} style={styles.profileHeader}>
+                <View style={styles.profileHeaderTopRow}>
+                    <Image
+                        source={{
+                            uri: profileHeader.avatar ||
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=7c3aed&color=fff`
+                        }}
+                        style={styles.avatar}
+                    />
+                    <View style={styles.profileHeaderCopy}>
+                        <View style={styles.profileRolePill}>
+                            <Ionicons name="shield-checkmark-outline" size={11} color="#6d28d9" />
+                            <Text style={styles.profileRolePillText}>{profileHeader.role}</Text>
+                        </View>
+                        <Text style={styles.userName}>{profileHeader.name}</Text>
+                        <Text style={styles.userRole} numberOfLines={1}>
+                            {profileHeader.email || 'Account details stay here'}
+                        </Text>
+                    </View>
+                </View>
+
+                <View style={styles.heroStatsRow}>
+                    {heroStats.map((stat) => (
+                        <View key={stat.label} style={styles.heroStatCard}>
+                            <Text style={styles.heroStatValue}>{stat.value}</Text>
+                            <Text style={styles.heroStatLabel}>{stat.label}</Text>
+                        </View>
+                    ))}
+                </View>
+
+                <View style={styles.heroActionRow}>
+                    {subscriptionPlan !== 'free' ? (
+                        <View style={styles.premiumBadge}>
+                            <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.neutralBadge}>
+                            <Text style={styles.neutralBadgeText}>Core plan</Text>
+                        </View>
+                    )}
+                    {canSwitchRole ? (
+                        <View style={styles.neutralBadge}>
+                            <Text style={styles.neutralBadgeText}>Hybrid ready</Text>
+                        </View>
+                    ) : null}
+                </View>
+            </LinearGradient>
         </View>
     );
 
@@ -834,7 +882,7 @@ export default function SettingsScreen({ navigation }) {
                 onClose={() => setFeedbackModalVisible(false)}
                 onSubmit={handleSubmitFeedback}
             />
-        </View>
+        </LinearGradient>
     );
 }
 
@@ -845,6 +893,24 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: 40,
+    },
+    settingsGlowTop: {
+        position: 'absolute',
+        top: -120,
+        right: -80,
+        width: 240,
+        height: 240,
+        borderRadius: 120,
+        backgroundColor: 'rgba(124, 58, 237, 0.14)',
+    },
+    settingsGlowBottom: {
+        position: 'absolute',
+        bottom: -140,
+        left: -100,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: 'rgba(59, 130, 246, 0.10)',
     },
     roleSwitchToast: {
         marginHorizontal: 16,
@@ -966,7 +1032,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#64748b',
         textTransform: 'uppercase',
-        letterSpacing: 0.5,
+        letterSpacing: 0.55,
     },
     sectionsContainerPremium: {
         paddingTop: 24,

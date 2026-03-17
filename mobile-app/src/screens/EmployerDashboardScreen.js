@@ -621,7 +621,6 @@ export default function EmployerDashboardScreen({ navigation }) {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
 
                 <ScrollView
                     showsVerticalScrollIndicator={false}
@@ -1075,7 +1074,6 @@ export default function EmployerDashboardScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     screenGlowTop: {
         position: 'absolute',
@@ -1861,7 +1859,7 @@ const styles = StyleSheet.create({
     secondaryCtaTextPremium: {
         color: '#1e293b',
         fontSize: 15,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     destructiveActionRowPremium: {
         flexDirection: 'row',

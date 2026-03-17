@@ -506,6 +506,7 @@ const styles = StyleSheet.create({
         color: PALETTE.textSecondary,
     },
     phoneRow: {
+        ...GLASS_SURFACES.input,
         flexDirection: 'row',
         alignItems: 'center',
         borderRadius: RADIUS.md,
