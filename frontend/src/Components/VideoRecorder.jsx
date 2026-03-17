@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import QuestionOverlay from './QuestionOverlay';
 import Controls from './Controls';
-import { buildApiUrl } from '../config/api';
+import browserSessionApi from '../utils/browserSessionApi';
+import { publishNotice } from '../utils/noticeBus';
 
 // Use a standard function declaration with a clear default export at the bottom
 function VideoRecorder({ onUploadSuccess }) {
@@ -65,18 +67,8 @@ function VideoRecorder({ onUploadSuccess }) {
         const formData = new FormData();
         formData.append('video', videoBlob, 'recording.webm');
 
-        const userInfo = JSON.parse(localStorage.getItem('userInfo'));
-        const token = userInfo ? userInfo.token : '';
-
         try {
-            const res = await fetch(buildApiUrl('/api/upload/video'), {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}` // LINKED TO PHASE 1 AUTH
-                },
-                body: formData,
-            });
-            const data = await res.json();
+            const { data } = await browserSessionApi.post('/api/upload/video', formData);
 
             if (data.success) {
                 setUploadStatus('success');
@@ -88,6 +80,17 @@ function VideoRecorder({ onUploadSuccess }) {
             }
         } catch (err) {
             setUploadStatus('error');
+            if (!err?.response && !err?.config) {
+                publishNotice({
+                    type: 'error',
+                    title: 'Upload failed',
+                    message: err.message || 'Upload failed. See console for details.',
+                });
+            }
+            if (axios.isCancel?.(err)) {
+                setError('Session expired. Please login again.');
+                return;
+            }
             setError(err.message || 'Upload failed. See console for details.');
         }
     }

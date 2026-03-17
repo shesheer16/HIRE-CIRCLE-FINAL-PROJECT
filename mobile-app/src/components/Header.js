@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
+import { PALETTE, SPACING } from '../theme/theme';
 
 export default function Header({ title, subtitle, showBack = true }) {
     const navigation = useNavigation();
@@ -29,8 +30,9 @@ export default function Header({ title, subtitle, showBack = true }) {
                             navigation.navigate('MainTab');
                         }}
                         style={styles.backButton}
+                        activeOpacity={0.7}
                     >
-                        <Ionicons name="arrow-back" size={24} color="#374151" />
+                        <Ionicons name="chevron-back" size={24} color={PALETTE.textPrimary} />
                     </TouchableOpacity>
                 )}
                 <View>
@@ -38,8 +40,8 @@ export default function Header({ title, subtitle, showBack = true }) {
                     {subtitle && <Text style={styles.headerSubtitle}>{subtitle}</Text>}
                 </View>
             </View>
-            <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-                <Ionicons name="log-out-outline" size={24} color="#EF4444" />
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutButton} activeOpacity={0.7}>
+                <Ionicons name="log-out-outline" size={22} color={PALETTE.error} />
             </TouchableOpacity>
         </View>
     );
@@ -50,29 +52,37 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
+        paddingHorizontal: SPACING.md,
+        paddingVertical: 12,
+        backgroundColor: PALETTE.background,
+        borderBottomWidth: 0.5,
+        borderBottomColor: PALETTE.separator,
     },
     leftContainer: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     backButton: {
-        marginRight: 16,
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     headerTitle: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#111827',
+        fontSize: 18,
+        fontWeight: '700',
+        color: PALETTE.textPrimary,
+        letterSpacing: -0.3,
     },
     headerSubtitle: {
-        fontSize: 14,
-        color: '#6B7280'
+        fontSize: 13,
+        color: PALETTE.textSecondary,
+        marginTop: 2,
     },
     logoutButton: {
-        padding: 8,
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

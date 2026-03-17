@@ -3,6 +3,7 @@ const Job = require('../models/Job');
 const User = require('../models/userModel');
 const WorkerProfile = require('../models/WorkerProfile');
 const EmployerProfile = require('../models/EmployerProfile');
+const { extractApiKeyFromRequest } = require('../services/externalApiKeyService');
 const { buildCacheKey, getJSON, setJSON, CACHE_TTL_SECONDS } = require('../services/cacheService');
 const { resolveRoutingContext, chooseRegionWithFallback } = require('../services/regionRoutingService');
 
@@ -28,7 +29,7 @@ const normalizeTier = (apiKeyDoc = {}) => {
 
 const resolveDailyCap = (tier) => DAILY_REQUEST_CAP_BY_TIER[tier] || DAILY_REQUEST_CAP_BY_TIER.basic;
 
-const getIncomingApiKey = (req) => String(req.headers['x-api-key'] || req.query.api_key || '').trim();
+const getIncomingApiKey = (req) => String(extractApiKeyFromRequest(req) || '').trim();
 
 const protectApiKey = async (req, res, next) => {
     const incomingKey = getIncomingApiKey(req);

@@ -3,7 +3,11 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const { protect } = require('../middleware/authMiddleware');
 const { validate } = require('../middleware/validate');
-const { loginAttemptLimiter } = require('../middleware/rateLimiters');
+const {
+    loginAttemptLimiter,
+    passwordRecoveryLimiter,
+    verificationResendLimiter,
+} = require('../middleware/rateLimiters');
 const WorkerProfile = require('../models/WorkerProfile');
 const User = require('../models/userModel');
 const InterviewProcessingJob = require('../models/InterviewProcessingJob');
@@ -36,6 +40,7 @@ const {
     toSalaryAlignmentStatus,
 } = require('../utils/interviewLabels');
 const { sanitizeText } = require('../utils/sanitizeText');
+const { buildLocationLabel, resolveStructuredLocationFields } = require('../utils/locationFields');
 const logger = require('../utils/logger');
 
 const clamp01 = (value) => {
@@ -96,6 +101,7 @@ const ALLOWED_WORKER_PROFILE_FIELDS = new Set([
     'lastName',
     'avatar',
     'city',
+    'panchayat',
     'country',
     'language',
     'totalExperience',
@@ -106,6 +112,7 @@ const ALLOWED_WORKER_PROFILE_FIELDS = new Set([
     'licenses',
     'roleProfiles',
     'isAvailable',
+    'matchPreferences',
     'videoIntroduction',
     'processingId',
 ]);
@@ -288,6 +295,23 @@ const resolveUserDocument = async (reqUser = {}, { lean = false } = {}) => {
     return reqUser || null;
 };
 
+const sanitizeWorkerMatchPreferences = (payload = {}) => {
+    if (!payload || typeof payload !== 'object') return undefined;
+
+    const sanitized = {};
+    const maxCommuteDistanceKm = toSafeNumber(payload.maxCommuteDistanceKm, { min: 1, max: 300 });
+    if (maxCommuteDistanceKm !== undefined) {
+        sanitized.maxCommuteDistanceKm = maxCommuteDistanceKm;
+    }
+
+    const minimumMatchTier = String(payload.minimumMatchTier || '').trim().toUpperCase();
+    if (['STRONG', 'GOOD', 'POSSIBLE'].includes(minimumMatchTier)) {
+        sanitized.minimumMatchTier = minimumMatchTier;
+    }
+
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+};
+
 const sanitizeWorkerPayload = (payload = {}) => {
     const sanitized = {};
 
@@ -295,6 +319,10 @@ const sanitizeWorkerPayload = (payload = {}) => {
     if (payload.lastName !== undefined) sanitized.lastName = normalizeTextField(payload.lastName, 80);
     if (payload.avatar !== undefined) sanitized.avatar = normalizeTextField(payload.avatar, 500);
     if (payload.city !== undefined) sanitized.city = normalizeTextField(payload.city, 120);
+    if (payload.district !== undefined) sanitized.district = normalizeTextField(payload.district, 120);
+    if (payload.mandal !== undefined) sanitized.mandal = normalizeTextField(payload.mandal, 120);
+    if (payload.panchayat !== undefined) sanitized.panchayat = normalizeTextField(payload.panchayat, 120);
+    if (payload.locationLabel !== undefined) sanitized.locationLabel = normalizeTextField(payload.locationLabel, 160);
     if (payload.country !== undefined) {
         const country = normalizeTextField(payload.country, 3);
         sanitized.country = country ? country.toUpperCase() : '';
@@ -334,6 +362,9 @@ const sanitizeWorkerPayload = (payload = {}) => {
     if (payload.openToNightShift !== undefined) {
         sanitized.openToNightShift = Boolean(payload.openToNightShift);
     }
+    if (payload.matchPreferences !== undefined) {
+        sanitized.matchPreferences = sanitizeWorkerMatchPreferences(payload.matchPreferences);
+    }
 
     if (payload.videoIntroduction && typeof payload.videoIntroduction === 'object') {
         const videoUrl = normalizeTextField(payload.videoIntroduction.videoUrl, 500);
@@ -353,6 +384,9 @@ const sanitizeEmployerPayload = (payload = {}) => {
     if (payload.industry !== undefined) sanitized.industry = normalizeTextField(payload.industry, 120);
     if (payload.description !== undefined) sanitized.description = normalizeTextField(payload.description, 1000);
     if (payload.location !== undefined) sanitized.location = normalizeTextField(payload.location, 120);
+    if (payload.district !== undefined) sanitized.district = normalizeTextField(payload.district, 120);
+    if (payload.mandal !== undefined) sanitized.mandal = normalizeTextField(payload.mandal, 120);
+    if (payload.locationLabel !== undefined) sanitized.locationLabel = normalizeTextField(payload.locationLabel, 160);
     if (payload.contactPerson !== undefined) sanitized.contactPerson = normalizeTextField(payload.contactPerson, 120);
     if (payload.country !== undefined) {
         const country = normalizeTextField(payload.country, 3);
@@ -605,6 +639,9 @@ const {
     loginSchema,
     refreshTokenSchema,
     logoutSchema,
+    forgotPasswordSchema,
+    resendVerificationSchema,
+    resetPasswordSchema,
 } = require('../schemas/requestSchemas');
 
 /**
@@ -634,10 +671,10 @@ router.post('/register', validate({ body: signupSchema }), registerUser);
 router.post('/login', loginAttemptLimiter, validate({ body: loginSchema }), authUser);
 router.post('/refresh-token', validate({ body: refreshTokenSchema }), refreshAuthToken);
 router.post('/logout', protect, validate({ body: logoutSchema }), logoutUser);
-router.post('/forgotpassword', forgotPassword);
-router.put('/resetpassword/:resettoken', resetPassword);
+router.post('/forgotpassword', passwordRecoveryLimiter, validate({ body: forgotPasswordSchema }), forgotPassword);
+router.put('/resetpassword/:resettoken', validate({ body: resetPasswordSchema }), resetPassword);
 router.put('/verifyemail/:verificationtoken', verifyEmail);
-router.post('/resendverification', resendVerificationEmail);
+router.post('/resendverification', verificationResendLimiter, validate({ body: resendVerificationSchema }), resendVerificationEmail);
 
 router.get('/export', protect, exportUserData);
 router.delete('/delete', protect, secureDeleteAccount);
@@ -740,10 +777,21 @@ router.post('/profiles', protect, async (req, res) => {
         }
 
         const workerPayload = sanitizeWorkerPayload(payload) || {};
+        const structuredLocation = resolveStructuredLocationFields({
+            district: workerPayload.district,
+            mandal: workerPayload.mandal,
+            city: workerPayload.city,
+            panchayat: workerPayload.panchayat,
+            locationLabel: workerPayload.locationLabel,
+        });
         const profileFields = {
             firstName: workerPayload.firstName || deriveUserFirstName(userDoc),
             lastName: workerPayload.lastName,
-            city: workerPayload.city || String(userDoc?.acquisitionCity || userDoc?.city || '').trim(),
+            city: structuredLocation.legacyCity || String(userDoc?.acquisitionCity || userDoc?.city || '').trim(),
+            district: structuredLocation.district,
+            mandal: structuredLocation.mandal,
+            panchayat: structuredLocation.legacyPanchayat,
+            locationLabel: structuredLocation.locationLabel,
             avatar: workerPayload.avatar,
             country: workerPayload.country || String(userDoc?.country || 'IN').toUpperCase(),
             language: workerPayload.language,
@@ -769,8 +817,8 @@ router.post('/profiles', protect, async (req, res) => {
             ...normalizedExisting,
         ]);
 
-        if (!existingWorkerProfile && (!profileFields.firstName || !profileFields.city)) {
-            return res.status(400).json({ message: 'firstName and city are required for the first profile.' });
+        if (!existingWorkerProfile && (!profileFields.firstName || !(profileFields.district || profileFields.city))) {
+            return res.status(400).json({ message: 'firstName and district are required for the first profile.' });
         }
 
         const now = new Date();
@@ -785,6 +833,12 @@ router.post('/profiles', protect, async (req, res) => {
                 updatePatch[key] = value;
             }
         });
+        if (workerPayload.matchPreferences) {
+            updatePatch['settings.matchPreferences'] = {
+                ...(existingWorkerProfile?.settings?.matchPreferences || {}),
+                ...workerPayload.matchPreferences,
+            };
+        }
 
         const workerProfile = await WorkerProfile.findOneAndUpdate(
             { user: req.user._id },
@@ -877,6 +931,10 @@ router.put('/profiles/:profileId', protect, async (req, res) => {
             'lastName',
             'avatar',
             'city',
+            'district',
+            'mandal',
+            'panchayat',
+            'locationLabel',
             'country',
             'language',
             'totalExperience',
@@ -887,11 +945,45 @@ router.put('/profiles/:profileId', protect, async (req, res) => {
             'licenses',
             'isAvailable',
         ];
+        const structuredLocation = resolveStructuredLocationFields({
+            district: workerPayload.district,
+            mandal: workerPayload.mandal,
+            city: workerPayload.city,
+            panchayat: workerPayload.panchayat,
+            locationLabel: workerPayload.locationLabel,
+        });
         workerFields.forEach((field) => {
             if (workerPayload[field] !== undefined) {
                 workerProfile[field] = workerPayload[field];
             }
         });
+        if (
+            workerPayload.city !== undefined
+            || workerPayload.district !== undefined
+            || workerPayload.mandal !== undefined
+            || workerPayload.panchayat !== undefined
+            || workerPayload.locationLabel !== undefined
+        ) {
+            workerProfile.city = structuredLocation.legacyCity || workerProfile.city;
+            workerProfile.district = structuredLocation.district || workerProfile.district || workerProfile.city;
+            workerProfile.mandal = structuredLocation.mandal || workerProfile.mandal || workerProfile.panchayat;
+            workerProfile.panchayat = structuredLocation.legacyPanchayat || workerProfile.panchayat;
+            workerProfile.locationLabel = structuredLocation.locationLabel || workerProfile.locationLabel
+                || buildLocationLabel({
+                    district: workerProfile.district || workerProfile.city,
+                    mandal: workerProfile.mandal || workerProfile.panchayat,
+                    fallback: workerProfile.city,
+                });
+        }
+        if (workerPayload.matchPreferences) {
+            workerProfile.settings = {
+                ...(workerProfile.settings || {}),
+                matchPreferences: {
+                    ...((workerProfile.settings && workerProfile.settings.matchPreferences) || {}),
+                    ...workerPayload.matchPreferences,
+                },
+            };
+        }
 
         await workerProfile.save();
 
@@ -1130,14 +1222,14 @@ router.put('/profile', protect, async (req, res) => {
             if (payload.firstName !== undefined && !profilePayload.firstName) {
                 return res.status(400).json({ message: 'firstName cannot be empty' });
             }
-            if (payload.city !== undefined && !profilePayload.city) {
-                return res.status(400).json({ message: 'city cannot be empty' });
+            if ((payload.city !== undefined || payload.district !== undefined) && !(profilePayload.city || profilePayload.district)) {
+                return res.status(400).json({ message: 'district cannot be empty' });
             }
         } else {
             if (payload.companyName !== undefined && !profilePayload.companyName) {
                 return res.status(400).json({ message: 'companyName cannot be empty' });
             }
-            if (payload.location !== undefined && !profilePayload.location) {
+            if ((payload.location !== undefined || payload.district !== undefined) && !(profilePayload.location || profilePayload.district)) {
                 return res.status(400).json({ message: 'location cannot be empty' });
             }
         }
@@ -1148,8 +1240,18 @@ router.put('/profile', protect, async (req, res) => {
         if (isEmployer) {
             const EmployerProfile = require('../models/EmployerProfile');
             const existingEmployerProfile = await EmployerProfile.findOne({ user: req.user._id }).select('_id companyName location').lean();
+            const structuredLocation = resolveStructuredLocationFields({
+                district: profilePayload.district,
+                mandal: profilePayload.mandal,
+                location: profilePayload.location,
+                locationLabel: profilePayload.locationLabel,
+            });
+            profilePayload.location = structuredLocation.legacyLocation || profilePayload.location;
+            profilePayload.district = structuredLocation.district || profilePayload.district;
+            profilePayload.mandal = structuredLocation.mandal || profilePayload.mandal;
+            profilePayload.locationLabel = structuredLocation.locationLabel || profilePayload.locationLabel;
             if (!existingEmployerProfile && (!profilePayload.companyName || !profilePayload.location)) {
-                return res.status(400).json({ message: 'companyName and location are required for employer profile setup' });
+                return res.status(400).json({ message: 'companyName and district are required for employer profile setup' });
             }
             profile = await EmployerProfile.findOneAndUpdate(
                 { user: req.user._id },
@@ -1157,9 +1259,25 @@ router.put('/profile', protect, async (req, res) => {
                 { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
             );
         } else {
-            const existingWorkerProfile = await WorkerProfile.findOne({ user: req.user._id }).select('_id firstName city').lean();
+            const existingWorkerProfile = await WorkerProfile.findOne({ user: req.user._id }).select('_id firstName city settings').lean();
+            const structuredLocation = resolveStructuredLocationFields({
+                district: profilePayload.district,
+                mandal: profilePayload.mandal,
+                city: profilePayload.city,
+                panchayat: profilePayload.panchayat,
+                locationLabel: profilePayload.locationLabel,
+            });
+            profilePayload.city = structuredLocation.legacyCity || profilePayload.city;
+            profilePayload.district = structuredLocation.district || profilePayload.district;
+            profilePayload.mandal = structuredLocation.mandal || profilePayload.mandal;
+            profilePayload.panchayat = structuredLocation.legacyPanchayat || profilePayload.panchayat;
+            profilePayload.locationLabel = structuredLocation.locationLabel || profilePayload.locationLabel;
             if (!existingWorkerProfile && (!profilePayload.firstName || !profilePayload.city)) {
-                return res.status(400).json({ message: 'firstName and city are required for worker profile setup' });
+                return res.status(400).json({ message: 'firstName and district are required for worker profile setup' });
+            }
+            const nextMatchPreferences = profilePayload.matchPreferences;
+            if (profilePayload.matchPreferences !== undefined) {
+                delete profilePayload.matchPreferences;
             }
             const interviewIntelligencePatch = completedWorkerInterview
                 ? buildInterviewIntelligencePatch(completedWorkerInterview)
@@ -1172,10 +1290,24 @@ router.put('/profile', protect, async (req, res) => {
                 : undefined;
             const workerUpdatePayload = {
                 ...profilePayload,
+                ...(nextMatchPreferences ? {
+                    settings: {
+                        matchPreferences: nextMatchPreferences,
+                    },
+                } : {}),
                 ...(completedWorkerInterview ? { interviewVerified: true } : {}),
                 ...(interviewIntelligencePatch ? { interviewIntelligence: interviewIntelligencePatch } : {}),
                 ...(Number.isFinite(computedReliabilityScore) ? { reliabilityScore: computedReliabilityScore } : {}),
             };
+            if (nextMatchPreferences) {
+                workerUpdatePayload.settings = {
+                    ...(existingWorkerProfile?.settings || {}),
+                    matchPreferences: {
+                        ...((existingWorkerProfile?.settings && existingWorkerProfile.settings.matchPreferences) || {}),
+                        ...nextMatchPreferences,
+                    },
+                };
+            }
             profile = await WorkerProfile.findOneAndUpdate(
                 { user: req.user._id },
                 { $set: workerUpdatePayload },

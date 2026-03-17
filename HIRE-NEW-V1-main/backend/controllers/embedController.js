@@ -1,15 +1,10 @@
 const { findApiKeyByRawValue } = require('../services/externalApiKeyService');
-
-const normalizeHost = (value = '') => {
-    const input = String(value || '').trim();
-    if (!input) return '';
-    try {
-        const parsed = input.includes('://') ? new URL(input) : new URL(`https://${input}`);
-        return String(parsed.hostname || '').toLowerCase();
-    } catch (error) {
-        return input.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
-    }
-};
+const {
+    createWidgetSessionToken,
+    normalizeHost,
+    resolveApiKeyFromWidgetToken,
+    resolveWidgetRequestDomain,
+} = require('../services/widgetTokenService');
 
 const escapeHtml = (value = '') => String(value || '')
     .replace(/&/g, '&amp;')
@@ -34,28 +29,30 @@ const isAllowedReferrer = (allowlist = [], referrer = '') => {
     ));
 };
 
-// @desc White-label embeddable match widget
-// @route GET /embed/match-widget?apiKey=
-const renderMatchWidget = async (req, res) => {
-    const rawKey = String(req.query.apiKey || req.query.api_key || '').trim();
-    if (!rawKey) {
-        return res.status(400).send('apiKey query parameter is required');
+const isProductionRuntime = () => String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+
+const allowLegacyEmbedApiKeyQuery = () => {
+    const configured = String(process.env.ALLOW_LEGACY_EMBED_API_KEY_QUERY || '').trim().toLowerCase();
+    if (configured) {
+        return configured === 'true';
     }
+    return !isProductionRuntime();
+};
 
-    const apiKeyDoc = await findApiKeyByRawValue(rawKey);
+const applyLegacyEmbedDeprecationHeaders = (res) => {
+    res.set('Deprecation', 'true');
+    res.set('Warning', '299 - "Legacy embed apiKey URLs are deprecated; use bootstrap-backed widget embeds instead."');
+    res.set('X-Embed-Auth-Transport', 'api_key_query');
+};
 
-    if (!apiKeyDoc || apiKeyDoc.isActive === false || apiKeyDoc.revoked) {
-        return res.status(401).send('Invalid API key');
-    }
+const resolveLegacyRawApiKey = (req = {}) => String(req.query.apiKey || req.query.api_key || '').trim();
+const resolveWidgetTokenQuery = (req = {}) => String(req.query.token || '').trim();
 
-    const referrer = req.get('referer') || '';
-    if (!isAllowedReferrer(apiKeyDoc.allowedDomains, referrer)) {
-        return res.status(403).send('Embedding domain not allowed for this API key');
-    }
+const buildMatchWidgetHtml = ({ initialSessionToken = '', planLabel = 'Secure Preview' } = {}) => {
+    const safeSessionToken = escapeHtml(initialSessionToken);
+    const safePlan = escapeHtml(planLabel);
 
-    const safeApiKey = escapeHtml(rawKey);
-    const safePlan = escapeHtml(apiKeyDoc.planType || 'free');
-    const html = `<!doctype html>
+    return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -140,13 +137,60 @@ const renderMatchWidget = async (req, res) => {
       </div>
     </div>
     <div class="card">
-      <pre id="output">Ready</pre>
+      <pre id="output">${safeSessionToken ? 'Ready' : 'Waiting for secure widget session...'}</pre>
     </div>
   </div>
   <script>
-    const apiKey = "${safeApiKey}";
+    let sessionToken = "${safeSessionToken}";
     const output = document.getElementById('output');
     const asList = (value) => String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+
+    const adoptWindowNameSession = () => {
+      if (!window.name) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(window.name);
+        if (payload && payload.sessionToken) {
+          sessionToken = String(payload.sessionToken);
+        }
+      } catch (_error) {
+      }
+
+      window.name = '';
+    };
+
+    adoptWindowNameSession();
+
+    window.addEventListener('message', (event) => {
+      const data = event && event.data ? event.data : {};
+      if (data.type === 'hire-widget-bootstrap' && data.sessionToken) {
+        sessionToken = String(data.sessionToken);
+      }
+    });
+
+    const waitForSession = () => new Promise((resolve, reject) => {
+      if (sessionToken) {
+        resolve(sessionToken);
+        return;
+      }
+
+      const startedAt = Date.now();
+      const timer = window.setInterval(() => {
+        if (sessionToken) {
+          window.clearInterval(timer);
+          resolve(sessionToken);
+          return;
+        }
+
+        if (Date.now() - startedAt > 15000) {
+          window.clearInterval(timer);
+          reject(new Error('Widget session bootstrap timed out.'));
+        }
+      }, 100);
+    });
+
     const buildPayload = () => {
       const worker = {
         city: document.getElementById('workerCity').value,
@@ -171,9 +215,10 @@ const renderMatchWidget = async (req, res) => {
     };
 
     const request = async (path, payload) => {
+      const activeToken = await waitForSession();
       const response = await fetch(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        headers: { 'Content-Type': 'application/json', 'X-Widget-Token': activeToken },
         body: JSON.stringify(payload),
       });
       const data = await response.json().catch(() => ({}));
@@ -206,9 +251,101 @@ const renderMatchWidget = async (req, res) => {
   </script>
 </body>
 </html>`;
+};
 
-    res.set('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(html);
+const resolveLegacyEmbedSession = async (req, res) => {
+    const widgetToken = resolveWidgetTokenQuery(req);
+    if (widgetToken) {
+        const requestDomain = resolveWidgetRequestDomain(req);
+        const { apiKeyDoc } = await resolveApiKeyFromWidgetToken({
+            token: widgetToken,
+            requestDomain,
+        });
+
+        return {
+            apiKeyDoc,
+            initialSessionToken: createWidgetSessionToken({
+                apiKeyId: apiKeyDoc._id,
+                ownerId: apiKeyDoc.ownerId || apiKeyDoc.employerId || null,
+                tenantId: apiKeyDoc.organization || null,
+            }),
+            authSource: 'legacy_widget_token_query',
+        };
+    }
+
+    const rawKey = resolveLegacyRawApiKey(req);
+    if (!rawKey) {
+        return {
+            apiKeyDoc: null,
+            initialSessionToken: '',
+            authSource: 'bootstrap_pending',
+        };
+    }
+
+    if (!allowLegacyEmbedApiKeyQuery()) {
+        return {
+            apiKeyDoc: null,
+            initialSessionToken: '',
+            authSource: 'legacy_api_key_blocked',
+        };
+    }
+
+    const apiKeyDoc = await findApiKeyByRawValue(rawKey);
+    if (!apiKeyDoc) {
+        return {
+            apiKeyDoc: null,
+            initialSessionToken: '',
+            authSource: 'legacy_api_key_invalid',
+        };
+    }
+
+    applyLegacyEmbedDeprecationHeaders(res);
+    return {
+        apiKeyDoc,
+        initialSessionToken: createWidgetSessionToken({
+            apiKeyId: apiKeyDoc._id,
+            ownerId: apiKeyDoc.ownerId || apiKeyDoc.employerId || null,
+            tenantId: apiKeyDoc.organization || null,
+        }),
+        authSource: 'legacy_api_key_query',
+    };
+};
+
+// @desc White-label embeddable match widget
+// @route GET /embed/match-widget
+const renderMatchWidget = async (req, res) => {
+    try {
+        const {
+            apiKeyDoc,
+            initialSessionToken,
+            authSource,
+        } = await resolveLegacyEmbedSession(req, res);
+
+        if (authSource === 'legacy_api_key_blocked') {
+            return res.status(401).send('Widget token is required via the bootstrap-backed embed flow');
+        }
+
+        if (authSource === 'legacy_api_key_invalid') {
+            return res.status(401).send('Invalid widget credential');
+        }
+
+        const referrer = req.get('referer') || req.get('origin') || '';
+        if (apiKeyDoc && !isAllowedReferrer(apiKeyDoc.allowedDomains, referrer)) {
+            return res.status(403).send('Embedding domain not allowed for this API key');
+        }
+
+        const html = buildMatchWidgetHtml({
+            initialSessionToken,
+            planLabel: apiKeyDoc?.planType || (authSource === 'bootstrap_pending' ? 'Secure Preview' : 'Secure Session'),
+        });
+
+        res.set('Cache-Control', 'private, no-store');
+        res.set('Content-Type', 'text/html; charset=utf-8');
+        res.set('X-Embed-Auth-Source', authSource);
+        return res.status(200).send(html);
+    } catch (error) {
+        return res.status(401).send(error.message || 'Invalid widget credential');
+    }
 };
 
 module.exports = {

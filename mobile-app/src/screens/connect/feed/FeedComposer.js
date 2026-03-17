@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Image, StyleSheet, Modal, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { IconMic, IconImage, IconVideo } from '../../../components/Icons';
 import { RADIUS, SPACING } from '../../../theme/theme';
 
@@ -121,6 +122,7 @@ function FeedComposerComponent({
     onComposerVisibilitySelect,
     isEmployerRole = false,
     onOpenPostJobForm,
+    showInline = true,
 }) {
     const onVoicePress = useCallback(() => onMediaButtonClick('VOICE'), [onMediaButtonClick]);
     const onPhotosPress = useCallback(() => onMediaButtonClick('PHOTOS'), [onMediaButtonClick]);
@@ -141,7 +143,12 @@ function FeedComposerComponent({
             ? safeMediaAssets.length > 0
             : true;
 
-    const canShare = Boolean(String(composerText || '').trim()) && hasRequiredMedia && !isVoiceRecording && !isPosting;
+    const hasCaption = Boolean(String(composerText || '').trim());
+    const canShare = (
+        normalizedMediaType === 'TEXT'
+            ? hasCaption
+            : hasRequiredMedia
+    ) && !isVoiceRecording && !isPosting;
     const defaultPostAction = isEmployerRole ? 'hiring_need' : 'open_to_work';
 
     const [flowStep, setFlowStep] = useState('CAPTION');
@@ -297,33 +304,28 @@ function FeedComposerComponent({
     const leftHeaderIcon = flowStep === 'CAPTION' && hasVisualMedia ? 'chevron-back' : 'close';
 
     return (
-        <View style={styles.wrapper}>
-            <View style={styles.inlineComposer}>
-                <View style={styles.inlineTopRow}>
-                    <Image source={{ uri: avatarUri }} style={styles.avatar} />
-                    <TouchableOpacity style={styles.inlineInput} onPress={onInputAreaClick} activeOpacity={0.85}>
-                        <Text style={styles.inlineInputText}>Start a post</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.addButton} onPress={onInputAreaClick} activeOpacity={0.82}>
-                        <Ionicons name="add" size={20} color="#ffffff" />
-                    </TouchableOpacity>
-                </View>
+        <View style={[styles.wrapper, !showInline && styles.wrapperHidden]}>
+            {showInline ? (
+                <View style={styles.inlineComposer}>
+                    <View style={styles.inlineTopRow}>
+                        <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                        <View style={styles.inlineTextWrap}>
+                            <Text style={styles.inlineTitle}>Create a post</Text>
+                            <Text style={styles.inlineSubtitle}>Share updates, wins, or hiring needs.</Text>
+                        </View>
+                        <TouchableOpacity style={styles.inlinePlusButton} onPress={onInputAreaClick} activeOpacity={0.85}>
+                            <Ionicons name="add" size={18} color="#ffffff" />
+                        </TouchableOpacity>
+                    </View>
 
-                <View style={styles.inlineActionRow}>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onPhotosPress} activeOpacity={0.85}>
-                        <IconImage size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>Photo</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onVideoPress} activeOpacity={0.85}>
-                        <IconVideo size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>Reel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.inlineActionButton} onPress={onVoicePress} activeOpacity={0.85}>
-                        <IconMic size={14} color="#111111" />
-                        <Text style={styles.inlineActionText}>{isVoiceRecording ? 'Stop' : 'Voice'}</Text>
-                    </TouchableOpacity>
+                    {isEmployerRole && typeof onOpenPostJobForm === 'function' ? (
+                        <TouchableOpacity style={styles.inlineJobLink} onPress={onOpenPostJobForm} activeOpacity={0.82}>
+                            <Ionicons name="briefcase-outline" size={13} color="#6a41d8" />
+                            <Text style={styles.inlineJobLinkText}>Post a job instead</Text>
+                        </TouchableOpacity>
+                    ) : null}
                 </View>
-            </View>
+            ) : null}
 
             <Modal
                 visible={Boolean(composerOpen)}
@@ -332,22 +334,28 @@ function FeedComposerComponent({
                 onRequestClose={handleHeaderLeftPress}
             >
                 <View style={styles.modalShell}>
+                    <View style={styles.modalHandle} />
                     <View style={styles.modalHeader}>
                         <TouchableOpacity style={styles.headerIconBtn} onPress={handleHeaderLeftPress} activeOpacity={0.8}>
-                            <Ionicons name={leftHeaderIcon} size={22} color="#111111" />
+                            <Ionicons name={leftHeaderIcon} size={22} color="#0f172a" />
                         </TouchableOpacity>
-                        <Text style={styles.modalTitle}>New Post</Text>
+                        <Text style={styles.modalTitle}>Create Post</Text>
                         <TouchableOpacity
                             style={[styles.headerPrimaryBtn, headerPrimaryDisabled && styles.headerPrimaryBtnDisabled]}
                             onPress={handleHeaderPrimaryPress}
                             activeOpacity={0.85}
                             disabled={headerPrimaryDisabled}
                         >
-                            <Text style={styles.headerPrimaryText}>{headerPrimaryLabel}</Text>
+                            <LinearGradient
+                                colors={['#9f5cff', '#7c3aed', '#5b48f2']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.headerPrimaryGradient}
+                            >
+                                <Text style={styles.headerPrimaryText}>{headerPrimaryLabel}</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
-
-                    <View style={styles.modalDivider} />
 
                     {flowStep === 'MEDIA' && hasVisualMedia ? (
                         <View style={styles.mediaStepWrap}>
@@ -381,262 +389,60 @@ function FeedComposerComponent({
                             <Text style={styles.mediaHintText}>Tap Next to continue with details.</Text>
                         </View>
                     ) : (
-                        <ScrollView style={styles.captionScroll} contentContainerStyle={styles.captionScrollContent}>
-                            <View style={styles.captionSectionCard}>
-                                <View style={styles.actionChoiceHeader}>
-                                    <Text style={styles.actionChoiceLabel}>Post Action</Text>
-                                    <Text style={styles.actionChoiceHelper}>Choose intent first, then write your caption.</Text>
+                        <View style={styles.captionAreaWrapper}>
+                            <ScrollView style={styles.captionScroll} contentContainerStyle={styles.captionScrollContent}>
+                                <View style={styles.captionSectionCard}>
+                                    <View style={styles.captionRow}>
+                                        <View style={styles.captionMetaWrap}>
+                                            <Image source={{ uri: avatarUri }} style={styles.captionAvatar} />
+                                            <View style={styles.captionAuthorWrap}>
+                                                <Text style={styles.captionAuthorName}>Author Name</Text>
+                                                <TouchableOpacity style={styles.audiencePill} activeOpacity={0.8} onPress={() => setShowAudiencePanel(!showAudiencePanel)}>
+                                                    <Ionicons name="earth" size={11} color="#64748b" />
+                                                    <Text style={styles.audiencePillText}>{visibilityLabel.split(' ')[0]}</Text>
+                                                    <Ionicons name="chevron-down" size={10} color="#64748b" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+                                        <TextInput
+                                            ref={captionInputRef}
+                                            style={styles.captionInput}
+                                            value={composerText}
+                                            onChangeText={onComposerTextChange}
+                                            placeholder={placeholder}
+                                            placeholderTextColor="#94a3b8"
+                                            multiline
+                                            autoFocus
+                                            textAlignVertical="top"
+                                        />
+                                    </View>
                                 </View>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionChoiceRow}>
-                                    {POST_ACTION_OPTIONS.map((item) => {
-                                        const active = item.key === postActionMode;
+                            </ScrollView>
+
+                            {showAudiencePanel ? (
+                                <View style={styles.audiencePanelAbsolute}>
+                                    {AUDIENCE_OPTIONS.map((item) => {
+                                        const active = normalizeToken(item.key) === normalizeToken(normalizedVisibility);
                                         return (
                                             <TouchableOpacity
                                                 key={item.key}
-                                                style={[styles.actionChoicePill, active && styles.actionChoicePillActive]}
-                                                activeOpacity={0.85}
-                                                onPress={() => handleSelectPostAction(item.key)}
+                                                style={[styles.audienceOptionRow, active && styles.audienceOptionRowActive]}
+                                                activeOpacity={0.86}
+                                                onPress={() => {
+                                                    onComposerVisibilitySelect?.(item.key);
+                                                    setShowAudiencePanel(false);
+                                                }}
                                             >
-                                                <Ionicons
-                                                    name={item.icon}
-                                                    size={14}
-                                                    color={active ? '#ffffff' : ACCENT_DARK}
-                                                />
-                                                <Text style={[styles.actionChoicePillTitle, active && styles.actionChoicePillTitleActive]}>
-                                                    {item.label}
-                                                </Text>
-                                                {active ? <Ionicons name="checkmark" size={13} color="#ffffff" /> : null}
+                                                <View style={styles.audienceOptionTextWrap}>
+                                                    <Text style={[styles.audienceOptionTitle, active && styles.audienceOptionTitleActive]}>{item.label}</Text>
+                                                </View>
+                                                {active ? <Ionicons name="checkmark-circle" size={18} color="#7c3aed" /> : null}
                                             </TouchableOpacity>
                                         );
                                     })}
-                                </ScrollView>
-
-                                <View style={styles.actionChoiceFootnote}>
-                                    <Ionicons name="information-circle-outline" size={13} color={ACCENT_DARK} />
-                                    <Text style={styles.actionChoiceFootnoteText}>{activePostAction?.valueProp || 'Choose your posting style'}</Text>
-                                </View>
-
-                                {postActionMode === 'hiring_need' && typeof onOpenPostJobForm === 'function' ? (
-                                    <TouchableOpacity style={styles.fullFormCta} activeOpacity={0.86} onPress={onOpenPostJobForm}>
-                                        <Ionicons name="document-text-outline" size={14} color="#5b21b6" />
-                                        <Text style={styles.fullFormCtaText}>Need full JD flow? Open Post Job Form</Text>
-                                        <Ionicons name="chevron-forward" size={14} color="#5b21b6" />
-                                    </TouchableOpacity>
-                                ) : null}
-
-                                <View style={styles.captionSectionHeader}>
-                                    <View style={styles.captionTitleWrap}>
-                                        <Ionicons name="sparkles-outline" size={15} color="#111111" />
-                                        <Text style={styles.captionSectionTitle}>Caption</Text>
-                                    </View>
-                                    <Text style={styles.captionCounter}>{String(composerText || '').length}/2200</Text>
-                                </View>
-
-                                <View style={styles.captionRow}>
-                                    <Image source={{ uri: avatarUri }} style={styles.captionAvatar} />
-                                    <TextInput
-                                        ref={captionInputRef}
-                                        style={styles.captionInput}
-                                        value={composerText}
-                                        onChangeText={onComposerTextChange}
-                                        placeholder={placeholder}
-                                        placeholderTextColor="#6b7280"
-                                        multiline
-                                        autoFocus
-                                        textAlignVertical="top"
-                                    />
-                                </View>
-
-                                <View style={styles.quickPromptHeader}>
-                                    <Text style={styles.quickPromptLabel}>Smart suggestions</Text>
-                                    <TouchableOpacity style={styles.starterButton} activeOpacity={0.82} onPress={handleApplyStarter}>
-                                        <Text style={styles.starterButtonText}>Use starter</Text>
-                                    </TouchableOpacity>
-                                </View>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptRow}>
-                                    {promptPool.map((prompt) => (
-                                        <TouchableOpacity
-                                            key={prompt}
-                                            style={styles.promptChip}
-                                            activeOpacity={0.85}
-                                            onPress={() => handleApplyPrompt(prompt)}
-                                        >
-                                            <Text style={styles.promptChipText}>{prompt}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-                            </View>
-
-                            {hasVisualMedia ? (
-                                <View style={styles.selectedMediaCard}>
-                                    {normalizedMediaType === 'PHOTOS' ? (
-                                        <Image source={{ uri: mediaPreviewUri }} style={styles.selectedMediaThumb} />
-                                    ) : (
-                                        <View style={styles.selectedVideoThumb}>
-                                            <Ionicons name="videocam" size={18} color="#ffffff" />
-                                        </View>
-                                    )}
-                                    <View style={styles.selectedMediaMeta}>
-                                        <Text style={styles.selectedMediaTitle}>{mediaCountText}</Text>
-                                        <Text style={styles.selectedMediaSubtitle}>Attached to this post</Text>
-                                    </View>
-                                    <TouchableOpacity style={styles.removeMediaBtn} onPress={onRemoveComposerMedia} activeOpacity={0.85}>
-                                        <Ionicons name="close" size={16} color="#111111" />
-                                    </TouchableOpacity>
                                 </View>
                             ) : null}
-
-                            {normalizedMediaType === 'VOICE' ? (
-                                <View style={styles.voiceCard}>
-                                    <View style={styles.voiceMeta}>
-                                        <Text style={styles.voiceTitle}>
-                                            {isVoiceRecording ? 'Recording voice note...' : (hasVoiceAsset ? 'Voice note attached' : 'No voice note attached')}
-                                        </Text>
-                                        <Text style={styles.voiceSubtitle}>Add a caption and share.</Text>
-                                    </View>
-                                    {isVoiceRecording ? (
-                                        <TouchableOpacity style={styles.voiceActionBtn} onPress={onStopVoiceRecording} activeOpacity={0.85}>
-                                            <Text style={styles.voiceActionText}>Stop</Text>
-                                        </TouchableOpacity>
-                                    ) : hasVoiceAsset ? (
-                                        <TouchableOpacity style={styles.voiceActionBtnMuted} onPress={onRemoveComposerMedia} activeOpacity={0.85}>
-                                            <Text style={styles.voiceActionTextMuted}>Remove</Text>
-                                        </TouchableOpacity>
-                                    ) : (
-                                        <TouchableOpacity style={styles.voiceActionBtn} onPress={onVoicePress} activeOpacity={0.85}>
-                                            <Text style={styles.voiceActionText}>Record</Text>
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                            ) : null}
-
-                            <View style={styles.optionsCard}>
-                                <TouchableOpacity
-                                    style={styles.optionRow}
-                                    onPress={() => {
-                                        setShowAudiencePanel((prev) => !prev);
-                                    }}
-                                    activeOpacity={0.85}
-                                >
-                                    <View style={styles.optionLeftWrap}>
-                                        <View style={styles.optionIconBubble}>
-                                            <Ionicons name="earth-outline" size={14} color="#111111" />
-                                        </View>
-                                        <Text style={styles.optionLabel}>Audience</Text>
-                                    </View>
-                                    <View style={styles.optionValueWrap}>
-                                        <Text style={styles.optionValue}>{visibilityLabel}</Text>
-                                        <Ionicons name={showAudiencePanel ? 'chevron-up' : 'chevron-down'} size={16} color="#111111" />
-                                    </View>
-                                </TouchableOpacity>
-
-                                {showAudiencePanel ? (
-                                    <View style={styles.audiencePanel}>
-                                        {AUDIENCE_OPTIONS.map((item) => {
-                                            const active = normalizeToken(item.key) === normalizeToken(normalizedVisibility);
-                                            return (
-                                                <TouchableOpacity
-                                                    key={item.key}
-                                                    style={[styles.audienceOptionRow, active && styles.audienceOptionRowActive]}
-                                                    activeOpacity={0.86}
-                                                    onPress={() => handleSelectAudience(item.key)}
-                                                >
-                                                    <View style={styles.audienceOptionTextWrap}>
-                                                        <Text style={[styles.audienceOptionTitle, active && styles.audienceOptionTitleActive]}>{item.label}</Text>
-                                                        <Text style={styles.audienceOptionHelper}>{item.helper}</Text>
-                                                    </View>
-                                                    {active ? <Ionicons name="checkmark-circle" size={18} color={ACCENT} /> : <Ionicons name="chevron-forward" size={15} color="#9ca3af" />}
-                                                </TouchableOpacity>
-                                            );
-                                        })}
-                                    </View>
-                                ) : null}
-
-                                <View style={styles.optionDivider} />
-
-                                <View style={styles.smartFieldBlock}>
-                                    <View style={styles.optionLeftWrap}>
-                                        <View style={styles.optionIconBubble}>
-                                            <Ionicons name="person-add-outline" size={14} color="#111111" />
-                                        </View>
-                                        <Text style={styles.optionLabel}>Tag people</Text>
-                                    </View>
-
-                                    {selectedTags.length > 0 ? (
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagChipRow}>
-                                            {selectedTags.map((name) => (
-                                                <View key={name} style={styles.tagChip}>
-                                                    <Text style={styles.tagChipText}>{name}</Text>
-                                                    <TouchableOpacity onPress={() => handleRemoveTag(name)} style={styles.tagChipRemove} activeOpacity={0.8}>
-                                                        <Ionicons name="close" size={12} color="#111111" />
-                                                    </TouchableOpacity>
-                                                </View>
-                                            ))}
-                                        </ScrollView>
-                                    ) : null}
-
-                                    <View style={styles.smartInputWrap}>
-                                        <TextInput
-                                            style={styles.smartInput}
-                                            value={tagQuery}
-                                            onChangeText={setTagQuery}
-                                            placeholder="Type a name to tag..."
-                                            placeholderTextColor="#9ca3af"
-                                        />
-                                    </View>
-
-                                    {availableTagSuggestions.length > 0 ? (
-                                        <View style={styles.suggestionList}>
-                                            {availableTagSuggestions.map((name) => (
-                                                <TouchableOpacity key={name} style={styles.suggestionRow} activeOpacity={0.85} onPress={() => handleAddTag(name)}>
-                                                    <Text style={styles.suggestionText}>{name}</Text>
-                                                    <Ionicons name="arrow-up-circle-outline" size={16} color={ACCENT_DARK} />
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    ) : null}
-                                </View>
-
-                                <View style={styles.optionDivider} />
-
-                                <View style={styles.smartFieldBlock}>
-                                    <View style={styles.optionLeftWrap}>
-                                        <View style={styles.optionIconBubble}>
-                                            <Ionicons name="location-outline" size={14} color="#111111" />
-                                        </View>
-                                        <Text style={styles.optionLabel}>Location</Text>
-                                    </View>
-
-                                    <View style={styles.smartInputWrap}>
-                                        <TextInput
-                                            style={styles.smartInput}
-                                            value={locationQuery}
-                                            onChangeText={handleLocationInputChange}
-                                            placeholder="Add a city or choose Remote..."
-                                            placeholderTextColor="#9ca3af"
-                                        />
-                                    </View>
-
-                                    {locationValue ? (
-                                        <View style={styles.locationBadge}>
-                                            <Ionicons name="pin" size={13} color={ACCENT_DARK} />
-                                            <Text style={styles.locationBadgeText}>{locationValue}</Text>
-                                        </View>
-                                    ) : null}
-
-                                    {availableLocationSuggestions.length > 0 ? (
-                                        <View style={styles.suggestionList}>
-                                            {availableLocationSuggestions.map((name) => (
-                                                <TouchableOpacity key={name} style={styles.suggestionRow} activeOpacity={0.85} onPress={() => handleSelectLocation(name)}>
-                                                    <Text style={styles.suggestionText}>{name}</Text>
-                                                    <Ionicons name="arrow-forward-circle-outline" size={16} color={ACCENT_DARK} />
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    ) : null}
-                                </View>
-                            </View>
-                        </ScrollView>
+                        </View>
                     )}
 
                     <View style={styles.bottomBar}>
@@ -645,7 +451,7 @@ function FeedComposerComponent({
                             onPress={onPhotosPress}
                             activeOpacity={0.85}
                         >
-                            <IconImage size={14} color={normalizedMediaType === 'PHOTOS' ? '#ffffff' : '#111111'} />
+                            <IconImage size={18} color={normalizedMediaType === 'PHOTOS' ? '#ffffff' : '#475569'} />
                             <Text style={[styles.bottomActionText, normalizedMediaType === 'PHOTOS' && styles.bottomActionTextActive]}>Photo</Text>
                         </TouchableOpacity>
 
@@ -654,7 +460,7 @@ function FeedComposerComponent({
                             onPress={onVideoPress}
                             activeOpacity={0.85}
                         >
-                            <IconVideo size={14} color={normalizedMediaType === 'VIDEO' ? '#ffffff' : '#111111'} />
+                            <IconVideo size={18} color={normalizedMediaType === 'VIDEO' ? '#ffffff' : '#475569'} />
                             <Text style={[styles.bottomActionText, normalizedMediaType === 'VIDEO' && styles.bottomActionTextActive]}>Video</Text>
                         </TouchableOpacity>
 
@@ -663,7 +469,7 @@ function FeedComposerComponent({
                             onPress={onVoicePress}
                             activeOpacity={0.85}
                         >
-                            <IconMic size={14} color={normalizedMediaType === 'VOICE' ? '#ffffff' : '#111111'} />
+                            <IconMic size={18} color={normalizedMediaType === 'VOICE' ? '#ffffff' : '#475569'} />
                             <Text style={[styles.bottomActionText, normalizedMediaType === 'VOICE' && styles.bottomActionTextActive]}>
                                 {isVoiceRecording ? 'Stop' : 'Voice'}
                             </Text>
@@ -679,84 +485,101 @@ export default memo(FeedComposerComponent);
 
 const styles = StyleSheet.create({
     wrapper: {
-        marginBottom: 10,
+        marginBottom: 14,
+    },
+    wrapperHidden: {
+        marginBottom: 0,
+        height: 0,
     },
     inlineComposer: {
         borderWidth: 1,
-        borderColor: '#ede9fe',
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
+        borderColor: '#e9e1fb',
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderRadius: 22,
         marginHorizontal: 10,
-        marginTop: 6,
-        paddingHorizontal: 12,
+        marginTop: 10,
+        paddingHorizontal: 14,
         paddingTop: 12,
         paddingBottom: 10,
+        shadowColor: '#261249',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.06,
+        shadowRadius: 18,
+        elevation: 3,
     },
     inlineTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 10,
+        gap: 12,
     },
     avatar: {
+        width: 40,
+        height: 40,
+        borderRadius: RADIUS.full,
+        borderWidth: 1.5,
+        borderColor: '#dfd5f6',
+    },
+    inlineTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    inlineTitle: {
+        color: '#1f2436',
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    inlineSubtitle: {
+        marginTop: 2,
+        color: '#7f879b',
+        fontSize: 11.5,
+        fontWeight: '600',
+    },
+    inlinePlusButton: {
         width: 38,
         height: 38,
-        borderRadius: RADIUS.full,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        marginRight: 10,
-    },
-    inlineInput: {
-        flex: 1,
-        minHeight: 40,
-        borderRadius: RADIUS.full,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf8ff',
-        justifyContent: 'center',
-        paddingHorizontal: 14,
-    },
-    inlineInputText: {
-        color: '#6b7280',
-        fontSize: 13.5,
-        fontWeight: '500',
-    },
-    addButton: {
-        width: 38,
-        height: 38,
-        borderRadius: RADIUS.full,
+        borderRadius: 19,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: ACCENT,
-        marginLeft: 10,
+        backgroundColor: '#6f4cf6',
+        shadowColor: '#6f4cf6',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
+        elevation: 3,
     },
-    inlineActionRow: {
+    inlineJobLink: {
+        marginTop: 9,
         flexDirection: 'row',
-        gap: 8,
-    },
-    inlineActionButton: {
-        flex: 1,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf8ff',
-        borderRadius: 999,
-        paddingVertical: 9,
         alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
+        alignSelf: 'flex-start',
         gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: '#f3edff',
+        borderWidth: 1,
+        borderColor: '#e2d7ff',
     },
-    inlineActionText: {
-        color: '#111111',
+    inlineJobLinkText: {
+        color: '#6a41d8',
         fontSize: 11,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     modalShell: {
         flex: 1,
-        backgroundColor: '#faf8ff',
+        backgroundColor: '#ffffff',
+    },
+    modalHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#cbd5e1',
+        alignSelf: 'center',
+        marginTop: 12,
+        marginBottom: 8,
     },
     modalHeader: {
-        paddingHorizontal: 14,
-        paddingTop: SPACING.md,
+        paddingHorizontal: 16,
         paddingBottom: SPACING.sm,
         flexDirection: 'row',
         alignItems: 'center',
@@ -769,29 +592,29 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.full,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#f8fafc',
     },
     modalTitle: {
-        color: '#111111',
+        color: '#0f172a',
         fontSize: 18,
         fontWeight: '800',
     },
     headerPrimaryBtn: {
         borderRadius: RADIUS.full,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: ACCENT,
+        overflow: 'hidden',
     },
     headerPrimaryBtnDisabled: {
         opacity: 0.45,
     },
+    headerPrimaryGradient: {
+        borderRadius: RADIUS.full,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+    },
     headerPrimaryText: {
         color: '#ffffff',
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: '800',
-    },
-    modalDivider: {
-        height: 1,
-        backgroundColor: '#ede9fe',
     },
     mediaStepWrap: {
         flex: 1,
@@ -845,570 +668,151 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
+    captionAreaWrapper: {
+        flex: 1,
+        position: 'relative',
+    },
     captionScroll: {
         flex: 1,
     },
     captionScrollContent: {
-        paddingHorizontal: 14,
-        paddingTop: 14,
+        paddingHorizontal: 16,
+        paddingTop: 4,
         paddingBottom: 24,
-        gap: 12,
     },
     captionSectionCard: {
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
+        flex: 1,
         backgroundColor: '#ffffff',
-        paddingHorizontal: 12,
-        paddingVertical: 12,
     },
-    actionChoiceHeader: {
-        marginBottom: 8,
-    },
-    actionChoiceLabel: {
-        color: '#4c1d95',
-        fontSize: 11,
-        fontWeight: '800',
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
-        marginBottom: 2,
-    },
-    actionChoiceHelper: {
-        color: '#6b7280',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    actionChoiceRow: {
-        gap: 8,
-        paddingBottom: 6,
-    },
-    actionChoicePill: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#d8b4fe',
-        backgroundColor: '#faf5ff',
-        paddingHorizontal: 11,
-        paddingVertical: 8,
+    captionMetaWrap: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        paddingHorizontal: 10,
+        paddingBottom: 14,
+        gap: 12,
     },
-    actionChoicePillActive: {
-        backgroundColor: '#6d28d9',
-        borderColor: '#6d28d9',
-    },
-    actionChoicePillTitle: {
-        color: '#4c1d95',
-        fontSize: 11.5,
-        fontWeight: '700',
-    },
-    actionChoicePillTitleActive: {
-        color: '#ffffff',
-    },
-    actionChoiceIconWrap: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#ffffff',
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-    },
-    actionChoiceIconWrapActive: {
-        borderColor: '#7c3aed',
-        backgroundColor: 'rgba(255,255,255,0.22)',
-    },
-    actionChoiceTextWrap: {
+    captionAuthorWrap: {
         flex: 1,
+        justifyContent: 'center',
+        gap: 3,
     },
-    actionChoiceKickerPill: {
-        borderRadius: 999,
+    captionAuthorName: {
+        color: '#0f172a',
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    audiencePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#faf9ff',
+        borderColor: '#e2e8f0',
+        borderRadius: 999,
         paddingHorizontal: 8,
-        paddingVertical: 4,
+        paddingVertical: 3,
+        gap: 4,
     },
-    actionChoiceKickerPillActive: {
-        borderColor: 'rgba(255,255,255,0.35)',
-        backgroundColor: 'rgba(255,255,255,0.14)',
-    },
-    actionChoiceKickerText: {
-        color: '#6d28d9',
-        fontSize: 9.5,
-        fontWeight: '800',
-        letterSpacing: 0.6,
-    },
-    actionChoiceKickerTextActive: {
-        color: '#ffffff',
-    },
-    actionChoiceCheckBadge: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#d9ccfb',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#ffffff',
-    },
-    actionChoiceCheckBadgeActive: {
-        borderColor: 'rgba(255,255,255,0.35)',
-        backgroundColor: 'rgba(255,255,255,0.2)',
-    },
-    actionChoiceValueText: {
-        flex: 1,
-        color: '#5b21b6',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    actionChoiceValueTextActive: {
-        color: 'rgba(255,255,255,0.95)',
-    },
-    actionChoiceTitle: {
-        color: '#1f123f',
-        fontSize: 12.5,
-        fontWeight: '800',
-        marginBottom: 1,
-    },
-    actionChoiceTitleActive: {
-        color: '#ffffff',
-    },
-    actionChoiceHint: {
-        color: '#6b7280',
-        fontSize: 10.5,
-        fontWeight: '600',
-    },
-    actionChoiceHintActive: {
-        color: 'rgba(255,255,255,0.88)',
-    },
-    actionChoiceFootnote: {
-        marginBottom: 12,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#e9d5ff',
-        backgroundColor: '#faf8ff',
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    actionChoiceFootnoteText: {
-        flex: 1,
-        color: '#5b21b6',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    fullFormCta: {
-        marginBottom: 10,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#faf8ff',
-        paddingHorizontal: 10,
-        paddingVertical: 9,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-    },
-    fullFormCtaText: {
-        flex: 1,
-        color: '#5b21b6',
-        fontSize: 11.5,
-        fontWeight: '700',
-    },
-    captionSectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 8,
-    },
-    captionTitleWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    captionSectionTitle: {
-        color: '#111111',
+    audiencePillText: {
+        color: '#64748b',
         fontSize: 12,
         fontWeight: '700',
     },
-    captionCounter: {
-        color: '#6b7280',
-        fontSize: 11,
-        fontWeight: '600',
+    audiencePanelAbsolute: {
+        position: 'absolute',
+        top: 60,
+        left: 64,
+        width: 180,
+        zIndex: 100,
+        backgroundColor: '#ffffff',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderRadius: 12,
+        padding: 4,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.12,
+        shadowRadius: 18,
+        elevation: 10,
     },
     captionRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 10,
+        flex: 1,
+        flexDirection: 'column',
     },
     captionAvatar: {
-        width: 34,
-        height: 34,
-        borderRadius: RADIUS.full,
-        marginTop: 4,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
     },
     captionInput: {
         flex: 1,
-        minHeight: 150,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        color: '#111111',
-        fontSize: 13.5,
-        lineHeight: 20,
-    },
-    quickPromptLabel: {
-        marginTop: 8,
-        marginBottom: 6,
-        color: '#374151',
-        fontSize: 11,
-        fontWeight: '700',
-        textTransform: 'uppercase',
-        letterSpacing: 0.6,
-    },
-    quickPromptHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginTop: 4,
-    },
-    starterButton: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#d8b4fe',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-    },
-    starterButtonText: {
-        color: '#6d28d9',
-        fontSize: 10.5,
-        fontWeight: '700',
-    },
-    promptRow: {
-        gap: 8,
-        paddingBottom: 4,
-    },
-    promptChip: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#faf5ff',
-        paddingHorizontal: 11,
-        paddingVertical: 7,
-    },
-    promptChipText: {
-        color: '#111111',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    selectedMediaCard: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: LILAC_BG,
-        paddingHorizontal: 10,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    selectedMediaThumb: {
-        width: 58,
-        height: 58,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-    },
-    selectedVideoThumb: {
-        width: 58,
-        height: 58,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#111111',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    selectedMediaMeta: {
-        flex: 1,
-    },
-    selectedMediaTitle: {
-        color: '#111111',
-        fontSize: 12,
-        fontWeight: '700',
-        marginBottom: 2,
-    },
-    selectedMediaSubtitle: {
-        color: '#4b5563',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    removeMediaBtn: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#ffffff',
-        borderWidth: 1,
-        borderColor: '#d1d5db',
-    },
-    voiceCard: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: LILAC_BG,
-        paddingHorizontal: 10,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    voiceMeta: {
-        flex: 1,
-    },
-    voiceTitle: {
-        color: '#111111',
-        fontSize: 12,
-        fontWeight: '700',
-        marginBottom: 2,
-    },
-    voiceSubtitle: {
-        color: '#4b5563',
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    voiceActionBtn: {
-        borderRadius: 999,
-        backgroundColor: ACCENT,
-        paddingHorizontal: 12,
-        paddingVertical: 7,
-    },
-    voiceActionText: {
-        color: '#ffffff',
-        fontSize: 11,
-        fontWeight: '800',
-    },
-    voiceActionBtnMuted: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#d1d5db',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 11,
-        paddingVertical: 7,
-    },
-    voiceActionTextMuted: {
-        color: '#111111',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    optionsCard: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#ffffff',
-        overflow: 'hidden',
-    },
-    optionRow: {
-        paddingHorizontal: 12,
-        paddingVertical: 11,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    optionDivider: {
-        height: 1,
-        backgroundColor: '#ede9fe',
-        marginLeft: 12,
-    },
-    optionLeftWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 9,
-    },
-    optionIconBubble: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#d1d5db',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#f9fafb',
-    },
-    optionLabel: {
-        color: '#111111',
-        fontSize: 13,
-        fontWeight: '700',
-    },
-    optionValueWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    optionValue: {
-        color: '#111111',
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    audiencePanel: {
-        backgroundColor: '#faf8ff',
-        borderTopWidth: 1,
-        borderTopColor: '#ede9fe',
+        minHeight: 280,
+        backgroundColor: 'transparent',
+        paddingHorizontal: 6,
+        paddingVertical: 14,
+        color: '#0f172a',
+        fontSize: 19,
+        lineHeight: 28,
     },
     audienceOptionRow: {
         paddingHorizontal: 12,
-        paddingVertical: 10,
+        paddingVertical: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: '#ede9fe',
+        borderRadius: 12,
     },
     audienceOptionRowActive: {
-        backgroundColor: '#f3e8ff',
+        backgroundColor: '#f8fafc',
     },
     audienceOptionTextWrap: {
         flex: 1,
         paddingRight: 8,
     },
     audienceOptionTitle: {
-        color: '#111111',
-        fontSize: 12,
+        color: '#475569',
+        fontSize: 14,
         fontWeight: '700',
-        marginBottom: 2,
     },
     audienceOptionTitleActive: {
-        color: ACCENT_DARK,
-    },
-    audienceOptionHelper: {
-        color: '#6b7280',
-        fontSize: 10.5,
-        fontWeight: '600',
-    },
-    smartFieldBlock: {
-        paddingHorizontal: 12,
-        paddingVertical: 11,
-        gap: 8,
-    },
-    smartInputWrap: {
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        borderRadius: 10,
-        backgroundColor: '#ffffff',
-    },
-    smartInput: {
-        minHeight: 40,
-        color: '#111111',
-        fontSize: 13,
-        fontWeight: '600',
-        paddingHorizontal: 11,
-        paddingVertical: 8,
-    },
-    tagChipRow: {
-        gap: 6,
-    },
-    tagChip: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#f3e8ff',
-        paddingLeft: 10,
-        paddingRight: 4,
-        paddingVertical: 4,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    tagChipText: {
-        color: '#111111',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    tagChipRemove: {
-        width: 18,
-        height: 18,
-        borderRadius: 9,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#ffffff',
-    },
-    locationBadge: {
-        alignSelf: 'flex-start',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#c4b5fd',
-        backgroundColor: '#f3e8ff',
-        paddingHorizontal: 9,
-        paddingVertical: 5,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    locationBadgeText: {
-        color: '#111111',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    suggestionList: {
-        borderWidth: 1,
-        borderColor: '#ede9fe',
-        borderRadius: 10,
-        backgroundColor: '#faf8ff',
-        overflow: 'hidden',
-    },
-    suggestionRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 11,
-        paddingVertical: 9,
-        borderBottomWidth: 1,
-        borderBottomColor: '#ede9fe',
-    },
-    suggestionText: {
-        color: '#111111',
-        fontSize: 12,
-        fontWeight: '600',
+        color: '#0f172a',
     },
     bottomBar: {
-        borderTopWidth: 1,
-        borderTopColor: '#ddd6fe',
-        paddingHorizontal: 12,
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 16,
         paddingTop: 10,
-        paddingBottom: 14,
+        paddingBottom: 24,
         flexDirection: 'row',
-        gap: 8,
+        gap: 12,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.03,
+        shadowRadius: 12,
+        elevation: 10,
     },
     bottomActionBtn: {
         flex: 1,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#d1d5db',
-        backgroundColor: '#ffffff',
-        paddingVertical: 9,
+        borderRadius: 16,
+        backgroundColor: '#f8fafc',
+        paddingVertical: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
+        gap: 8,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 6,
+        elevation: 2,
     },
     bottomActionBtnActive: {
-        borderColor: ACCENT,
-        backgroundColor: ACCENT,
+        backgroundColor: '#9333ea',
+        shadowColor: '#9333ea',
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
     },
     bottomActionText: {
-        color: '#111111',
-        fontSize: 11,
+        color: '#475569',
+        fontSize: 13,
         fontWeight: '700',
     },
     bottomActionTextActive: {

@@ -18,6 +18,13 @@ jest.mock('../services/externalRateLimitService', () => ({
 }));
 
 jest.mock('../services/externalApiKeyService', () => ({
+    API_KEY_TRANSPORT: {
+        none: 'none',
+        header: 'header',
+        query: 'query',
+        body: 'body',
+    },
+    resolveApiKeyFromRequest: jest.fn(),
     findApiKeyByRawValue: jest.fn(),
     toRateLimitPerHour: jest.fn(() => 100),
 }));
@@ -31,12 +38,17 @@ jest.mock('../services/platformAuditService', () => ({
 }));
 
 jest.mock('../services/widgetTokenService', () => ({
-    verifyWidgetToken: jest.fn(),
+    resolveApiKeyFromWidgetToken: jest.fn(),
+    resolveWidgetRequestDomain: jest.fn(() => 'partner.example.com'),
 }));
 
 const redisClient = require('../config/redis');
 const { consumeApiRateLimit, consumeInvalidApiKeyAttempt } = require('../services/externalRateLimitService');
-const { findApiKeyByRawValue } = require('../services/externalApiKeyService');
+const {
+    API_KEY_TRANSPORT,
+    resolveApiKeyFromRequest,
+    findApiKeyByRawValue,
+} = require('../services/externalApiKeyService');
 const { trackApiUsageForBilling } = require('../services/apiBillingService');
 const { applyPublicApiGuard } = require('../middleware/publicApiV3Middleware');
 
@@ -49,6 +61,7 @@ const mockRes = () => {
     });
     res.json = jest.fn().mockReturnValue(res);
     res.on = jest.fn();
+    res.setHeader = jest.fn();
     return res;
 };
 
@@ -70,6 +83,12 @@ const makeApiKeyDoc = (overrides = {}) => ({
 describe('publicApiV3Middleware', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: null,
+            transport: API_KEY_TRANSPORT.none,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        });
         redisClient.incr.mockResolvedValue(1);
         redisClient.pExpire.mockResolvedValue(1);
         consumeApiRateLimit.mockResolvedValue({
@@ -97,6 +116,12 @@ describe('publicApiV3Middleware', () => {
 
     it('returns 403 when scope does not allow endpoint', async () => {
         findApiKeyByRawValue.mockResolvedValue(makeApiKeyDoc({ scope: 'read-only' }));
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: 'hire_test_123',
+            transport: API_KEY_TRANSPORT.header,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        });
 
         const guard = applyPublicApiGuard('applications');
         const req = {
@@ -116,6 +141,12 @@ describe('publicApiV3Middleware', () => {
     it('passes valid scoped request and attaches tenant context', async () => {
         const apiKeyDoc = makeApiKeyDoc({ scope: 'jobs' });
         findApiKeyByRawValue.mockResolvedValue(apiKeyDoc);
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: 'hire_test_123',
+            transport: API_KEY_TRANSPORT.header,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        });
 
         const guard = applyPublicApiGuard('jobs');
         const req = {
@@ -143,6 +174,12 @@ describe('publicApiV3Middleware', () => {
     it('blocks when billing policy requires upgrade', async () => {
         const apiKeyDoc = makeApiKeyDoc({ scope: 'jobs' });
         findApiKeyByRawValue.mockResolvedValue(apiKeyDoc);
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: 'hire_test_123',
+            transport: API_KEY_TRANSPORT.header,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        });
         trackApiUsageForBilling.mockResolvedValue({
             policy: {
                 blocked: true,
@@ -165,5 +202,59 @@ describe('publicApiV3Middleware', () => {
 
         expect(res.status).toHaveBeenCalledWith(402);
         expect(next).not.toHaveBeenCalled();
+    });
+
+    it('blocks legacy query transport when header-only mode is in effect', async () => {
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: null,
+            transport: API_KEY_TRANSPORT.query,
+            isLegacyTransport: true,
+            legacyTransportBlocked: true,
+        });
+
+        const guard = applyPublicApiGuard('jobs');
+        const req = {
+            headers: {},
+            query: { api_key: 'legacy-query-key' },
+            body: {},
+        };
+        const res = mockRes();
+        const next = jest.fn();
+
+        await guard(req, res, next);
+
+        expect(res.status).toHaveBeenCalledWith(401);
+        expect(res.json).toHaveBeenCalledWith({ message: 'API key is required via the X-API-Key header' });
+        expect(consumeInvalidApiKeyAttempt).not.toHaveBeenCalled();
+        expect(findApiKeyByRawValue).not.toHaveBeenCalled();
+        expect(next).not.toHaveBeenCalled();
+    });
+
+    it('adds deprecation headers when legacy query transport is still allowed', async () => {
+        const apiKeyDoc = makeApiKeyDoc({ scope: 'jobs' });
+        findApiKeyByRawValue.mockResolvedValue(apiKeyDoc);
+        resolveApiKeyFromRequest.mockReturnValue({
+            apiKey: 'legacy-query-key',
+            transport: API_KEY_TRANSPORT.query,
+            isLegacyTransport: true,
+            legacyTransportBlocked: false,
+        });
+
+        const guard = applyPublicApiGuard('jobs');
+        const req = {
+            headers: {},
+            query: { api_key: 'legacy-query-key' },
+            body: {},
+            method: 'GET',
+            originalUrl: '/api/v3/public/jobs',
+        };
+        const res = mockRes();
+        const next = jest.fn();
+
+        await guard(req, res, next);
+
+        expect(res.setHeader).toHaveBeenCalledWith('Deprecation', 'true');
+        expect(res.setHeader).toHaveBeenCalledWith('X-API-Key-Transport', 'query');
+        expect(next).toHaveBeenCalledTimes(1);
     });
 });

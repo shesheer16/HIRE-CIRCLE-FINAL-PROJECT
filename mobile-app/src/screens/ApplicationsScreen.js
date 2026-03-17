@@ -3,6 +3,7 @@ import {
     View,
     Text,
     FlatList,
+    RefreshControl,
     StyleSheet,
     TouchableOpacity,
     Image,
@@ -12,70 +13,28 @@ import {
     Pressable,
     TextInput,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import CelebrationConfetti from '../components/CelebrationConfetti';
+import CharmTitle from '../components/CharmTitle';
 import client from '../api/client';
 import { validateApplicationsResponse } from '../utils/apiValidator';
 import { useAppStore } from '../store/AppStore';
-
-const STATUS_ALIAS_MAP = {
-    requested: 'applied',
-    pending: 'applied',
-    apply: 'applied',
-    interview: 'interview_requested',
-    accepted: 'offer_accepted',
-    offer_proposed: 'offer_sent',
-    shortlisted_by_employer: 'shortlisted',
-    interview_scheduled: 'interview_requested',
-    offered: 'offer_sent',
-    hired_candidate: 'hired',
-};
-
-const STATUS_LABEL_MAP = {
-    applied: 'Applied',
-    shortlisted: 'Shortlisted',
-    interview_requested: 'Accepted',
-    interview_completed: 'Accepted',
-    offer_sent: 'Accepted',
-    offer_accepted: 'Accepted',
-    rejected: 'Rejected',
-    hired: 'Hired',
-    archived: 'Archived',
-    withdrawn: 'Rejected',
-    expired: 'Rejected',
-    offer_declined: 'Rejected',
-};
-
-const FILTER_STATUS_GROUPS = {
-    All: null,
-    Applied: new Set(['applied']),
-    Shortlisted: new Set(['shortlisted']),
-    Accepted: new Set([
-        'accepted',
-        'interview_requested',
-        'interview_completed',
-        'offer_sent',
-        'offer_accepted',
-    ]),
-    Rejected: new Set(['rejected', 'withdrawn', 'expired', 'offer_declined']),
-    Hired: new Set(['hired']),
-    Archived: new Set(['archived']),
-};
-
-const CHAT_READY_STATUSES = new Set(['interview_requested', 'interview_completed', 'offer_sent', 'offer_accepted', 'hired']);
-const FILTER_OPTIONS = ['All', 'Applied', 'Shortlisted', 'Accepted', 'Rejected', 'Hired', 'Archived'];
-
-const normalizeStatus = (status) => {
-    const normalized = String(status || '').trim().toLowerCase();
-    if (!normalized) return 'applied';
-    return STATUS_ALIAS_MAP[normalized] || normalized;
-};
-
-const mapStatusLabel = (status) => STATUS_LABEL_MAP[normalizeStatus(status)] || 'Applied';
+import { PALETTE, SCREEN_CHROME, SHADOWS } from '../theme/theme';
+import {
+    APPLICATION_FILTER_OPTIONS,
+    CHAT_READY_APPLICATION_STATUSES,
+    doesApplicationStatusMatchFilter,
+    getApplicationStatusLabel,
+    normalizeApplicationStatus,
+} from '../utils/applicationPresentation';
+import { getProfileGateMessage, isProfileRoleGateError } from '../utils/profileReadiness';
+import { SCREENSHOT_APPLICATIONS_RAW, SCREENSHOT_MOCKS_ENABLED } from '../config/screenshotMocks';
 
 const normalizeSearchText = (value) => (
     String(value || '')
@@ -132,53 +91,99 @@ const formatTimeLabel = (value) => {
     return date.toLocaleDateString();
 };
 
-const isProfileRoleGateError = (error) => {
-    const status = Number(error?.response?.status || 0);
-    return status === 403;
+const APPLICATION_CACHE_KEYS = {
+    employer: '@applications_cache_employer',
+    worker: '@applications_cache_worker',
 };
+const SUPPRESSED_APPS_KEY = {
+    employer: '@suppressed_apps_employer',
+    worker: '@suppressed_apps_worker',
+};
+const LOADING_CAP_MS = 5000;
+const REFRESH_CAP_MS = 1500;
+
+const PremiumStateCard = ({
+    icon = 'alert-circle-outline',
+    accent = '#6d28d9',
+    title,
+    subtitle,
+    actionLabel,
+    onAction,
+}) => (
+    <View style={styles.stateCardWrap}>
+        <View style={styles.stateCard}>
+            <View style={[styles.stateIconBubble, { backgroundColor: `${accent}14` }]}>
+                <Ionicons name={icon} size={22} color={accent} />
+            </View>
+            <Text style={styles.stateTitle}>{title}</Text>
+            {subtitle ? <Text style={styles.stateSubtitle}>{subtitle}</Text> : null}
+            {actionLabel && typeof onAction === 'function' ? (
+                <TouchableOpacity style={styles.statePrimaryAction} onPress={onAction} activeOpacity={0.86}>
+                    <Text style={styles.statePrimaryActionText}>{actionLabel}</Text>
+                </TouchableOpacity>
+            ) : null}
+        </View>
+    </View>
+);
 
 export default function ApplicationsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
-    const { role } = useAppStore();
+    const role = useAppStore(state => state.role);
     const normalizedRole = String(role || '').toLowerCase();
     const isEmployer = normalizedRole === 'employer' || normalizedRole === 'recruiter';
 
     const [applications, setApplications] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState('');
+    const [inlineErrorMessage, setInlineErrorMessage] = useState('');
+    const [softLoadIssue, setSoftLoadIssue] = useState('');
     const [searchDraft, setSearchDraft] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('All');
+    const [profileGateMessage, setProfileGateMessage] = useState('');
     const [showFilterModal, setShowFilterModal] = useState(false);
     const [showHireConfetti, setShowHireConfetti] = useState(false);
+    const [suppressedIds, setSuppressedIds] = useState([]);
     const mountedRef = useRef(true);
     const hireCelebrationShownRef = useRef(false);
     const searchInputRef = useRef(null);
     const initialLoadCompletedRef = useRef(false);
     const applicationsRef = useRef([]);
     const fetchRequestIdRef = useRef(0);
+    const abortControllerRef = useRef(null);
+    const applicationCacheKey = isEmployer ? APPLICATION_CACHE_KEYS.employer : APPLICATION_CACHE_KEYS.worker;
+    const suppressionKey = isEmployer ? SUPPRESSED_APPS_KEY.employer : SUPPRESSED_APPS_KEY.worker;
 
     const mapApplicationItem = useCallback((item) => {
         const job = item?.job || {};
         const employer = item?.employer || {};
         const worker = item?.worker || {};
+        const jobDeleted = Boolean(
+            item?.jobDeleted
+            || job?.deleted
+            || job?.isDeleted
+            || job?.deletedAt
+            || String(job?.status || '').toLowerCase() === 'deleted'
+        );
+        if (jobDeleted) return null;
 
         const workerName = [worker?.firstName, worker?.lastName]
             .map((part) => String(part || '').trim())
             .filter(Boolean)
             .join(' ')
-            || String(worker?.name || worker?.user?.name || worker?.displayName || 'Candidate').trim();
+            || String(worker?.name || worker?.user?.name || worker?.displayName || 'Job Seeker').trim();
         const employerName = employer?.companyName || employer?.name || job?.companyName || 'Employer';
 
         const statusRaw = String(item?.status || '').toLowerCase();
-        const statusCanonical = normalizeStatus(statusRaw);
-        const statusLabel = mapStatusLabel(statusCanonical);
+        const statusCanonical = normalizeApplicationStatus(statusRaw);
+        const statusLabel = getApplicationStatusLabel(statusCanonical);
         const counterpartyName = isEmployer ? workerName : employerName;
         const counterpartyRole = isEmployer
             ? String(worker?.roleProfiles?.[0]?.roleName || worker?.currentRole || worker?.title || '').trim()
-            : String(job?.title || item?.jobTitle || '').trim();
-        const fallbackPreview = CHAT_READY_STATUSES.has(statusCanonical)
+            : '';
+        const fallbackPreview = CHAT_READY_APPLICATION_STATUSES.has(statusCanonical)
             ? 'Tap to open chat'
             : `Status: ${statusLabel}`;
         const searchText = [
@@ -202,7 +207,7 @@ export default function ApplicationsScreen({ navigation }) {
         const normalizedSearchText = normalizeSearchText(searchText);
         const statusTokens = new Set([
             statusCanonical,
-            normalizeStatus(statusRaw),
+            normalizeApplicationStatus(statusRaw),
             normalizeSearchText(statusLabel).replace(/\s+/g, '_'),
             normalizeSearchText(statusLabel),
         ].filter(Boolean));
@@ -218,77 +223,240 @@ export default function ApplicationsScreen({ navigation }) {
             statusLabel,
             timeLabel: formatTimeLabel(item?.updatedAt),
             avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(counterpartyName)}&background=7c3aed&color=fff`,
-            isChatReady: CHAT_READY_STATUSES.has(statusCanonical),
+            isChatReady: CHAT_READY_APPLICATION_STATUSES.has(statusCanonical),
             searchText: normalizedSearchText,
             statusTokens,
         };
     }, [isEmployer]);
 
-    const fetchApplications = useCallback(async () => {
+    const readCachedApplications = useCallback(async () => {
+        try {
+            const raw = await AsyncStorage.getItem(applicationCacheKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_error) {
+            // Corrupted cache — treat as empty
+            return [];
+        }
+    }, [applicationCacheKey]);
+
+    const readSuppressedIds = useCallback(async () => {
+        try {
+            const raw = await AsyncStorage.getItem(suppressionKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_e) {
+            return [];
+        }
+    }, [suppressionKey]);
+
+    const writeSuppressedIds = useCallback(async (list = []) => {
+        if (!Array.isArray(list)) return;
+        await AsyncStorage.setItem(suppressionKey, JSON.stringify(list.slice(0, 300)));
+    }, [suppressionKey]);
+
+    const writeCachedApplications = useCallback(async (list = []) => {
+        if (!Array.isArray(list)) return;
+        await AsyncStorage.setItem(applicationCacheKey, JSON.stringify(list.slice(0, 200)));
+    }, [applicationCacheKey]);
+
+    const fetchApplications = useCallback(async ({ refresh = false } = {}) => {
         const requestId = fetchRequestIdRef.current + 1;
         fetchRequestIdRef.current = requestId;
+        let loadCap;
         try {
-            if (!mountedRef.current) return;
-            setError('');
-            if (!initialLoadCompletedRef.current && applicationsRef.current.length === 0) {
-                setIsLoading(true);
-            }
-
-            const { data } = await client.get('/api/applications', {
-                __skipApiErrorHandler: true,
-                __maxRetries: 0,
-                __disableBaseFallback: true,
-                timeout: 5500,
-                params: {
-                    // Load a bigger window so search/filter works across recent app history.
-                    limit: 200,
-                    includeArchived: true,
-                },
-            });
-            const list = validateApplicationsResponse(data);
-            const mapped = list.map(mapApplicationItem).filter((item) => item.applicationId);
-            if (mountedRef.current && requestId === fetchRequestIdRef.current) {
-                setApplications(mapped);
+            if (SCREENSHOT_MOCKS_ENABLED) {
+                const mapped = SCREENSHOT_APPLICATIONS_RAW
+                    .map(mapApplicationItem)
+                    .filter(Boolean)
+                    .filter((item) => item.applicationId)
+                    .filter((item) => !suppressedIds.includes(item.applicationId));
+                setApplicationsAndRef(mapped);
+                setIsLoading(false);
+                setIsRefreshing(false);
+                setError('');
+                setInlineErrorMessage('');
+                setSoftLoadIssue('');
+                setProfileGateMessage('');
+                initialLoadCompletedRef.current = true;
                 if (!hireCelebrationShownRef.current && mapped.some((item) => item.statusCanonical === 'hired')) {
                     hireCelebrationShownRef.current = true;
                     setShowHireConfetti(true);
                 }
+                return;
+            }
+            if (!mountedRef.current) return;
+            setError('');
+            setInlineErrorMessage('');
+            setSoftLoadIssue('');
+            setProfileGateMessage('');
+            if (refresh) {
+                setIsRefreshing(true);
+            } else if (!initialLoadCompletedRef.current && applicationsRef.current.length === 0) {
+                setIsLoading(true);
+            }
+
+            // Abort any ongoing request before starting a new one
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            abortControllerRef.current = new AbortController();
+            loadCap = setTimeout(() => {
+                if (requestId === fetchRequestIdRef.current) {
+                    setIsLoading(false);
+                    setIsRefreshing(false);
+                    if (applicationsRef.current.length === 0) {
+                        setInlineErrorMessage((prev) => prev || 'Taking longer than usual. Showing last known info.');
+                    }
+                }
+            }, refresh ? REFRESH_CAP_MS : LOADING_CAP_MS);
+
+            let list = null;
+            let lastError = null;
+            const requestPlans = [
+                {
+                    timeout: 5000,
+                    params: {
+                        limit: 160,
+                        includeArchived: true,
+                        skipTotal: true,
+                    },
+                },
+                {
+                    timeout: 3000,
+                    params: {
+                        limit: 80,
+                        includeArchived: false,
+                        skipTotal: true,
+                    },
+                },
+            ];
+
+            for (const plan of requestPlans) {
+                try {
+                    const { data } = await client.get('/api/applications', {
+                        __skipApiErrorHandler: true,
+                        __maxRetries: 0,
+                        timeout: plan.timeout,
+                        params: plan.params,
+                        signal: abortControllerRef.current.signal,
+                    });
+                    list = validateApplicationsResponse(data);
+                    lastError = null;
+                    break;
+                } catch (requestError) {
+                    lastError = requestError;
+                }
+            }
+
+            if (lastError) {
+                throw lastError;
+            }
+
+            const mapped = list
+                .map(mapApplicationItem)
+                .filter(Boolean)
+                .filter((item) => item.applicationId)
+                .filter((item) => !suppressedIds.includes(item.applicationId));
+            if (mountedRef.current && requestId === fetchRequestIdRef.current) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+                initialLoadCompletedRef.current = true;
+                setApplicationsAndRef(mapped);
+                writeCachedApplications(mapped).catch(() => null);
+                if (!hireCelebrationShownRef.current && mapped.some((item) => item.statusCanonical === 'hired')) {
+                    hireCelebrationShownRef.current = true;
+                    setShowHireConfetti(true);
+                }
+                clearTimeout(loadCap);
             }
         } catch (e) {
+            // If request was aborted by us, do nothing
+            if (e.name === 'CanceledError' || e.message?.includes('aborted')) {
+                clearTimeout(loadCap);
+                return;
+            }
+            
             if (requestId !== fetchRequestIdRef.current) {
+                clearTimeout(loadCap);
                 return;
             }
             if (isProfileRoleGateError(e)) {
                 if (mountedRef.current) {
+                    setIsLoading(false);
+                    setIsRefreshing(false);
+                    initialLoadCompletedRef.current = true;
                     setApplications([]);
                     setError('');
+                    setInlineErrorMessage('');
+                    setProfileGateMessage(getProfileGateMessage({ role: isEmployer ? 'employer' : 'worker' }));
                 }
+                clearTimeout(loadCap);
                 return;
             }
             if (mountedRef.current) {
-                if (applicationsRef.current.length === 0) {
-                    setApplications([]);
+                let persistedCache = [];
+                try {
+                    persistedCache = await readCachedApplications();
+                } catch (_cacheError) {
+                    persistedCache = [];
                 }
-                setError('');
-            }
-        } finally {
-            if (mountedRef.current && requestId === fetchRequestIdRef.current) {
+                const hasCachedApplications = applicationsRef.current.length > 0 || persistedCache.length > 0;
                 setIsLoading(false);
+                setIsRefreshing(false);
                 initialLoadCompletedRef.current = true;
+                
+                if (applicationsRef.current.length === 0 && persistedCache.length > 0) {
+                    setApplicationsAndRef(persistedCache);
+                } else if (!hasCachedApplications) {
+                    setApplicationsAndRef([]);
+                }
+                if (hasCachedApplications) {
+                    setError('');
+                    setInlineErrorMessage('Couldn’t refresh applications. Showing your latest updates.');
+                    setSoftLoadIssue('');
+                } else if (isEmployer) {
+                    setError('');
+                    setInlineErrorMessage('');
+                    setSoftLoadIssue('Live applicant refresh is taking longer than usual. Pull down to try again.');
+                } else {
+                    setError('Couldn’t load applications right now.');
+                    setInlineErrorMessage('');
+                    setSoftLoadIssue('');
+                }
+                setProfileGateMessage('');
             }
+            clearTimeout(loadCap);
         }
-    }, [mapApplicationItem]);
+    }, [isEmployer, mapApplicationItem, readCachedApplications, suppressedIds, writeCachedApplications]);
 
     useEffect(() => {
         mountedRef.current = true;
+        readSuppressedIds().then((ids) => {
+            if (Array.isArray(ids)) setSuppressedIds(ids);
+        }).catch(() => {});
         return () => {
             mountedRef.current = false;
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
         };
-    }, []);
+    }, [readSuppressedIds]);
 
     useEffect(() => {
         applicationsRef.current = applications;
     }, [applications]);
+
+    // Keep ref in sync also when setState is called — avoids 1-frame stale read
+    const setApplicationsAndRef = useCallback((nextOrUpdater) => {
+        setApplications((prev) => {
+            const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(prev) : nextOrUpdater;
+            applicationsRef.current = next;
+            return next;
+        });
+    }, []);
 
     useEffect(() => {
         if (!isSearchOpen) return;
@@ -304,29 +472,23 @@ export default function ApplicationsScreen({ navigation }) {
         }, [fetchApplications])
     );
 
-    useEffect(() => {
-        fetchApplications();
-    }, [fetchApplications]);
-
     const visibleApplications = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return applications.filter((item) => {
-            const allowedStatuses = FILTER_STATUS_GROUPS[selectedFilter] || null;
-            const itemStatusTokens = item?.statusTokens instanceof Set
-                ? item.statusTokens
-                : new Set([
-                    normalizeStatus(item?.statusCanonical),
-                    normalizeStatus(item?.statusRaw),
-                ].filter(Boolean));
-            const statusPass = !allowedStatuses
-                || Array.from(itemStatusTokens).some((token) => allowedStatuses.has(token));
+            const statusPass = doesApplicationStatusMatchFilter(item?.statusCanonical, selectedFilter);
             if (!statusPass) return false;
 
             if (!query) return true;
             return String(item.searchText || '').includes(query);
         });
     }, [applications, searchQuery, selectedFilter]);
-    const hasBlockingError = false;
+    const totalApplications = applications.length;
+    const chatReadyCount = useMemo(
+        () => applications.filter((item) => item.isChatReady).length,
+        [applications]
+    );
+    const currentStageCount = visibleApplications.length;
+    const hasBlockingError = Boolean(error) && applications.length === 0 && !profileGateMessage;
 
     const openChat = useCallback((item) => {
         if (!item?.applicationId) {
@@ -356,6 +518,7 @@ export default function ApplicationsScreen({ navigation }) {
         setIsSearchOpen(true);
     }, []);
     const closeSearch = useCallback(() => {
+        searchInputRef.current?.blur?.();
         setIsSearchOpen(false);
         setSearchDraft('');
         setSearchQuery('');
@@ -366,28 +529,99 @@ export default function ApplicationsScreen({ navigation }) {
         openChat(item);
     }, [openChat]);
 
-    const renderItem = ({ item }) => (
-        <TouchableOpacity style={styles.row} activeOpacity={0.72} onPress={() => handleOpenApplication(item)}>
+    const handleDeleteApplication = useCallback((item) => {
+        const targetId = String(item?.applicationId || '').trim();
+        if (!targetId) return;
+
+        Alert.alert('Delete application', 'This removes the application and resets conversation access. Continue?', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: async () => {
+                    // Optimistic local removal
+                    setApplicationsAndRef((prev) => {
+                        const next = prev.filter((row) => String(row?.applicationId || '') !== targetId);
+                        writeCachedApplications(next).catch(() => null);
+                        return next;
+                    });
+
+                    // Persist suppression for employers so talent tab data stays untouched but Apps hides it
+                    if (isEmployer) {
+                        setSuppressedIds((prev) => {
+                            const next = Array.from(new Set([...prev, targetId]));
+                            writeSuppressedIds(next).catch(() => null);
+                            return next;
+                        });
+                    }
+
+                    try {
+                        await client.put(`/api/applications/${targetId}/status`, { status: 'shortlisted' }, {
+                            __skipApiErrorHandler: true,
+                            __maxRetries: 0,
+                        }).catch(() => null);
+                        if (!isEmployer) {
+                            await client.delete(`/api/applications/${targetId}`, {
+                                __skipApiErrorHandler: true,
+                                __maxRetries: 0,
+                            }).catch(() => null);
+                        }
+                    } catch (_e) {
+                        // If network fails, UI already removed; background refetch will reconcile later.
+                    }
+                },
+            },
+        ]);
+    }, [isEmployer, setApplicationsAndRef, writeCachedApplications, writeSuppressedIds]);
+
+const renderItem = ({ item }) => (
+    <TouchableOpacity
+        style={styles.rowCard}
+        activeOpacity={0.82}
+        onPress={() => handleOpenApplication(item)}
+        onLongPress={() => handleDeleteApplication(item)}
+    >
+        <View style={styles.rowCardGlow} />
+        <View style={styles.row}>
             <View style={styles.avatarWrap}>
                 <Image source={{ uri: item.avatar }} style={styles.avatar} />
-                <View style={styles.avatarStatusDot} />
             </View>
 
-            <View style={styles.rowBody}>
-                <View style={styles.rowTop}>
-                    <Text style={styles.nameText} numberOfLines={1}>{item.counterpartyName}</Text>
-                    <Text style={styles.timeText}>{item.timeLabel}</Text>
-                </View>
+                <View style={styles.rowBody}>
+                    <View style={styles.rowTop}>
+                        <View style={styles.nameBlock}>
+                            <Text style={styles.nameText} numberOfLines={1}>{item.counterpartyName}</Text>
+                        </View>
+                        <View style={styles.rowMeta}>
+                            <Text style={styles.timeText}>{item.timeLabel}</Text>
+                        </View>
+                    </View>
 
-                <Text style={styles.jobTitleText} numberOfLines={1}>{item.jobTitle}</Text>
+                    <Text style={styles.jobTitleText} numberOfLines={1}>{item.jobTitle}</Text>
+                    <View style={styles.rowSignalRail}>
+                        <View style={[styles.statusPill, item.isChatReady && styles.statusPillReady]}>
+                            <Text style={[styles.statusPillText, item.isChatReady && styles.statusPillTextReady]}>
+                                {item.isChatReady ? 'Chat ready' : item.statusLabel}
+                            </Text>
+                        </View>
+                        {item.counterpartyRole ? (
+                            <View style={styles.secondarySignalPill}>
+                                <Text style={styles.secondarySignalText} numberOfLines={1}>{item.counterpartyRole}</Text>
+                            </View>
+                        ) : null}
+                    </View>
 
-                <View style={styles.rowBottom}>
-                    <Text style={styles.previewText} numberOfLines={1}>{item.preview}</Text>
-                    {item.isChatReady ? (
-                        <View style={styles.readyBadge} />
-                    ) : (
-                        <Text style={styles.statusText}>{item.statusLabel}</Text>
-                    )}
+                    <View style={styles.rowBottom}>
+                        <Text style={styles.previewText} numberOfLines={1}>{item.preview}</Text>
+                        <View style={styles.rowActions}>
+                            <TouchableOpacity style={styles.rowChevronBubble} activeOpacity={0.8} onPress={() => handleOpenApplication(item)}>
+                                <Ionicons name="chevron-forward" size={15} color="#94a3b8" />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.rowDeleteBubble} activeOpacity={0.8} onPress={() => handleDeleteApplication(item)}>
+                                <Ionicons name="trash" size={14} color="#ef4444" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
                 </View>
             </View>
         </TouchableOpacity>
@@ -397,59 +631,83 @@ export default function ApplicationsScreen({ navigation }) {
         <View style={styles.container}>
             <CelebrationConfetti visible={showHireConfetti} onEnd={() => setShowHireConfetti(false)} />
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-                <View style={styles.headerTopRow}>
-                    <Text style={styles.headerTitle}>Applications</Text>
-                    <View style={styles.headerControls}>
-                        {isSearchOpen ? (
-                            <View style={styles.searchWrap}>
-                                <Ionicons name="search" size={18} style={styles.searchIcon} />
-                                <TextInput
-                                    ref={searchInputRef}
-                                    style={styles.searchInput}
-                                    value={searchDraft}
-                                    onChangeText={handleSearchChange}
-                                    placeholder="Search chats"
-                                    placeholderTextColor="#94a3b8"
-                                    autoCorrect={false}
-                                    autoCapitalize="none"
-                                    returnKeyType="search"
-                                    onSubmitEditing={() => setSearchQuery(String(searchDraft || '').trim())}
-                                />
-                                <TouchableOpacity
-                                    style={styles.searchClearBtn}
-                                    onPress={searchDraft ? clearSearchOnly : closeSearch}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="close" size={14} color="#64748b" />
-                                </TouchableOpacity>
-                            </View>
-                        ) : (
+                <View style={styles.headerBarShell}>
+                    <View style={styles.headerTopRow}>
+                        <View style={styles.headerTitleWrap}>
+                            <CharmTitle text={isEmployer ? 'Apps' : 'Applications'} />
+                        </View>
+                        <View style={styles.headerControls}>
                             <TouchableOpacity
                                 style={styles.searchToggleBtn}
-                                onPress={openSearch}
-                                activeOpacity={0.85}
+                                onPress={isSearchOpen ? closeSearch : openSearch}
+                                activeOpacity={0.7}
                                 hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                             >
-                                <Ionicons name="search" size={18} color="#f8fafc" />
+                                <Ionicons name={isSearchOpen ? 'close' : 'search'} size={22} color={PALETTE.textPrimary} />
                             </TouchableOpacity>
-                        )}
-                        <TouchableOpacity
-                            style={[styles.filterBtn, selectedFilter !== 'All' && styles.filterBtnActive]}
-                            onPress={() => setShowFilterModal(true)}
-                            activeOpacity={0.8}
-                            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-                        >
-                            <Ionicons
-                                name="options-outline"
-                                size={18}
-                                color={selectedFilter !== 'All' ? '#ede9fe' : 'rgba(255,255,255,0.92)'}
-                            />
-                        </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.filterBtn}
+                                onPress={() => {
+                                    searchInputRef.current?.blur?.();
+                                    setShowFilterModal(true);
+                                }}
+                                activeOpacity={0.7}
+                                hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                            >
+                                <Ionicons
+                                    name="options-outline"
+                                    size={22}
+                                    color={PALETTE.textPrimary}
+                                />
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
-                <Text style={styles.headerSubtitle}>
-                    {selectedFilter === 'All' ? 'Active conversations with employers' : `Filter: ${selectedFilter}`}
-                </Text>
+                {isSearchOpen ? (
+                    <View style={styles.searchDock}>
+                        <View style={styles.searchWrap}>
+                            <Ionicons name="search" size={18} style={styles.searchIcon} />
+                            <TextInput
+                                ref={searchInputRef}
+                                style={styles.searchInput}
+                                value={searchDraft}
+                                onChangeText={handleSearchChange}
+                                placeholder="Search applications"
+                                placeholderTextColor="#94a3b8"
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                                onSubmitEditing={() => setSearchQuery(String(searchDraft || '').trim())}
+                            />
+                            <TouchableOpacity
+                                style={styles.searchClearBtn}
+                                onPress={searchDraft ? clearSearchOnly : closeSearch}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="close" size={14} color="#64748b" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ) : null}
+                {isEmployer ? (
+                    <View style={styles.employerTopRail}>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                        </View>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{`${currentStageCount} visible`}</Text>
+                        </View>
+                        <View style={styles.employerSignalChip}>
+                            <Text style={styles.employerSignalText}>{`${chatReadyCount} chat ready`}</Text>
+                        </View>
+                    </View>
+                ) : null}
+                {inlineErrorMessage ? (
+                    <View style={styles.inlineErrorBanner}>
+                        <Ionicons name="alert-circle-outline" size={15} color="#b45309" />
+                        <Text style={styles.inlineErrorText}>{inlineErrorMessage}</Text>
+                    </View>
+                ) : null}
             </View>
 
             {isLoading ? (
@@ -460,12 +718,15 @@ export default function ApplicationsScreen({ navigation }) {
                     <SkeletonLoader height={72} style={styles.skeleton} />
                 </View>
             ) : hasBlockingError ? (
-                <EmptyState
-                    icon="⚠️"
-                    title="Couldn’t load data"
-                    subtitle="Pull down to refresh."
-                    actionLabel="Retry"
-                    onAction={fetchApplications}
+                <PremiumStateCard
+                    icon="cloud-offline-outline"
+                    accent="#7c3aed"
+                    title={isEmployer ? 'Applicant inbox is taking longer than usual' : 'Applications are taking longer than usual'}
+                    subtitle={isEmployer
+                        ? 'Retry now and we’ll reconnect to your latest applicant list.'
+                        : 'Retry now and we’ll reconnect to your latest application list.'}
+                    actionLabel="Retry now"
+                    onAction={() => fetchApplications({ refresh: true })}
                 />
             ) : (
                 <FlatList
@@ -476,21 +737,57 @@ export default function ApplicationsScreen({ navigation }) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="always"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                    refreshControl={(
+                        <RefreshControl
+                            refreshing={isRefreshing}
+                            onRefresh={() => fetchApplications({ refresh: true })}
+                            tintColor="#7c3aed"
+                            colors={['#7c3aed']}
+                        />
+                    )}
                     removeClippedSubviews={Platform.OS === 'android'}
                     maxToRenderPerBatch={12}
                     windowSize={10}
                     initialNumToRender={12}
+                    ListHeaderComponent={isEmployer ? (
+                        <View style={styles.listHeaderWrap}>
+                            <Text style={styles.listHeaderTitle}>Live applicants</Text>
+                            <View style={styles.listHeaderCount}>
+                                <Text style={styles.listHeaderCountText}>{visibleApplications.length}</Text>
+                            </View>
+                        </View>
+                    ) : null}
                     ListEmptyComponent={
                         <EmptyState
-                            icon={applications.length > 0 ? '🔎' : (isEmployer ? '📥' : '📋')}
-                            title={applications.length > 0 ? 'No results' : (isEmployer ? 'No candidates yet' : 'No applications yet')}
-                            subtitle={applications.length > 0
+                            icon={profileGateMessage ? '🧩' : (applications.length > 0 ? '🔎' : (isEmployer ? '📥' : '📋'))}
+                            title={profileGateMessage
+                                ? 'Finish your profile'
+                                : softLoadIssue
+                                    ? 'Refreshing applicant list'
+                                    : (applications.length > 0 ? 'No results' : (isEmployer ? 'No job seekers yet' : 'No applications yet'))}
+                            subtitle={profileGateMessage
+                                ? profileGateMessage
+                                : softLoadIssue
+                                    ? softLoadIssue
+                                : (applications.length > 0
                                 ? 'Try clearing search or filters.'
                                 : (isEmployer
-                                    ? 'Your job posts will surface matches here'
-                                    : 'Apply to jobs to start conversations')}
-                            actionLabel={applications.length > 0 ? 'Clear Filters' : (isEmployer ? 'Post a Need' : 'Browse Jobs')}
+                                    ? 'Applications from job seekers will appear here as they move into your pipeline.'
+                                    : 'Apply to jobs to start conversations'))}
+                            actionLabel={profileGateMessage
+                                ? 'Complete Profile'
+                                : softLoadIssue
+                                    ? 'Retry now'
+                                    : (applications.length > 0 ? 'Clear Filters' : (isEmployer ? 'Post a Job' : 'Browse Jobs'))}
                             onAction={() => {
+                                if (profileGateMessage) {
+                                    navigation.navigate(isEmployer ? 'EmployerProfileCreate' : 'ProfileSetupWizard');
+                                    return;
+                                }
+                                if (softLoadIssue) {
+                                    fetchApplications({ refresh: true });
+                                    return;
+                                }
                                 if (applications.length > 0) {
                                     clearSearchAndFilters();
                                     return;
@@ -513,7 +810,67 @@ export default function ApplicationsScreen({ navigation }) {
                     onPress={() => setShowFilterModal(false)}
                 >
                     <Pressable style={styles.filterSheet} onPress={(event) => event.stopPropagation()}>
-                        <Text style={styles.filterSheetTitle}>Filter Applications</Text>
+                        <View style={styles.filterSheetHandle} />
+                        <Text style={styles.filterSheetTitle}>{isEmployer ? 'Pipeline filters' : 'Application stages'}</Text>
+                        {isEmployer ? (
+                            <View style={styles.filterHeroCard}>
+                                <View style={styles.filterHeroTopRow}>
+                                    <View style={styles.heroBadge}>
+                                        <Text style={styles.heroBadgeText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                                    </View>
+                                    <View style={styles.heroPill}>
+                                        <Text style={styles.heroPillText}>Hiring side</Text>
+                                    </View>
+                                </View>
+                                <Text style={styles.filterHeroTitle}>Track every applicant clearly</Text>
+                                <Text style={styles.filterHeroSubtitle}>Choose a stage, then review the list without extra dashboard noise.</Text>
+                                <View style={styles.heroStatsRow}>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Total</Text>
+                                        <Text style={styles.heroStatValue}>{totalApplications}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Visible</Text>
+                                        <Text style={styles.heroStatValue}>{currentStageCount}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Chat ready</Text>
+                                        <Text style={styles.heroStatValue}>{chatReadyCount}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={styles.filterHeroCard}>
+                                <View style={styles.filterHeroTopRow}>
+                                    <View style={styles.heroBadge}>
+                                        <Text style={styles.heroBadgeText}>{selectedFilter === 'All' ? 'All stages' : selectedFilter}</Text>
+                                    </View>
+                                    <View style={styles.heroPill}>
+                                        <Text style={styles.heroPillText}>Job seeker side</Text>
+                                    </View>
+                                </View>
+                                <Text style={styles.filterHeroTitle}>Track every application clearly</Text>
+                                <Text style={styles.filterHeroSubtitle}>
+                                    {selectedFilter === 'All'
+                                        ? 'See the full pipeline from applied to hired.'
+                                        : `Showing ${selectedFilter.toLowerCase()} stage now.`}
+                                </Text>
+                                <View style={styles.heroStatsRow}>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Total</Text>
+                                        <Text style={styles.heroStatValue}>{totalApplications}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Visible</Text>
+                                        <Text style={styles.heroStatValue}>{currentStageCount}</Text>
+                                    </View>
+                                    <View style={styles.heroStatCard}>
+                                        <Text style={styles.heroStatLabel}>Chat ready</Text>
+                                        <Text style={styles.heroStatValue}>{chatReadyCount}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        )}
                         <TouchableOpacity
                             style={styles.clearFiltersAction}
                             onPress={() => {
@@ -522,12 +879,12 @@ export default function ApplicationsScreen({ navigation }) {
                             }}
                             activeOpacity={0.75}
                         >
-                            <Text style={styles.clearFiltersActionText}>Reset Search + Filters</Text>
+                            <Text style={styles.clearFiltersActionText}>Reset search + filters</Text>
                         </TouchableOpacity>
-                        {FILTER_OPTIONS.map((option) => (
+                        {APPLICATION_FILTER_OPTIONS.map((option) => (
                             <TouchableOpacity
                                 key={option}
-                                style={styles.filterOption}
+                                style={[styles.filterOption, selectedFilter === option && styles.filterOptionActive]}
                                 onPress={() => {
                                     setSelectedFilter(option);
                                     setShowFilterModal(false);
@@ -552,12 +909,33 @@ export default function ApplicationsScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: PALETTE.surface,
     },
     header: {
-        backgroundColor: '#7c3aed',
+        backgroundColor: PALETTE.surface,
+        paddingHorizontal: 0,
+        paddingBottom: 0,
+    },
+    headerBarShell: {
         paddingHorizontal: 16,
-        paddingBottom: 10,
+        paddingVertical: 10,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: PALETTE.separator,
+    },
+    employerTopRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+        paddingHorizontal: 16,
+    },
+    employerSignalChip: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    employerSignalText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: PALETTE.textSecondary,
     },
     headerTopRow: {
         flexDirection: 'row',
@@ -565,48 +943,50 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: 12,
     },
+    headerTitleWrap: {
+        flex: 1,
+    },
     headerTitle: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#ffffff',
+        fontSize: 22,
+        fontWeight: '700',
+        color: PALETTE.accent,
+        letterSpacing: -0.3,
     },
     headerControls: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'flex-end',
         gap: 8,
     },
     searchToggleBtn: {
-        width: 36,
-        height: 36,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 12,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
     },
+    searchDock: {
+        marginTop: 12,
+        paddingHorizontal: 16,
+    },
     searchWrap: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
-        borderRadius: 18,
-        paddingHorizontal: 10,
-        height: 38,
+        borderColor: PALETTE.separator,
+        backgroundColor: PALETTE.surface,
+        borderRadius: 20,
+        paddingHorizontal: 12,
+        minHeight: 44,
     },
     searchIcon: {
-        color: '#64748b',
+        color: PALETTE.textSecondary,
         opacity: 0.95,
     },
     searchInput: {
         flex: 1,
         marginLeft: 6,
         fontSize: 13,
-        color: '#0f172a',
+        color: PALETTE.textPrimary,
         paddingVertical: 0,
     },
     searchClearBtn: {
@@ -614,29 +994,147 @@ const styles = StyleSheet.create({
         width: 20,
         height: 20,
         borderRadius: 10,
-        backgroundColor: '#f1f5f9',
+        backgroundColor: PALETTE.surface2,
         alignItems: 'center',
         justifyContent: 'center',
     },
     filterBtn: {
-        width: 36,
-        height: 36,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 12,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
     },
     filterBtnActive: {
-        borderColor: '#ede9fe',
-        backgroundColor: '#8b5cf6',
+        backgroundColor: PALETTE.background,
     },
-    headerSubtitle: {
-        marginTop: 4,
+    heroCard: {
+        ...SCREEN_CHROME.heroSurface,
+        marginTop: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+    heroTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    heroBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    heroBadgeText: {
         fontSize: 11,
-        color: '#e9d5ff',
-        fontWeight: '500',
+        fontWeight: '800',
+        color: PALETTE.accentDeep,
+    },
+    heroPill: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    heroPillText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
+    },
+    heroTitle: {
+        marginTop: 14,
+        fontSize: 22,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+        letterSpacing: -0.4,
+    },
+    heroSubtitle: {
+        marginTop: 5,
+        fontSize: 12.5,
+        lineHeight: 18,
+        color: PALETTE.textSecondary,
+        fontWeight: '600',
+    },
+    heroStatsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 14,
+    },
+    heroStatCard: {
+        ...SCREEN_CHROME.metricTile,
+    },
+    heroStatLabel: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+        color: PALETTE.textTertiary,
+    },
+    heroStatValue: {
+        marginTop: 6,
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#111827',
+    },
+    inlineErrorBanner: {
+        marginTop: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#fed7aa',
+        backgroundColor: '#fff7ed',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    inlineErrorText: {
+        flex: 1,
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#9a3412',
+    },
+    stateCardWrap: {
+        flex: 1,
+        paddingHorizontal: 16,
+        paddingTop: 18,
+        justifyContent: 'center',
+    },
+    stateCard: {
+        ...SCREEN_CHROME.heroSurface,
+        alignItems: 'center',
+        paddingHorizontal: 18,
+        paddingVertical: 24,
+    },
+    stateIconBubble: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 14,
+    },
+    stateTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+        textAlign: 'center',
+    },
+    stateSubtitle: {
+        marginTop: 8,
+        fontSize: 13,
+        lineHeight: 19,
+        fontWeight: '600',
+        color: PALETTE.textSecondary,
+        textAlign: 'center',
+    },
+    statePrimaryAction: {
+        marginTop: 16,
+        borderRadius: 16,
+        backgroundColor: PALETTE.accentDeep,
+        paddingHorizontal: 18,
+        paddingVertical: 13,
+    },
+    statePrimaryActionText: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: PALETTE.textInverted,
     },
     loaderWrap: {
         paddingHorizontal: 16,
@@ -647,28 +1145,71 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     listContent: {
-        paddingTop: 4,
-        paddingBottom: 24,
+        paddingTop: 8,
+        paddingHorizontal: 16,
+        paddingBottom: 88,
+    },
+    listHeaderWrap: {
+        marginBottom: 10,
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    listHeaderTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+        letterSpacing: -0.2,
+    },
+    listHeaderCount: {
+        minWidth: 36,
+        height: 36,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: PALETTE.accentBorder,
+        backgroundColor: PALETTE.accentSoft,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+    },
+    listHeaderCountText: {
+        color: PALETTE.accentDeep,
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    rowCard: {
+        ...SCREEN_CHROME.contentCard,
+        position: 'relative',
+        marginBottom: 12,
+        overflow: 'hidden',
+        borderRadius: 24,
+    },
+    rowCardGlow: {
+        position: 'absolute',
+        top: -20,
+        right: -12,
+        width: 92,
+        height: 92,
+        borderRadius: 46,
+        backgroundColor: 'rgba(124,58,237,0.06)',
     },
     row: {
         flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 13,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eef2f7',
-        backgroundColor: '#ffffff',
+        alignItems: 'flex-start',
+        paddingHorizontal: 15,
+        paddingVertical: 15,
     },
     avatarWrap: {
         marginRight: 12,
         position: 'relative',
     },
     avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
+        borderColor: PALETTE.separator,
     },
     avatarStatusDot: {
         position: 'absolute',
@@ -679,108 +1220,206 @@ const styles = StyleSheet.create({
         borderRadius: 6,
         borderWidth: 2,
         borderColor: '#ffffff',
-        backgroundColor: '#9333ea',
+        backgroundColor: PALETTE.accentMid,
     },
     rowBody: {
         flex: 1,
-        minHeight: 50,
-        justifyContent: 'center',
+        minHeight: 52,
+    },
+    nameBlock: {
+        flex: 1,
+        marginRight: 10,
     },
     rowTop: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     nameText: {
-        flex: 1,
-        fontSize: 14,
+        fontSize: 14.5,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+    },
+    counterpartyRoleText: {
+        marginTop: 3,
+        fontSize: 11.5,
+        color: PALETTE.textSecondary,
         fontWeight: '700',
-        color: '#111827',
-        marginRight: 8,
+    },
+    rowMeta: {
+        alignItems: 'flex-end',
     },
     timeText: {
-        fontSize: 12,
+        marginTop: 5,
+        fontSize: 11.5,
         color: '#94a3b8',
-        fontWeight: '500',
+        fontWeight: '600',
     },
     jobTitleText: {
-        marginTop: 2,
-        fontSize: 12,
-        color: '#7c3aed',
-        fontWeight: '700',
+        marginTop: 8,
+        fontSize: 13,
+        color: PALETTE.textPrimary,
+        fontWeight: '800',
+        letterSpacing: -0.1,
+    },
+    rowSignalRail: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 10,
     },
     rowBottom: {
-        marginTop: 2,
+        marginTop: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     previewText: {
         flex: 1,
-        fontSize: 12,
-        color: '#64748b',
+        fontSize: 12.5,
+        color: PALETTE.textSecondary,
         marginRight: 8,
-    },
-    statusText: {
-        fontSize: 11,
-        color: '#94a3b8',
         fontWeight: '600',
     },
-    readyBadge: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#9333ea',
+    rowActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    rowChevronBubble: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: PALETTE.backgroundSoft,
+        borderWidth: 1,
+        borderColor: PALETTE.borderLight,
+    },
+    rowDeleteBubble: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(239,68,68,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.24)',
+    },
+    statusPill: {
+        ...SCREEN_CHROME.signalChip,
+    },
+    statusPillReady: {
+        ...SCREEN_CHROME.signalChipAccent,
+    },
+    statusPillText: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#64748b',
+    },
+    statusPillTextReady: {
+        color: PALETTE.accentDeep,
+    },
+    secondarySignalPill: {
+        ...SCREEN_CHROME.signalChip,
+        maxWidth: '70%',
+    },
+    secondarySignalText: {
+        fontSize: 10.5,
+        fontWeight: '700',
+        color: PALETTE.textSecondary,
     },
     filterOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(15,23,42,0.28)',
+        backgroundColor: 'rgba(0,0,0,0.3)',
         justifyContent: 'flex-end',
     },
     filterSheet: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: 18,
-        borderTopRightRadius: 18,
+        backgroundColor: PALETTE.surface,
+        borderTopLeftRadius: 14,
+        borderTopRightRadius: 14,
         paddingHorizontal: 16,
-        paddingTop: 14,
-        paddingBottom: 24,
+        paddingTop: 12,
+        paddingBottom: 28,
+    },
+    filterSheetHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: PALETTE.separator,
+        alignSelf: 'center',
+        marginBottom: 14,
     },
     filterSheetTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#0f172a',
-        marginBottom: 10,
+        fontSize: 17,
+        fontWeight: '600',
+        color: PALETTE.textPrimary,
+        marginBottom: 14,
     },
-    clearFiltersAction: {
-        alignSelf: 'flex-start',
-        marginBottom: 8,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f5f3ff',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+    filterHeroCard: {
+        backgroundColor: PALETTE.backgroundSoft,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: PALETTE.separator,
+        marginBottom: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 14,
     },
-    clearFiltersActionText: {
-        fontSize: 12,
-        color: '#7c3aed',
-        fontWeight: '700',
-    },
-    filterOption: {
-        minHeight: 44,
-        borderRadius: 10,
-        paddingHorizontal: 12,
+    filterHeroTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        gap: 8,
+    },
+    filterHeroTitle: {
+        marginTop: 10,
+        fontSize: 15,
+        fontWeight: '600',
+        color: PALETTE.textPrimary,
+    },
+    filterHeroSubtitle: {
+        marginTop: 4,
+        fontSize: 13,
+        lineHeight: 18,
+        color: PALETTE.textSecondary,
+        fontWeight: '400',
+    },
+    clearFiltersAction: {
+        alignSelf: 'flex-start',
+        marginBottom: 12,
+        paddingHorizontal: 0,
+        paddingVertical: 4,
+    },
+    clearFiltersActionText: {
+        fontSize: 13,
+        color: PALETTE.accent,
+        fontWeight: '600',
+    },
+    filterOption: {
+        flex: 0,
+        minHeight: 48,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: PALETTE.surface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: PALETTE.separator,
+        marginBottom: 8,
+    },
+    filterOptionActive: {
+        backgroundColor: PALETTE.accentSoft,
+        borderColor: PALETTE.accent,
     },
     filterOptionText: {
         fontSize: 14,
-        color: '#334155',
+        color: PALETTE.textPrimary,
         fontWeight: '500',
     },
     filterOptionTextActive: {
-        color: '#7c3aed',
-        fontWeight: '700',
+        color: PALETTE.accent,
+        fontWeight: '600',
     },
 });

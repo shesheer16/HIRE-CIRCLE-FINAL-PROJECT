@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import browserSessionApi from '../../../utils/browserSessionApi';
 
 const COLUMN_ORDER = ['Applied', 'Shortlisted', 'Interviewing', 'Offer', 'Hired'];
 const COLUMN_TO_STATUS = {
@@ -53,18 +53,6 @@ const normalizeStatus = (value) => {
     return normalized;
 };
 
-const getAuthConfig = () => {
-    const raw = localStorage.getItem('userInfo');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.token) return null;
-    return {
-        headers: {
-            Authorization: `Bearer ${parsed.token}`,
-        },
-    };
-};
-
 const RecruiterApplications = () => {
     const [applications, setApplications] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -75,17 +63,11 @@ const RecruiterApplications = () => {
     const fetchApplications = useCallback(async () => {
         try {
             setLoading(true);
-            const config = getAuthConfig();
-            if (!config) {
-                setError('Session expired. Please login again.');
-                setApplications([]);
-                return;
-            }
-            const { data } = await axios.get('/api/applications', config);
+            const { data } = await browserSessionApi.get('/api/applications');
             const rows = Array.isArray(data?.data) ? data.data : [];
             setApplications(rows);
             setError('');
-        } catch (_error) {
+        } catch (_requestError) {
             setError('Failed to load applications.');
         } finally {
             setLoading(false);
@@ -123,18 +105,11 @@ const RecruiterApplications = () => {
             return;
         }
 
-        const config = getAuthConfig();
-        if (!config) {
-            setError('Session expired. Please login again.');
-            return;
-        }
-
         try {
             setUpdatingId(String(applicationId));
-            await axios.put(
+            await browserSessionApi.put(
                 `/api/applications/${applicationId}/status`,
                 { status: targetStatus },
-                config
             );
             setApplications((prev) => prev.map((item) => (
                 String(item._id) === String(applicationId)
@@ -228,4 +203,3 @@ const RecruiterApplications = () => {
 };
 
 export default RecruiterApplications;
-

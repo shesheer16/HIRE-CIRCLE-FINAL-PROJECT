@@ -1,11 +1,12 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logoutWebSession } from '../../utils/webAuthSession';
 
 const HomePage = () => {
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    localStorage.removeItem('userInfo');
+  const handleLogout = async () => {
+    await logoutWebSession();
     navigate('/');
   };
 

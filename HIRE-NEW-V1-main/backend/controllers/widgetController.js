@@ -1,5 +1,11 @@
 const ApiKey = require('../models/ApiKey');
-const { createWidgetToken } = require('../services/widgetTokenService');
+const {
+    createWidgetSessionToken,
+    createWidgetToken,
+    resolveApiKeyFromWidgetToken,
+    resolveWidgetRequestDomain,
+    SESSION_TOKEN_TTL_SECONDS,
+} = require('../services/widgetTokenService');
 
 const normalizeHost = (value = '') => {
     const input = String(value || '').trim();
@@ -30,6 +36,64 @@ const ensureAllowedDomain = ({ apiKeyDoc, allowedDomain }) => {
 };
 
 const escapeJs = (value = '') => JSON.stringify(String(value || ''));
+
+const resolveBootstrapTokenFromRequest = (req = {}) => String(
+    req.body?.token
+    || req.headers?.['x-widget-token']
+    || req.headers?.['x-hire-widget-token']
+    || req.query?.token
+    || ''
+).trim();
+
+const buildIframeCode = ({ baseUrl, matchWidgetUrl, token }) => `\
+<div data-hire-match-widget></div>
+<script>
+(() => {
+  const mount = document.currentScript.previousElementSibling;
+  const base = ${escapeJs(baseUrl)};
+  const bootstrapToken = ${escapeJs(token)};
+  const widgetUrl = ${escapeJs(matchWidgetUrl)};
+
+  const showError = (message) => {
+    mount.innerHTML = '<div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; border: 1px solid #fecaca; border-radius: 12px; padding: 14px; color: #b91c1c;">'
+      + String(message || 'Widget failed to load.')
+      + '</div>';
+  };
+
+  const bootstrap = async () => {
+    const response = await fetch(base + '/embed/widget-bootstrap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: bootstrapToken }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.message || 'Widget bootstrap failed');
+    }
+    const sessionToken = payload?.data?.sessionToken || '';
+    if (!sessionToken) {
+      throw new Error('Widget session token missing');
+    }
+    return sessionToken;
+  };
+
+  bootstrap()
+    .then((sessionToken) => {
+      const frame = document.createElement('iframe');
+      frame.src = widgetUrl;
+      frame.name = JSON.stringify({ sessionToken });
+      frame.loading = 'lazy';
+      frame.style.width = '100%';
+      frame.style.minHeight = '620px';
+      frame.style.border = '0';
+      frame.style.borderRadius = '12px';
+      mount.replaceChildren(frame);
+    })
+    .catch((error) => {
+      showError(error.message || 'Widget failed to load.');
+    });
+})();
+</script>`;
 
 const createWidgetSessionTokenController = async (req, res) => {
     try {
@@ -67,14 +131,20 @@ const createWidgetSessionTokenController = async (req, res) => {
         });
 
         const baseUrl = String(payload.baseUrl || '').trim() || `${req.protocol}://${req.get('host')}`;
-        const scriptUrl = `${baseUrl.replace(/\/$/, '')}/embed/hire-widget.js?token=${encodeURIComponent(token)}`;
+        const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+        const scriptUrl = `${normalizedBaseUrl}/embed/hire-widget.js`;
+        const matchWidgetUrl = `${normalizedBaseUrl}/embed/match-widget`;
 
         return res.json({
             success: true,
             data: {
                 token,
                 scriptUrl,
-                embedCode: `<script src="${scriptUrl}" async></script><div data-hire-widget></div>`,
+                bootstrapUrl: `${normalizedBaseUrl}/embed/widget-bootstrap`,
+                matchWidgetUrl,
+                previewUrl: matchWidgetUrl,
+                embedCode: `<script src="${scriptUrl}" data-hire-widget-token="${token}" async></script><div data-hire-widget></div>`,
+                iframeCode: buildIframeCode({ baseUrl: normalizedBaseUrl, matchWidgetUrl, token }),
                 expiresInSeconds: Number(payload.ttlSeconds || process.env.WIDGET_TOKEN_TTL_SECONDS || 1800),
             },
         });
@@ -83,17 +153,47 @@ const createWidgetSessionTokenController = async (req, res) => {
     }
 };
 
-const serveHireWidgetScript = async (req, res) => {
-    const token = String(req.query.token || '').trim();
-    if (!token) {
-        return res.status(400).type('application/javascript').send('console.warn("Hire widget token is required");');
-    }
+const bootstrapWidgetSessionController = async (req, res) => {
+    try {
+        const bootstrapToken = resolveBootstrapTokenFromRequest(req);
+        if (!bootstrapToken) {
+            return res.status(400).json({ message: 'Widget token is required' });
+        }
 
+        const requestDomain = resolveWidgetRequestDomain(req);
+        const { apiKeyDoc, tokenPayload } = await resolveApiKeyFromWidgetToken({
+            token: bootstrapToken,
+            requestDomain,
+        });
+
+        const sessionToken = createWidgetSessionToken({
+            apiKeyId: apiKeyDoc._id,
+            ownerId: tokenPayload?.ownerId || apiKeyDoc.ownerId || apiKeyDoc.employerId || null,
+            tenantId: tokenPayload?.tenantId || apiKeyDoc.organization || null,
+        });
+
+        res.set('Cache-Control', 'no-store');
+        return res.json({
+            success: true,
+            data: {
+                sessionToken,
+                expiresInSeconds: SESSION_TOKEN_TTL_SECONDS,
+            },
+        });
+    } catch (error) {
+        return res.status(401).json({ message: error.message || 'Failed to bootstrap widget session' });
+    }
+};
+
+const serveHireWidgetScript = async (req, res) => {
     const script = `(() => {
-  const token = ${escapeJs(token)};
   const currentScript = document.currentScript || document.querySelector('script[src*=\"/embed/hire-widget.js\"]');
   const base = currentScript ? new URL(currentScript.src).origin : window.location.origin;
+  const bootstrapToken = (currentScript && currentScript.dataset && currentScript.dataset.hireWidgetToken)
+    || (currentScript ? new URL(currentScript.src).searchParams.get('token') : '')
+    || '';
   const state = { jobs: [] };
+  let sessionToken = '';
 
   const root = document.querySelector('[data-hire-widget]') || (() => {
     const el = document.createElement('div');
@@ -102,12 +202,41 @@ const serveHireWidgetScript = async (req, res) => {
     return el;
   })();
 
+  const showError = (message) => {
+    root.innerHTML = '<div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; border: 1px solid #fecaca; border-radius: 10px; padding: 12px; color: #b91c1c;">'
+      + String(message || 'Widget failed to load.')
+      + '</div>';
+  };
+
   root.innerHTML = '<div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; border: 1px solid #d0d7de; border-radius: 10px; padding: 12px;"><strong>Loading jobs...</strong></div>';
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Widget-Token': token,
+  const bootstrapSession = async () => {
+    if (!bootstrapToken) {
+      throw new Error('Hire widget token is required');
+    }
+
+    const response = await fetch(base + '/embed/widget-bootstrap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: bootstrapToken }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.message || 'Widget bootstrap failed');
+    }
+
+    const nextToken = payload?.data?.sessionToken || '';
+    if (!nextToken) {
+      throw new Error('Widget session token missing');
+    }
+    sessionToken = nextToken;
+    return nextToken;
   };
+
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    'X-Widget-Token': sessionToken,
+  });
 
   const renderJobs = () => {
     const cards = state.jobs.map((job) => {
@@ -163,7 +292,7 @@ const serveHireWidgetScript = async (req, res) => {
       try {
         const response = await fetch(base + '/api/v3/public/applications', {
           method: 'POST',
-          headers,
+          headers: getHeaders(),
           body: JSON.stringify(payload),
         });
         const data = await response.json();
@@ -177,14 +306,18 @@ const serveHireWidgetScript = async (req, res) => {
     });
   };
 
-  fetch(base + '/api/v3/public/jobs?limit=10', { headers })
-    .then((response) => response.json())
-    .then((payload) => {
+  bootstrapSession()
+    .then(() => fetch(base + '/api/v3/public/jobs?limit=10', { headers: getHeaders() }))
+    .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+    .then(({ ok, payload }) => {
+      if (!ok) {
+        throw new Error(payload.message || 'Widget failed to load jobs');
+      }
       state.jobs = Array.isArray(payload.data) ? payload.data : [];
       renderJobs();
     })
     .catch((error) => {
-      root.innerHTML = '<div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; border: 1px solid #fecaca; border-radius: 10px; padding: 12px; color: #b91c1c;">Widget failed: ' + (error.message || 'Unknown error') + '</div>';
+      showError(error.message || 'Unknown error');
     });
 })();`;
 
@@ -194,6 +327,7 @@ const serveHireWidgetScript = async (req, res) => {
 };
 
 module.exports = {
+    bootstrapWidgetSessionController,
     createWidgetSessionTokenController,
     serveHireWidgetScript,
 };

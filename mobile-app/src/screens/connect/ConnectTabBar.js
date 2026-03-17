@@ -1,7 +1,7 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import React, { memo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { MOTION } from '../../theme/motion';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const TAB_META = {
     Feed: { icon: 'newspaper-outline', iconActive: 'newspaper' },
@@ -11,58 +11,43 @@ const TAB_META = {
     Bounties: { icon: 'trophy-outline', iconActive: 'trophy' },
 };
 
-function TabButton({ tab, active, onPress }) {
-    const scale = useRef(new Animated.Value(active ? 1 : 0.96)).current;
-    const opacity = useRef(new Animated.Value(active ? 1 : 0.8)).current;
-    const tabMeta = TAB_META[tab] || TAB_META.Feed;
-    const iconName = active ? tabMeta.iconActive : tabMeta.icon;
-
-    useEffect(() => {
-        Animated.parallel([
-            Animated.spring(scale, {
-                toValue: active ? 1 : 0.96,
-                stiffness: 220,
-                damping: 18,
-                mass: 0.85,
-                useNativeDriver: true,
-            }),
-            Animated.timing(opacity, {
-                toValue: active ? 1 : 0.8,
-                duration: MOTION.tabTransitionMs,
-                useNativeDriver: true,
-            }),
-        ]).start();
-    }, [active, opacity, scale]);
-
-    return (
-        <TouchableOpacity
-            style={[styles.tabButton, active && styles.tabButtonActive]}
-            onPress={onPress}
-            activeOpacity={0.82}
-        >
-            <Animated.View style={{ transform: [{ scale }], opacity, alignItems: 'center' }}>
-                <Ionicons name={iconName} size={16} color={active ? '#ffffff' : '#5b4b7c'} />
-                <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>
-                    {tab}
-                </Text>
-            </Animated.View>
-        </TouchableOpacity>
-    );
-}
-
 function ConnectTabBarComponent({ tabs, activeTab, onTabPress }) {
     const safeTabs = Array.isArray(tabs) ? tabs : [];
-    const handleTabPress = useCallback((tab) => onTabPress(tab), [onTabPress]);
 
     return (
         <View style={styles.container}>
             <View style={styles.tabRow}>
                 {safeTabs.map((tab) => {
                     const isActive = activeTab === tab;
+                    const meta = TAB_META[tab] || { icon: 'document-outline', iconActive: 'document' };
+                    
                     return (
-                        <View key={tab} style={styles.tabSlot}>
-                            <TabButton tab={tab} active={isActive} onPress={() => handleTabPress(tab)} />
-                        </View>
+                        <TouchableOpacity
+                            key={tab}
+                            style={styles.tabButton}
+                            onPress={() => onTabPress(tab)}
+                            activeOpacity={0.6}
+                        >
+                            <View style={styles.iconContainer}>
+                                {isActive ? (
+                                    <LinearGradient
+                                        colors={['#9333ea', '#7e22ce', '#6b21a8']}
+                                        style={styles.activeIconBubble}
+                                        start={{x: 0, y: 0}}
+                                        end={{x: 1, y: 1}}
+                                    >
+                                        <Ionicons name={meta.iconActive} size={18} color="#ffffff" />
+                                    </LinearGradient>
+                                ) : (
+                                    <View style={styles.inactiveIconBubble}>
+                                        <Ionicons name={meta.icon} size={22} color="#64748b" />
+                                    </View>
+                                )}
+                            </View>
+                            <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                                {tab}
+                            </Text>
+                        </TouchableOpacity>
                     );
                 })}
             </View>
@@ -74,53 +59,67 @@ export default memo(ConnectTabBarComponent);
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: '#f4edff',
-        paddingHorizontal: 12,
-        paddingTop: 6,
-        paddingBottom: 10,
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 8,
+        paddingBottom: 12,
+        paddingTop: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.02,
+        shadowRadius: 4,
+        elevation: 2,
+        zIndex: 10,
     },
     tabRow: {
         flexDirection: 'row',
-        alignItems: 'stretch',
-        borderRadius: 18,
-        backgroundColor: '#efe5ff',
-        borderWidth: 1,
-        borderColor: '#e1d0ff',
-        paddingHorizontal: 5,
-        paddingVertical: 6,
-        gap: 4,
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 9,
-        elevation: 1,
-    },
-    tabSlot: {
-        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
     },
     tabButton: {
-        minHeight: 50,
-        borderRadius: 13,
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 6,
+        gap: 6,
     },
-    tabButtonActive: {
-        backgroundColor: '#7c3aed',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.16,
-        shadowRadius: 8,
-        elevation: 3,
+    iconContainer: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    activeIconBubble: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#9333ea',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 10,
+        elevation: 4,
+    },
+    inactiveIconBubble: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#f1f5f9',
     },
     tabText: {
-        marginTop: 4,
-        color: '#5b4b7c',
-        fontSize: 10.5,
+        fontSize: 10,
         fontWeight: '700',
-        letterSpacing: 0.1,
+        color: '#64748b',
+        letterSpacing: 0.2,
     },
     tabTextActive: {
-        color: '#ffffff',
+        color: '#9333ea',
+        fontWeight: '800',
     },
 });

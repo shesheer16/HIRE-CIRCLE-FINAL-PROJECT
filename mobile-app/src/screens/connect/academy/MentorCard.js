@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { RADIUS } from '../../../theme/theme';
-import { connectPalette, connectShadow } from '../connectPalette';
+import { connectPalette } from '../connectPalette';
 
 function MentorCardComponent({ mentor, isConnected, onConnect }) {
     const safeMentor = (mentor && typeof mentor === 'object') ? mentor : {};
@@ -52,28 +52,42 @@ const styles = StyleSheet.create({
     card: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 16,
-        backgroundColor: '#f6f2ff',
+        gap: 14,
+        backgroundColor: '#ffffff',
         borderWidth: 1,
-        borderColor: connectPalette.line,
-        borderRadius: RADIUS.xl,
-        padding: 16,
+        borderColor: '#efe9f8',
+        borderRadius: 20,
+        padding: 14,
         marginBottom: 12,
-        ...connectShadow,
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 18,
+        elevation: 2,
     },
     avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: RADIUS.md,
+        width: 44,
+        height: 44,
+        borderRadius: RADIUS.full,
+        borderWidth: 1,
+        borderColor: '#e6def8',
+        backgroundColor: '#f3eef8',
     },
     main: {
         flex: 1,
     },
     skillLabel: {
-        fontSize: 10,
-        fontWeight: '900',
-        color: connectPalette.accentDark,
-        marginBottom: 4,
+        alignSelf: 'flex-start',
+        fontSize: 9.5,
+        fontWeight: '800',
+        color: '#6a41d8',
+        backgroundColor: '#f8f4ff',
+        borderWidth: 1,
+        borderColor: '#eadcfb',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 999,
+        marginBottom: 6,
     },
     nameText: {
         fontSize: 14,
@@ -81,33 +95,33 @@ const styles = StyleSheet.create({
         color: connectPalette.text,
     },
     metaText: {
-        fontSize: 9,
-        color: connectPalette.subtle,
+        fontSize: 10,
+        color: '#7c8398',
         marginTop: 2,
     },
     reasonText: {
-        marginTop: 4,
+        marginTop: 6,
         fontSize: 10,
-        color: connectPalette.muted,
-        lineHeight: 14,
+        color: '#8a91a3',
+        lineHeight: 15,
     },
     connectButton: {
-        backgroundColor: connectPalette.accent,
-        paddingHorizontal: 16,
+        backgroundColor: '#6f4cf6',
+        paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: RADIUS.md,
+        borderRadius: 999,
     },
     connectButtonDone: {
-        backgroundColor: connectPalette.surface,
+        backgroundColor: '#f7f3fc',
         borderWidth: 1,
-        borderColor: connectPalette.accentSoftAlt,
+        borderColor: '#ebe2f8',
     },
     connectButtonText: {
-        fontSize: 10,
-        fontWeight: '900',
+        fontSize: 10.5,
+        fontWeight: '800',
         color: connectPalette.surface,
     },
     connectButtonTextDone: {
-        color: connectPalette.accentDark,
+        color: '#6a41d8',
     },
 });

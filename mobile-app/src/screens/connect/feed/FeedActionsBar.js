@@ -2,7 +2,7 @@ import React, { memo, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MOTION } from '../../../theme/motion';
-import { RADIUS } from '../../../theme/theme';
+import { RADIUS, SCREEN_CHROME } from '../../../theme/theme';
 
 const formatCompactNumber = (value) => {
     const safeValue = Number(value || 0);
@@ -88,7 +88,7 @@ function FeedActionsBarComponent({
         onToggleSave?.(postId, post);
     }, [onToggleSave, postId, post]);
 
-    const iconColor = '#111111';
+    const iconColor = '#1f2435';
     const likeIconColor = isLiked ? '#ef4444' : iconColor;
     const vouchIconColor = vouched ? '#7c3aed' : iconColor;
     const saveIconColor = isSaved ? '#7c3aed' : iconColor;
@@ -98,35 +98,34 @@ function FeedActionsBarComponent({
             <View style={styles.iconRow}>
                 <View style={styles.leftIconRow}>
                     <ActionIconButton onPress={handleLike}>
-                        <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={24} color={likeIconColor} />
+                        <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={20} color={likeIconColor} />
+                        <Text style={[styles.actionLabel, isLiked && styles.actionLabelLiked]}>
+                            {safeLikes > 0 ? formatCompactNumber(safeLikes) : 'Like'}
+                        </Text>
                     </ActionIconButton>
                     <ActionIconButton onPress={handleComment}>
-                        <Ionicons name="chatbubble-outline" size={22} color={iconColor} />
+                        <Ionicons name="chatbubble-outline" size={20} color={iconColor} />
+                        <Text style={styles.actionLabel}>
+                            {safeComments > 0 ? formatCompactNumber(safeComments) : 'Comment'}
+                        </Text>
                     </ActionIconButton>
                     <ActionIconButton onPress={handleVouch}>
-                        <Ionicons name={vouched ? 'ribbon' : 'ribbon-outline'} size={22} color={vouchIconColor} />
+                        <Ionicons name={vouched ? 'ribbon' : 'ribbon-outline'} size={20} color={vouchIconColor} />
+                        <Text style={[styles.actionLabel, vouched && styles.actionLabelVouched]}>
+                            {safeVouches > 0 ? formatCompactNumber(safeVouches) : 'Vouch'}
+                        </Text>
                     </ActionIconButton>
                 </View>
                 <ActionIconButton onPress={handleSave}>
-                    <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={22} color={saveIconColor} />
+                    <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={20} color={saveIconColor} />
                 </ActionIconButton>
             </View>
 
-            <Text style={styles.likesText}>{formatCompactNumber(safeLikes)} likes</Text>
-
-            <TouchableOpacity activeOpacity={0.82} onPress={handleComment}>
-                <Text style={styles.commentsText}>
-                    {safeComments > 0
-                        ? `View all ${formatCompactNumber(safeComments)} comments`
-                        : 'Add a comment...'}
-                </Text>
-            </TouchableOpacity>
-
-            <View style={styles.statsRow}>
-                <Text style={styles.statText}>{formatCompactNumber(safeVouches)} vouch{safeVouches === 1 ? '' : 'es'}</Text>
-                <Text style={styles.statDot}>•</Text>
-                <Text style={styles.statText}>{formatCompactNumber(safeViews)} views</Text>
-            </View>
+            {safeViews > 0 ? (
+                <TouchableOpacity style={styles.metaRow} activeOpacity={0.82} onPress={handleComment}>
+                    <Text style={styles.metaText}>{formatCompactNumber(safeViews)} views</Text>
+                </TouchableOpacity>
+            ) : null}
         </View>
     );
 }
@@ -136,7 +135,7 @@ export default memo(FeedActionsBarComponent);
 const styles = StyleSheet.create({
     container: {
         marginTop: 6,
-        gap: 4,
+        gap: 8,
     },
     iconRow: {
         flexDirection: 'row',
@@ -146,38 +145,33 @@ const styles = StyleSheet.create({
     leftIconRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 2,
+        gap: 16,
     },
     iconButton: {
-        width: 36,
-        height: 36,
-        borderRadius: RADIUS.full,
+        minHeight: 32,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    likesText: {
-        color: '#111111',
-        fontSize: 12.5,
-        fontWeight: '700',
-    },
-    commentsText: {
-        color: '#5b21b6',
-        fontSize: 12,
-        fontWeight: '600',
-    },
-    statsRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
+        gap: 6,
+        paddingHorizontal: 4,
     },
-    statText: {
-        color: '#4b5563',
-        fontSize: 10.5,
+    actionLabel: {
+        color: '#475569',
+        fontSize: 13,
         fontWeight: '600',
     },
-    statDot: {
-        color: '#9ca3af',
-        fontSize: 10,
+    actionLabelLiked: {
+        color: '#ec4899',
+    },
+    actionLabelVouched: {
+        color: '#8b5cf6',
+    },
+    metaRow: {
+        paddingHorizontal: 4,
+    },
+    metaText: {
+        color: '#94a3b8',
+        fontSize: 11,
         fontWeight: '700',
     },
 });

@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../store/AppStore';
 
 export default function OfflineBanner() {
-    const { isOnline } = useAppStore();
+    const isOnline = useAppStore(state => state.isOnline);
     // Position it out of frame by default
     const [translateY] = useState(new Animated.Value(-150));
     const insets = useSafeAreaInsets();

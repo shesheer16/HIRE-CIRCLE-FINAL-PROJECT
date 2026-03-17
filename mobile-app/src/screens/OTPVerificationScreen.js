@@ -1,22 +1,16 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Animated,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+    ActivityIndicator, Animated, Alert, KeyboardAvoidingView, Platform,
+    StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
-import { navigateToWelcomeFallback } from '../utils/authNavigation';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
 import CelebrationConfetti from '../components/CelebrationConfetti';
+import { PALETTE, RADIUS, SPACING, SHADOWS } from '../theme/theme';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -24,6 +18,10 @@ const RESEND_COOLDOWN_SECONDS = 30;
 export default function OTPVerificationScreen({ route, navigation }) {
     const insets = useSafeAreaInsets();
     const { login } = useContext(AuthContext);
+    const selectedRole = useMemo(() => {
+        const rawRole = String(route.params?.selectedRole || '').trim();
+        return rawRole ? normalizeSelectedRole(rawRole) : null;
+    }, [route.params?.selectedRole]);
     const intent = useMemo(
         () => String(route.params?.intent || '').trim().toLowerCase(),
         [route.params?.intent],
@@ -33,11 +31,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
         const kind = String(incoming.kind || (route.params?.phone ? 'phone' : 'email')).toLowerCase();
         const value = String(incoming.value || route.params?.phone || route.params?.phoneNumber || route.params?.email || '').trim();
         const label = String(incoming.label || value);
-        return {
-            kind: kind === 'phone' ? 'phone' : 'email',
-            value,
-            label,
-        };
+        return { kind: kind === 'phone' ? 'phone' : 'email', value, label };
     }, [route.params]);
     const otpPayload = useMemo(() => (
         identity.kind === 'phone'
@@ -72,10 +66,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
         setResendTimer(RESEND_COOLDOWN_SECONDS);
         intervalRef.current = setInterval(() => {
             setResendTimer((current) => {
-                if (current <= 1) {
-                    clearTimer();
-                    return 0;
-                }
+                if (current <= 1) { clearTimer(); return 0; }
                 return current - 1;
             });
         }, 1000);
@@ -83,35 +74,24 @@ export default function OTPVerificationScreen({ route, navigation }) {
 
     useEffect(() => {
         setErrorText(String(route.params?.initialError || '').trim());
-        if (initialOtpDispatched) {
-            startTimer();
-        } else {
-            clearTimer();
-            setResendTimer(0);
-        }
+        if (initialOtpDispatched) { startTimer(); }
+        else { clearTimer(); setResendTimer(0); }
         return () => clearTimer();
     }, [clearTimer, initialOtpDispatched, route.params?.initialError, startTimer]);
 
     const handleBackPress = useCallback(() => {
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-            return;
-        }
-
-        navigateToWelcomeFallback(navigation);
-    }, [navigation]);
+        handleAuthBackNavigation(navigation, { selectedRole, target: 'Login' });
+    }, [navigation, selectedRole]);
 
     const handleOtpChange = useCallback((text, index) => {
         const digit = String(text || '').replace(/\D/g, '').slice(-1);
         setErrorText('');
-
         setOtpDigits((current) => {
             const next = [...current];
             next[index] = digit;
             otpCodeRef.current = next.join('');
             return next;
         });
-
         if (digit && index < OTP_LENGTH - 1) {
             otpRefs.current[index + 1]?.current?.focus();
         }
@@ -128,12 +108,10 @@ export default function OTPVerificationScreen({ route, navigation }) {
             setErrorText('Enter all 6 digits to continue.');
             return;
         }
-
         if (!identity.value) {
             setErrorText('Missing account identity for verification.');
             return;
         }
-
         setErrorText('');
         setLoading(true);
 
@@ -142,17 +120,11 @@ export default function OTPVerificationScreen({ route, navigation }) {
             successScale.setValue(0.9);
             Animated.sequence([
                 Animated.spring(successScale, {
-                    toValue: 1,
-                    stiffness: 200,
-                    damping: 14,
-                    mass: 0.8,
+                    toValue: 1, stiffness: 200, damping: 14, mass: 0.8,
                     useNativeDriver: true,
                 }),
                 Animated.delay(220),
-            ]).start(() => {
-                setShowSuccess(false);
-                onDone?.();
-            });
+            ]).start(() => { setShowSuccess(false); onDone?.(); });
         };
 
         try {
@@ -161,32 +133,27 @@ export default function OTPVerificationScreen({ route, navigation }) {
                 otp: otpCodeRef.current,
                 intent: intent === 'signup' ? 'signup' : undefined,
             });
-
             if ((intent === 'signup' || intent === 'signin' || intent === 'login') && data?.token) {
                 runSuccessTransition(() => {
-                    login(data);
+                    login(data, selectedRole ? { authEntryRole: selectedRole } : undefined);
                 });
                 return;
             }
-
             runSuccessTransition(() => {
-                Alert.alert('Verified', 'Verification complete.', [
-                    { text: 'Continue', onPress: () => navigation.navigate('Login') },
-                ]);
+                Alert.alert('Verified', 'Verification complete.', [{
+                    text: 'Continue',
+                    onPress: () => navigation.navigate('Login', selectedRole ? { selectedRole } : undefined),
+                }]);
             });
         } catch (error) {
             setErrorText(error?.response?.data?.message || 'Invalid OTP. Please try again.');
-        } finally {
-            setLoading(false);
-        }
-    }, [identity.value, intent, login, navigation, otpPayload, successScale]);
+        } finally { setLoading(false); }
+    }, [identity.value, intent, login, navigation, otpPayload, selectedRole, successScale]);
 
     const resendOtp = useCallback(async () => {
         if (loading || resendTimer > 0 || !identity.value) return;
-
         setLoading(true);
         setErrorText('');
-
         try {
             await client.post('/api/auth/send-otp', otpPayload);
             setOtpDigits(Array(OTP_LENGTH).fill(''));
@@ -195,9 +162,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
             otpRefs.current[0]?.current?.focus();
         } catch (error) {
             setErrorText(error?.response?.data?.message || 'Could not resend OTP.');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     }, [identity.value, loading, otpPayload, resendTimer, startTimer]);
 
     return (
@@ -205,12 +170,20 @@ export default function OTPVerificationScreen({ route, navigation }) {
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-            <View style={[styles.content, { paddingTop: insets.top + 16 }]}> 
-                <TouchableOpacity style={styles.backBtn} onPress={handleBackPress} activeOpacity={0.75}>
-                    <Ionicons name="arrow-back" size={18} color="#334155" />
-                    <Text style={styles.backBtnText}>Back</Text>
+            <View style={[styles.content, { paddingTop: insets.top + 12 }]}>
+                {/* Back */}
+                <TouchableOpacity style={styles.backBtn} onPress={handleBackPress} activeOpacity={0.7}>
+                    <Ionicons name="chevron-back" size={22} color={PALETTE.textPrimary} />
                 </TouchableOpacity>
 
+                {/* Icon */}
+                <View style={styles.iconSection}>
+                    <View style={styles.iconWrap}>
+                        <Ionicons name="keypad-outline" size={32} color={PALETTE.accent} />
+                    </View>
+                </View>
+
+                {/* Title */}
                 <Text style={styles.title}>Enter OTP</Text>
                 <Text style={styles.meta}>
                     {initialOtpDispatched
@@ -218,12 +191,13 @@ export default function OTPVerificationScreen({ route, navigation }) {
                         : `We could not send an OTP to ${identity.label || 'your account'}. Tap Resend OTP after fixing your email service.`}
                 </Text>
 
+                {/* OTP boxes */}
                 <View style={styles.otpRow}>
                     {otpDigits.map((digit, index) => (
                         <TextInput
                             key={`otp-box-${index}`}
                             ref={otpRefs.current[index]}
-                            style={styles.otpBox}
+                            style={[styles.otpBox, digit && styles.otpBoxFilled]}
                             keyboardType="number-pad"
                             maxLength={1}
                             value={digit}
@@ -235,34 +209,47 @@ export default function OTPVerificationScreen({ route, navigation }) {
                     ))}
                 </View>
 
+                {/* Resend row */}
                 <View style={styles.resendRow}>
-                    <Text style={styles.resendMeta}>Didn&apos;t receive OTP?</Text>
-                    <TouchableOpacity onPress={resendOtp} disabled={loading || resendTimer > 0}>
-                        <Text style={styles.resendAction}>{resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}</Text>
+                    <Text style={styles.resendMeta}>Didn't receive OTP?</Text>
+                    <TouchableOpacity onPress={resendOtp} disabled={loading || resendTimer > 0} activeOpacity={0.7}>
+                        <Text style={[styles.resendAction, (resendTimer > 0) && styles.resendActionDisabled]}>
+                            {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
+                {/* Error */}
                 {errorText ? (
                     <View style={styles.errorBox}>
+                        <Ionicons name="alert-circle-outline" size={14} color={PALETTE.error} />
                         <Text style={styles.errorText}>{errorText}</Text>
                     </View>
                 ) : null}
 
+                {/* Verify button */}
                 <TouchableOpacity
-                    style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
+                    style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
                     onPress={verifyOtp}
                     disabled={loading || showSuccess}
-                    activeOpacity={0.9}
+                    activeOpacity={0.88}
                 >
-                    {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>Verify OTP</Text>}
+                    {loading ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                        <Text style={styles.primaryBtnText}>Verify OTP</Text>
+                    )}
                 </TouchableOpacity>
             </View>
 
+            {/* Success overlay */}
             {showSuccess ? (
                 <View style={styles.successOverlay} pointerEvents="none">
                     <CelebrationConfetti visible={showSuccess} />
                     <Animated.View style={[styles.successCard, { transform: [{ scale: successScale }] }]}>
-                        <Ionicons name="checkmark-circle" size={56} color="#22c55e" />
+                        <View style={styles.successCheckWrap}>
+                            <Ionicons name="checkmark" size={32} color="#FFFFFF" />
+                        </View>
                         <Text style={styles.successTitle}>Verified</Text>
                         <Text style={styles.successSub}>Account secured. Launching your workspace...</Text>
                     </Animated.View>
@@ -273,130 +260,103 @@ export default function OTPVerificationScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f5f7fa',
-    },
-    content: {
-        flex: 1,
-        paddingHorizontal: 24,
-    },
+    container: { flex: 1, backgroundColor: PALETTE.background },
+    content: { flex: 1, paddingHorizontal: 24 },
     backBtn: {
-        minHeight: 44,
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        marginBottom: 28,
+        width: 44, height: 44,
+        alignItems: 'center', justifyContent: 'center',
+        alignSelf: 'flex-start', marginBottom: 16,
     },
-    backBtnText: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#334155',
+    iconSection: { alignItems: 'center', marginBottom: 20 },
+    iconWrap: {
+        width: 72, height: 72, borderRadius: 36,
+        backgroundColor: PALETTE.accentSoft,
+        borderWidth: 1, borderColor: PALETTE.accentBorder,
+        alignItems: 'center', justifyContent: 'center',
     },
     title: {
-        fontSize: 26,
-        fontWeight: '700',
-        color: '#0f172a',
-        marginBottom: 8,
-        letterSpacing: -0.2,
+        fontSize: 26, fontWeight: '800',
+        color: PALETTE.textPrimary, textAlign: 'center',
+        letterSpacing: -0.5, marginBottom: 8,
     },
     meta: {
-        fontSize: 14,
-        fontWeight: '400',
-        color: '#64748b',
-        marginBottom: 20,
+        fontSize: 14, fontWeight: '400',
+        color: PALETTE.textSecondary, textAlign: 'center',
+        marginBottom: 28, lineHeight: 20,
     },
     otpRow: {
-        flexDirection: 'row',
-        gap: 8,
-        marginBottom: 16,
+        flexDirection: 'row', gap: 10, marginBottom: 20,
     },
     otpBox: {
-        flex: 1,
-        minHeight: 52,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d1d9e4',
-        backgroundColor: '#ffffff',
-        fontSize: 18,
-        fontWeight: '500',
-        color: '#0f172a',
+        flex: 1, minHeight: 56, borderRadius: RADIUS.md,
+        borderWidth: 1.5, borderColor: PALETTE.separator,
+        backgroundColor: PALETTE.backgroundSoft,
+        fontSize: 22, fontWeight: '700',
+        color: PALETTE.textPrimary,
+    },
+    otpBoxFilled: {
+        borderColor: PALETTE.accent,
+        backgroundColor: PALETTE.accentTint,
     },
     resendRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
+        flexDirection: 'row', justifyContent: 'space-between',
+        alignItems: 'center', marginBottom: 20,
     },
     resendMeta: {
-        fontSize: 12,
-        color: '#64748b',
-        fontWeight: '400',
+        fontSize: 13, color: PALETTE.textSecondary, fontWeight: '400',
     },
     resendAction: {
-        fontSize: 12,
-        color: '#1d4ed8',
-        fontWeight: '500',
+        fontSize: 13, color: PALETTE.accentDeep, fontWeight: '700',
+    },
+    resendActionDisabled: {
+        color: PALETTE.textTertiary,
     },
     errorBox: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e8c7cb',
-        backgroundColor: '#fcf3f4',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        marginBottom: 16,
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        borderRadius: RADIUS.md, borderWidth: 1,
+        borderColor: PALETTE.errorSoft,
+        backgroundColor: PALETTE.errorSoft,
+        paddingHorizontal: 14, paddingVertical: 12,
+        marginBottom: 20,
     },
     errorText: {
-        color: '#8f4b53',
-        fontSize: 12,
-        fontWeight: '400',
+        color: PALETTE.error, fontSize: 13, fontWeight: '500',
+        flex: 1,
     },
-    primaryButton: {
-        minHeight: 52,
-        borderRadius: 14,
-        backgroundColor: '#1d4ed8',
-        alignItems: 'center',
-        justifyContent: 'center',
+    primaryBtn: {
+        minHeight: 52, borderRadius: RADIUS.full,
+        backgroundColor: PALETTE.accent,
+        alignItems: 'center', justifyContent: 'center',
+        ...SHADOWS.accent,
     },
-    primaryButtonDisabled: {
-        opacity: 0.72,
-    },
-    primaryButtonText: {
-        color: '#ffffff',
-        fontSize: 15,
-        fontWeight: '600',
+    primaryBtnDisabled: { opacity: 0.60 },
+    primaryBtnText: {
+        color: '#FFFFFF', fontSize: 16, fontWeight: '700',
     },
     successOverlay: {
         ...StyleSheet.absoluteFillObject,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(15, 23, 42, 0.32)',
-        zIndex: 12,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: PALETTE.overlay, zIndex: 12,
     },
     successCard: {
-        minWidth: 250,
-        borderRadius: 20,
-        backgroundColor: '#ffffff',
-        borderWidth: 1,
-        borderColor: '#dcfce7',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 24,
+        minWidth: 260, borderRadius: RADIUS.xl,
+        backgroundColor: PALETTE.surface,
+        borderWidth: 1, borderColor: PALETTE.separator,
+        alignItems: 'center', justifyContent: 'center',
+        paddingHorizontal: 24, paddingVertical: 28,
+        ...SHADOWS.lg,
+    },
+    successCheckWrap: {
+        width: 56, height: 56, borderRadius: 28,
+        backgroundColor: PALETTE.success,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 14,
     },
     successTitle: {
-        marginTop: 10,
-        color: '#166534',
-        fontSize: 20,
-        fontWeight: '800',
+        color: PALETTE.textPrimary, fontSize: 22, fontWeight: '800',
     },
     successSub: {
-        marginTop: 6,
-        color: '#334155',
-        fontSize: 12,
-        fontWeight: '600',
-        textAlign: 'center',
+        marginTop: 6, color: PALETTE.textSecondary,
+        fontSize: 13, fontWeight: '500', textAlign: 'center',
     },
 });

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { PALETTE, RADIUS, SPACING } from '../theme/theme';
 
 const EmptyState = ({ title, message, subtitle, icon = '📭', actionLabel, action, onAction }) => {
     const resolvedMessage = subtitle || message;
@@ -21,7 +22,7 @@ const EmptyState = ({ title, message, subtitle, icon = '📭', actionLabel, acti
             {resolvedMessage ? <Text style={styles.message}>{resolvedMessage}</Text> : null}
 
             {resolvedActionLabel && resolvedAction && (
-                <TouchableOpacity style={styles.button} onPress={resolvedAction}>
+                <TouchableOpacity style={styles.button} onPress={resolvedAction} activeOpacity={0.85}>
                     <Text style={styles.buttonText}>{resolvedActionLabel}</Text>
                 </TouchableOpacity>
             )}
@@ -34,47 +35,52 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 32,
-        paddingVertical: 40,
+        paddingHorizontal: SPACING.xl,
+        paddingVertical: SPACING.xxl,
         minHeight: 300,
+        backgroundColor: PALETTE.background,
     },
     iconContainer: {
-        marginBottom: 16,
-        opacity: 0.72,
+        marginBottom: SPACING.md,
     },
     iconEmoji: {
-        fontSize: 36,
+        fontSize: 44,
     },
     title: {
-        fontSize: 22,
+        fontSize: 20,
         fontWeight: '700',
-        color: '#0f172a',
-        marginBottom: 8,
+        color: PALETTE.textPrimary,
+        marginBottom: SPACING.sm,
         textAlign: 'center',
+        letterSpacing: -0.3,
     },
     message: {
         fontSize: 14,
-        color: '#64748b',
+        color: PALETTE.textSecondary,
         textAlign: 'center',
-        lineHeight: 20,
-        marginBottom: 24,
+        lineHeight: 21,
+        marginBottom: SPACING.lg,
     },
     button: {
-        backgroundColor: '#7c3aed',
-        paddingHorizontal: 24,
+        backgroundColor: PALETTE.accent,
+        paddingHorizontal: SPACING.xl,
         paddingVertical: 14,
-        borderRadius: 12,
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
-        shadowRadius: 8,
-        elevation: 3,
+        borderRadius: RADIUS.full,
+        minHeight: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: PALETTE.accent,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 12,
+        elevation: 4,
     },
     buttonText: {
-        color: '#ffffff',
+        color: '#FFFFFF',
         fontSize: 15,
-        fontWeight: '600',
-    }
+        fontWeight: '700',
+        letterSpacing: 0.1,
+    },
 });
 
 export default EmptyState;

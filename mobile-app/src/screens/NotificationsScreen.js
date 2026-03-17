@@ -6,9 +6,13 @@ import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import SkeletonLoader from '../components/SkeletonLoader';
 import EmptyState from '../components/EmptyState';
+import CharmTitle from '../components/CharmTitle';
 import { validateNotificationsResponse, logValidationError } from '../utils/apiValidator';
 import { useAppStore } from '../store/AppStore';
 import { logger } from '../utils/logger';
+import { PALETTE } from '../theme/theme';
+import { SCREENSHOT_MOCKS_ENABLED, SCREENSHOT_NOTIFICATIONS } from '../config/screenshotMocks';
+const LOADING_CAP_MS = 3000;
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
 const normalizeObjectId = (value) => {
@@ -25,7 +29,9 @@ const normalizeObjectId = (value) => {
 };
 
 export default function NotificationsScreen({ navigation }) {
-    const { setNotificationsCount, activeChatId, role } = useAppStore();
+    const setNotificationsCount = useAppStore(state => state.setNotificationsCount);
+    const activeChatId = useAppStore(state => state.activeChatId);
+    const role = useAppStore(state => state.role);
     const normalizedRole = String(role || '').toLowerCase();
     const isEmployer = normalizedRole === 'employer' || normalizedRole === 'recruiter';
     const [notifications, setNotifications] = useState([]);
@@ -33,16 +39,39 @@ export default function NotificationsScreen({ navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [clearing, setClearing] = useState(false);
     const [error, setError] = useState('');
+    const [status, setStatus] = useState('');
 
     const fetchNotifications = useCallback(async ({ showLoader = true } = {}) => {
+        let loadCap;
         try {
-            if (showLoader) {
+            if (SCREENSHOT_MOCKS_ENABLED) {
+                setNotifications(SCREENSHOT_NOTIFICATIONS);
+                setNotificationsCount(SCREENSHOT_NOTIFICATIONS.filter((item) => !item.isRead).length);
+                setLoading(false);
+                setRefreshing(false);
+                setError('');
+                setStatus('');
+                return;
+            }
+            const useLoader = showLoader || (notifications.length === 0 && loading);
+            if (useLoader) {
                 setLoading(true);
             } else {
                 setRefreshing(true);
             }
             setError('');
-            const { data } = await client.get('/api/notifications', { __skipApiErrorHandler: true });
+            loadCap = setTimeout(() => {
+                setLoading(false);
+                setRefreshing(false);
+                if (notifications.length === 0) {
+                    setStatus('No new notifications right now.');
+                }
+                setError('');
+            }, LOADING_CAP_MS);
+            const { data } = await client.get('/api/notifications', {
+                __skipApiErrorHandler: true,
+                timeout: 6000,
+            });
             const validatedNotifications = validateNotificationsResponse(data);
             setNotifications(validatedNotifications);
             const unreadCount = Number(data?.unreadCount);
@@ -55,20 +84,16 @@ export default function NotificationsScreen({ navigation }) {
             if (fetchError?.name === 'ApiValidationError') {
                 logValidationError(fetchError, '/api/notifications');
             }
-            setNotifications([]);
-            setError('Could not load notifications. Please retry.');
-        } finally {
-            if (showLoader) {
-                setLoading(false);
-            } else {
-                setRefreshing(false);
+            if (notifications.length === 0) {
+                setStatus('No new notifications right now.');
             }
+            setError('');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+            clearTimeout(loadCap);
         }
-    }, [setNotificationsCount]);
-
-    useEffect(() => {
-        fetchNotifications({ showLoader: true });
-    }, [fetchNotifications]);
+    }, [loading, notifications.length, setNotificationsCount]);
 
     useFocusEffect(useCallback(() => {
         fetchNotifications({ showLoader: false });
@@ -143,12 +168,27 @@ export default function NotificationsScreen({ navigation }) {
 
     const getIcon = (type) => {
         switch (type) {
-            case 'match_found': return { name: 'sparkles', color: '#a855f7' };
+            case 'match_found': return { name: 'sparkles', color: PALETTE.accent };
             case 'application_received': return { name: 'document-text', color: '#3b82f6' };
             case 'message_received': return { name: 'chatbubble', color: '#22c55e' };
             case 'status_update': return { name: 'information-circle', color: '#f59e0b' };
-            default: return { name: 'notifications', color: '#64748b' };
+            default: return { name: 'notifications', color: PALETTE.textTertiary };
         }
+    };
+
+    const formatTimeAgo = (dateString) => {
+        const now = new Date();
+        const date = new Date(dateString);
+        const diffMs = now - date;
+        const diffMin = Math.floor(diffMs / 60000);
+        const diffHr = Math.floor(diffMin / 60);
+        const diffDay = Math.floor(diffHr / 24);
+        const diffWeek = Math.floor(diffDay / 7);
+        if (diffMin < 1) return 'now';
+        if (diffMin < 60) return `${diffMin}m`;
+        if (diffHr < 24) return `${diffHr}h`;
+        if (diffDay < 7) return `${diffDay}d`;
+        return `${diffWeek}w`;
     };
 
     const renderItem = ({ item }) => {
@@ -157,22 +197,20 @@ export default function NotificationsScreen({ navigation }) {
             <TouchableOpacity
                 style={[styles.notifCard, !item.isRead && styles.notifCardUnread]}
                 onPress={() => handlePress(item)}
-                activeOpacity={0.7}
+                activeOpacity={0.6}
             >
-                <View style={[styles.iconBox, { backgroundColor: iconConfig.color + '20' }]}>
-                    <Ionicons name={iconConfig.name} size={20} color={iconConfig.color} />
+                <View style={[styles.iconBox, { backgroundColor: iconConfig.color + '14' }]}>
+                    <Ionicons name={iconConfig.name} size={22} color={iconConfig.color} />
                 </View>
                 <View style={styles.notifContent}>
-                    <View style={styles.titleRow}>
-                        <Text style={[styles.notifTitle, !item.isRead && styles.textUnread]}>
-                            {item.title}
-                        </Text>
-                        <Text style={styles.notifTime}>
-                            {new Date(item.createdAt).toLocaleDateString()}
-                        </Text>
-                    </View>
-                    <Text style={[styles.notifMessage, !item.isRead && styles.textUnread]} numberOfLines={2}>
+                    <Text style={[styles.notifTitle, !item.isRead && styles.textUnread]} numberOfLines={1}>
+                        {item.title}
+                    </Text>
+                    <Text style={[styles.notifMessage, !item.isRead && styles.messageUnread]} numberOfLines={2}>
                         {item.message}
+                    </Text>
+                    <Text style={styles.notifTime}>
+                        {formatTimeAgo(item.createdAt)}
                     </Text>
                 </View>
                 {!item.isRead && <View style={styles.unreadDot} />}
@@ -184,49 +222,44 @@ export default function NotificationsScreen({ navigation }) {
         return (
             <SafeAreaView style={styles.container} edges={['top']}>
                 <View style={styles.header}>
-                    <Text style={styles.headerTitle}>Notifications</Text>
+                    <CharmTitle text="Notifications" fontSize={22} fontWeight="800" letterSpacing={-0.4} />
                 </View>
-                <View style={{ padding: 16 }}>
-                    <SkeletonLoader height={80} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={80} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={80} style={{ borderRadius: 12, marginBottom: 12 }} />
-                    <SkeletonLoader height={80} style={{ borderRadius: 12, marginBottom: 12 }} />
+                <View style={styles.skeletonWrap}>
+                    <SkeletonLoader height={72} style={styles.skeletonItem} />
+                    <SkeletonLoader height={72} style={styles.skeletonItem} />
+                    <SkeletonLoader height={72} style={styles.skeletonItem} />
+                    <SkeletonLoader height={72} style={styles.skeletonItem} />
+                    <SkeletonLoader height={72} style={styles.skeletonItem} />
                 </View>
             </SafeAreaView>
         );
     }
 
+    const unreadCount = notifications.filter(n => !n.isRead).length;
+
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Notifications</Text>
+                <CharmTitle text="Notifications" fontSize={22} fontWeight="800" letterSpacing={-0.4} />
                 <View style={styles.headerActions}>
-                    {notifications.some(n => !n.isRead) && (
-                        <TouchableOpacity onPress={markAllRead} style={styles.headerBtn}>
-                            <Text style={styles.markAllText}>Mark all read</Text>
+                    {unreadCount > 0 && (
+                        <TouchableOpacity onPress={markAllRead} style={styles.headerActionBtn} activeOpacity={0.7}>
+                            <Ionicons name="checkmark-done-outline" size={22} color={PALETTE.textPrimary} />
                         </TouchableOpacity>
                     )}
                     {notifications.length > 0 && (
-                        <TouchableOpacity onPress={clearAll} disabled={clearing} style={styles.headerBtn}>
-                            <Ionicons name="trash-outline" size={20} color={clearing ? '#cbd5e1' : '#ef4444'} />
+                        <TouchableOpacity onPress={clearAll} disabled={clearing} style={styles.headerActionBtn} activeOpacity={0.7}>
+                            <Ionicons name="trash-outline" size={20} color={clearing ? PALETTE.textTertiary : PALETTE.textPrimary} />
                         </TouchableOpacity>
                     )}
                 </View>
             </View>
 
-            {error ? (
-                <EmptyState
-                    title="Couldn’t load data"
-                    subtitle="Pull down to refresh."
-                    icon="⚠️"
-                    actionLabel="Retry"
-                    onAction={fetchNotifications}
-                />
-            ) : notifications.length === 0 ? (
+            {error ? null : notifications.length === 0 ? (
                 <EmptyState
                     icon="🔔"
-                    title="You’re all caught up"
-                    subtitle="Notifications appear here when there’s activity"
+                    title="You're all caught up"
+                    subtitle={status || 'Notifications appear here when there is activity.'}
                 />
             ) : (
                 <FlatList
@@ -238,7 +271,7 @@ export default function NotificationsScreen({ navigation }) {
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={() => fetchNotifications({ showLoader: false })}
-                            tintColor="#7c3aed"
+                            tintColor={PALETTE.textPrimary}
                         />
                     }
                     showsVerticalScrollIndicator={false}
@@ -254,90 +287,100 @@ export default function NotificationsScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
+        backgroundColor: PALETTE.surface,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: PALETTE.surface,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: PALETTE.separator,
     },
     headerTitle: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#0f172a',
+        fontSize: 22,
+        fontWeight: '700',
+        color: PALETTE.accent,
+        letterSpacing: -0.3,
     },
-    markAllText: {
-        color: '#7c3aed',
-        fontSize: 14,
-        fontWeight: '600',
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    headerActionBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    skeletonWrap: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
+    },
+    skeletonItem: {
+        borderRadius: 0,
+        marginBottom: 1,
     },
     listContent: {
-        paddingVertical: 12,
+        paddingBottom: 20,
     },
     notifCard: {
         flexDirection: 'row',
-        padding: 16,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
-        alignItems: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        backgroundColor: PALETTE.surface,
+        alignItems: 'flex-start',
     },
     notifCardUnread: {
-        backgroundColor: '#faf5ff',
+        backgroundColor: PALETTE.surface,
     },
     iconBox: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 52,
+        height: 52,
+        borderRadius: 26,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 16,
+        marginRight: 14,
     },
     notifContent: {
         flex: 1,
-    },
-    titleRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 4,
+        paddingTop: 2,
     },
     notifTitle: {
-        fontSize: 16,
-        color: '#334155',
-        fontWeight: '500',
-        flex: 1,
-        marginRight: 8,
+        fontSize: 14,
+        color: PALETTE.textSecondary,
+        fontWeight: '400',
+        lineHeight: 18,
     },
     textUnread: {
-        color: '#0f172a',
-        fontWeight: 'bold',
-    },
-    notifTime: {
-        fontSize: 12,
-        color: '#94a3b8',
+        color: PALETTE.textPrimary,
+        fontWeight: '600',
     },
     notifMessage: {
         fontSize: 14,
-        color: '#64748b',
-        lineHeight: 20,
+        color: PALETTE.textTertiary,
+        lineHeight: 19,
+        marginTop: 2,
+    },
+    messageUnread: {
+        color: PALETTE.textSecondary,
+    },
+    notifTime: {
+        fontSize: 12,
+        color: PALETTE.textTertiary,
+        marginTop: 4,
     },
     unreadDot: {
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: '#9333ea',
-        marginLeft: 12,
+        backgroundColor: '#3b82f6',
+        marginTop: 6,
+        marginLeft: 8,
     },
     emptyState: {
         flex: 1,
@@ -347,7 +390,7 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         marginTop: 16,
-        color: '#94a3b8',
+        color: PALETTE.textTertiary,
         fontSize: 16,
-    }
+    },
 });

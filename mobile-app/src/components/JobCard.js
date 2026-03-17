@@ -1,93 +1,114 @@
 import React, { memo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { AnimatedCard } from './AnimatedCard';
-import { getDisplayScorePercent, getTierDefaultRatio } from '../utils/matchUi';
-import { RADIUS, SHADOWS, SPACING, theme } from '../theme/theme';
-
-const JOB_ACCENT_DARK = '#6d28d9';
-const JOB_ACCENT_BORDER = '#ddd6fe';
-const JOB_ACCENT_TEXT = '#6d28d9';
+import { getDisplayScorePercent } from '../utils/matchUi';
+import { resolveStructuredLocation } from '../utils/locationPresentation';
+import { PALETTE } from '../theme/theme';
 
 const JobCard = ({
     item,
     onPress,
     onReport,
     isReported,
-    showMatchInsights: _showMatchInsights,
+    showMatchInsights = false,
+    contextNote,
+    contextTone = 'info',
 }) => {
     const scorePercent = getDisplayScorePercent(item);
-    const fallbackTierPercent = Math.round(getTierDefaultRatio(item?.tier) * 100);
-    const resolvedScorePercent = scorePercent > 0 ? scorePercent : fallbackTierPercent;
+    const resolvedScorePercent = scorePercent > 0 ? scorePercent : 0;
     const shouldShowMatchBadge = Number.isFinite(resolvedScorePercent) && resolvedScorePercent > 0;
     const salaryLabel = String(item?.salaryRange || 'Salary not shared');
     const postedMeta = String(item?.postedTime || 'Just now');
-    const postedLabel = postedMeta.toLowerCase().startsWith('posted') ? postedMeta : `Posted ${postedMeta}`;
-    const locationLabel = String(item?.location || item?.distanceLabel || 'Location not shared');
-    const skillTags = Array.isArray(item?.requirements)
-        ? item.requirements
-            .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
-            .map((entry) => entry.trim())
-            .slice(0, 3)
-        : [];
+    const structuredLocation = resolveStructuredLocation(item);
+    const locationLabel = String(
+        structuredLocation.locationLabel
+        || item?.location
+        || item?.distanceLabel
+        || 'Location not shared'
+    );
+    const companyLogo = String(
+        item?.companyLogoUrl || item?.logoUrl || ''
+    ).trim();
+    const contextIsWarning = contextTone === 'warning';
 
     return (
         <AnimatedCard
-            style={[
-                styles.card,
-                isReported && styles.cardReported,
-            ]}
+            style={[styles.card, isReported && styles.cardReported]}
             onPress={() => onPress?.(item)}
             onLongPress={() => onReport?.(item)}
         >
-            {shouldShowMatchBadge ? (
-                <LinearGradient
-                    colors={['#ede9fe', '#f5f3ff']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.matchCornerBadge}
-                >
-                    <Text style={styles.matchCornerText}>{resolvedScorePercent}% MATCH</Text>
-                </LinearGradient>
-            ) : null}
-
             {isReported ? (
-                <View style={styles.reportedBadge}>
-                    <Text style={styles.reportedBadgeText}>Reported</Text>
+                <View style={styles.reportedOverlay}>
+                    <Text style={styles.reportedText}>Reported</Text>
                 </View>
             ) : null}
 
-            <View style={[styles.contentWrap, shouldShowMatchBadge && styles.contentWrapWithBadge]}>
-                <Text style={styles.jobTitle} numberOfLines={1}>{item?.title || 'Untitled Job'}</Text>
-                <Text style={styles.companyName} numberOfLines={1}>{item?.companyName || 'Unknown Company'}</Text>
+            {/* Left accent bar */}
+            <View style={styles.accentBar} />
 
-                {skillTags.length ? (
-                    <View style={styles.skillsWrap}>
-                        {skillTags.map((skill, index) => (
-                            <View key={`${item?._id || item?.title || 'job'}-skill-${index}`} style={styles.skillChip}>
-                                <Text style={styles.skillChipText} numberOfLines={1}>{skill}</Text>
-                            </View>
-                        ))}
+            {/* Company Logo + Job Info */}
+            <View style={styles.row}>
+                {companyLogo ? (
+                    <Image source={{ uri: companyLogo }} style={styles.logo} />
+                ) : (
+                    <View style={[styles.logo, styles.logoPlaceholder]}>
+                        <Ionicons name="business-outline" size={20} color={PALETTE.accent} />
                     </View>
-                ) : null}
+                )}
+
+                <View style={styles.info}>
+                    <View style={styles.titleRow}>
+                        <Text style={styles.title} numberOfLines={2}>{item?.title || 'Untitled Job'}</Text>
+                        {shouldShowMatchBadge ? (
+                            <View style={styles.matchBadge}>
+                                <Text style={styles.matchBadgeText}>{resolvedScorePercent}%</Text>
+                            </View>
+                        ) : null}
+                    </View>
+                    <Text style={styles.company} numberOfLines={1}>{item?.companyName || 'Company'}</Text>
+
+                    {/* Meta row */}
+                    <View style={styles.metaRow}>
+                        <View style={styles.metaItem}>
+                            <Ionicons name="location-outline" size={12} color={PALETTE.textTertiary} />
+                            <Text style={styles.metaText} numberOfLines={1}>{locationLabel}</Text>
+                        </View>
+                        <Text style={styles.metaDot}>·</Text>
+                        <View style={styles.metaItem}>
+                            <Ionicons name="cash-outline" size={12} color={PALETTE.textTertiary} />
+                            <Text style={styles.metaText} numberOfLines={1}>{salaryLabel}</Text>
+                        </View>
+                    </View>
+
+                    {/* Bottom row */}
+                    <View style={styles.bottomRow}>
+                        <Text style={styles.posted}>{postedMeta}</Text>
+                        <View style={styles.tagsWrap}>
+                            {item?.urgentHiring ? (
+                                <View style={styles.urgentTag}>
+                                    <Ionicons name="flash" size={10} color="#ef4444" />
+                                    <Text style={styles.urgentTagText}>Urgent</Text>
+                                </View>
+                            ) : null}
+                            {item?.type ? (
+                                <View style={styles.typeTag}>
+                                    <Text style={styles.typeTagText}>{item.type}</Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    </View>
+                </View>
             </View>
 
-            <View style={styles.divider} />
-
-            <View style={styles.bottomRow}>
-                <View style={styles.locationWrap}>
-                    <Text style={styles.locationPin}>📍</Text>
-                    <Text style={styles.locationText} numberOfLines={1}>
-                        {locationLabel}
+            {contextNote ? (
+                <View style={[styles.contextWrap, contextIsWarning && styles.contextWrapWarning]}>
+                    <Text style={[styles.contextText, contextIsWarning && styles.contextTextWarning]} numberOfLines={2}>
+                        {contextNote}
                     </Text>
                 </View>
-
-                <View style={styles.salaryMetaWrap}>
-                    <Text style={styles.salaryText} numberOfLines={1}>{salaryLabel}</Text>
-                    <Text style={styles.postedTimeText} numberOfLines={1}>{postedLabel}</Text>
-                </View>
-            </View>
+            ) : null}
         </AnimatedCard>
     );
 };
@@ -96,135 +117,182 @@ export default memo(JobCard);
 
 const styles = StyleSheet.create({
     card: {
-        backgroundColor: 'rgba(255,255,255,0.99)',
-        borderRadius: RADIUS.lg,
-        paddingHorizontal: SPACING.sm + 1,
-        paddingVertical: SPACING.sm,
-        marginBottom: SPACING.xs + 1,
-        borderWidth: 1,
-        borderColor: '#e8edf4',
-        ...SHADOWS.md,
+        backgroundColor: PALETTE.surface,
+        marginHorizontal: 16,
+        marginTop: 12,
+        borderRadius: 16,
+        padding: 16,
         position: 'relative',
-        overflow: 'visible',
-    },
-    cardReported: { opacity: 0.6 },
-    matchCornerBadge: {
-        position: 'absolute',
-        top: -1,
-        right: -1,
-        borderTopRightRadius: RADIUS.lg,
-        borderBottomLeftRadius: 10,
-        borderWidth: 1,
-        borderColor: JOB_ACCENT_BORDER,
-        paddingHorizontal: 11,
-        paddingVertical: 5,
-        zIndex: 3,
-        shadowColor: JOB_ACCENT_DARK,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 12,
         elevation: 3,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: PALETTE.separator,
     },
-    matchCornerText: {
-        fontSize: 11,
-        fontWeight: '800',
-        color: JOB_ACCENT_TEXT,
-        letterSpacing: 0.2,
-    },
-    postedTimeText: {
-        fontSize: 10,
-        color: '#94a3b8',
-        fontWeight: '600',
-        marginTop: 2,
-    },
-    reportedBadge: {
+    cardReported: { opacity: 0.35 },
+
+    accentBar: {
         position: 'absolute',
-        top: 8,
         left: 0,
-        backgroundColor: '#fde7e9',
-        paddingHorizontal: 7,
+        top: 0,
+        bottom: 0,
+        width: 4,
+        backgroundColor: PALETTE.accent,
+        borderTopLeftRadius: 16,
+        borderBottomLeftRadius: 16,
+    },
+
+    reportedOverlay: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        backgroundColor: PALETTE.errorSoft,
+        paddingHorizontal: 8,
         paddingVertical: 3,
-        borderBottomRightRadius: 8,
+        borderRadius: 4,
+        zIndex: 2,
     },
-    reportedBadgeText: { fontSize: 10, fontWeight: '600', color: '#b45359' },
-    contentWrap: {
-        paddingRight: 2,
-    },
-    contentWrapWithBadge: {
-        paddingRight: 108,
-    },
-    jobTitle: {
-        fontSize: 17,
-        color: theme.textPrimary,
-        fontWeight: '800',
-        letterSpacing: -0.2,
-    },
-    companyName: {
-        marginTop: 2,
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#586983',
-    },
-    skillsWrap: {
+    reportedText: { fontSize: 10, fontWeight: '600', color: PALETTE.error },
+
+    row: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginTop: 9,
-        marginBottom: 2,
+        gap: 14,
     },
-    skillChip: {
-        backgroundColor: '#eef2f7',
-        borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        marginRight: 7,
-        marginBottom: 7,
-        borderWidth: 1,
-        borderColor: '#e6ebf4',
+    logo: {
+        width: 50,
+        height: 50,
+        borderRadius: 14,
+        backgroundColor: PALETTE.backgroundSoft,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: PALETTE.separator,
     },
-    skillChipText: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: '#4f6079',
+    logoPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: PALETTE.accentSoft,
+        borderColor: PALETTE.accentSoft,
     },
-    divider: {
-        height: 1,
-        backgroundColor: '#edf1f5',
-        marginTop: 3,
-        marginBottom: 8,
+
+    info: {
+        flex: 1,
+        minWidth: 0,
     },
-    bottomRow: {
+    titleRow: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
+        alignItems: 'flex-start',
         justifyContent: 'space-between',
         gap: 8,
     },
-    locationWrap: {
+    title: {
         flex: 1,
+        fontSize: 15,
+        fontWeight: '600',
+        color: PALETTE.textPrimary,
+        lineHeight: 20,
+    },
+    matchBadge: {
+        backgroundColor: PALETTE.accentSoft,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 8,
+        flexShrink: 0,
+    },
+    matchBadgeText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: PALETTE.accent,
+    },
+    company: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: PALETTE.textSecondary,
+        marginTop: 2,
+    },
+
+    metaRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingRight: 6,
+        gap: 4,
+        marginTop: 8,
+        flexWrap: 'wrap',
     },
-    locationPin: {
-        fontSize: 13,
-        lineHeight: 16,
-        marginRight: 5,
+    metaItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
     },
-    locationText: {
+    metaText: {
         fontSize: 12,
-        color: '#5f7190',
+        fontWeight: '400',
+        color: PALETTE.textTertiary,
+    },
+    metaDot: {
+        fontSize: 10,
+        color: PALETTE.textTertiary,
+        marginHorizontal: 2,
+    },
+
+    bottomRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 10,
+    },
+    posted: {
+        fontSize: 11,
+        fontWeight: '400',
+        color: PALETTE.textTertiary,
+    },
+    tagsWrap: {
+        flexDirection: 'row',
+        gap: 6,
+    },
+    urgentTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        backgroundColor: '#fef2f2',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+    },
+    urgentTagText: {
+        fontSize: 11,
         fontWeight: '600',
-        flexShrink: 1,
+        color: '#ef4444',
     },
-    salaryMetaWrap: {
-        alignItems: 'flex-end',
-        justifyContent: 'flex-end',
-        minWidth: 120,
-        maxWidth: '54%',
+    typeTag: {
+        backgroundColor: PALETTE.backgroundSoft,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
     },
-    salaryText: {
-        fontSize: 15,
-        fontWeight: '800',
-        color: '#1f2f4a',
-        textAlign: 'right',
+    typeTagText: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: PALETTE.textSecondary,
+    },
+
+    contextWrap: {
+        marginTop: 12,
+        backgroundColor: PALETTE.backgroundSoft,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    contextWrapWarning: {
+        backgroundColor: 'rgba(245,158,11,0.08)',
+    },
+    contextText: {
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: '400',
+        color: PALETTE.textSecondary,
+    },
+    contextTextWarning: {
+        color: '#d97706',
     },
 });

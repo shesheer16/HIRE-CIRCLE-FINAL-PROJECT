@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, StyleSheet, Platform, Animated, Easing, Pressable } from 'react-native';
+import { View, StyleSheet, Platform, Animated, Easing, Pressable, StatusBar } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { triggerHaptic } from '../utils/haptics';
@@ -28,7 +28,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { useAppStore } from '../store/AppStore';
 import { trackEvent } from '../services/analytics';
 import { MOTION } from '../theme/motion';
-import { theme, SPACING } from '../theme/theme';
+import { theme, PALETTE, SPACING } from '../theme/theme';
 
 const Tab = createBottomTabNavigator();
 const TAB_ACCENT = '#7c3aed';
@@ -54,7 +54,7 @@ function TabSceneTransition({ children }) {
 }
 
 export default function MainTabNavigator({ navigation }) {
-    const { role } = useAppStore();
+    const role = useAppStore(state => state.role);
     const insets = useSafeAreaInsets();
     const normalizedRole = String(role || '').toLowerCase();
     const isDemandMode = normalizedRole === 'employer' || normalizedRole === 'recruiter';
@@ -78,7 +78,7 @@ export default function MainTabNavigator({ navigation }) {
         tabBarHideOnKeyboard: true,
         tabBarIcon: ({ focused }) => {
             let IconComponent;
-            let iconColor = focused ? TAB_ACCENT : '#64748b';
+            let iconColor = focused ? TAB_ACCENT : PALETTE.textTertiary;
 
             if (route.name === 'Connect') {
                 IconComponent = IconGlobe;
@@ -109,24 +109,24 @@ export default function MainTabNavigator({ navigation }) {
             );
         },
         tabBarActiveTintColor: TAB_ACCENT,
-        tabBarInactiveTintColor: '#64748b',
+        tabBarInactiveTintColor: PALETTE.textTertiary,
         tabBarLabelStyle: {
             fontSize: 10,
-            fontWeight: '500',
-            marginTop: 1,
+            fontWeight: '600',
+            marginTop: 2,
             marginBottom: Platform.OS === 'android' ? 4 : 0,
         },
         tabBarStyle: {
             height: Platform.OS === 'ios' ? 80 : 66,
             paddingTop: 4,
-            backgroundColor: '#ffffff',
-            borderTopWidth: 1,
-            borderTopColor: '#e2e8f0',
-            shadowColor: '#0f172a',
+            backgroundColor: PALETTE.surface,
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: PALETTE.separator,
+            shadowColor: PALETTE.textPrimary,
             shadowOffset: { width: 0, height: -1 },
-            shadowOpacity: 0.04,
-            shadowRadius: 6,
-            elevation: 8,
+            shadowOpacity: 0.03,
+            shadowRadius: 4,
+            elevation: 4,
         },
     });
 
@@ -202,6 +202,7 @@ export default function MainTabNavigator({ navigation }) {
 
     return (
         <View style={styles.container}>
+            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
             <View
                 pointerEvents="none"
                 style={[styles.statusBarTint, { height: insets.top + 3 }]}
@@ -281,7 +282,7 @@ const styles = StyleSheet.create({
         top: 0,
         left: 0,
         right: 0,
-        backgroundColor: TAB_ACCENT,
+        backgroundColor: PALETTE.background,
         zIndex: 30,
     },
     sceneContainer: {
@@ -300,17 +301,19 @@ const styles = StyleSheet.create({
         zIndex: 15,
     },
     fab: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: TAB_ACCENT,
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: '#7c3aed',
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: TAB_ACCENT,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.34,
-        shadowRadius: 12,
-        elevation: 8,
+        borderWidth: 1.5,
+        borderColor: 'rgba(216,180,254,0.4)',
+        shadowColor: '#8b5cf6',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.45,
+        shadowRadius: 16,
+        elevation: 10,
     },
     fabPressed: {
         transform: [{ scale: 0.98 }],

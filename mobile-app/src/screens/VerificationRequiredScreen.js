@@ -13,11 +13,16 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
-import { navigateToWelcomeFallback } from '../utils/authNavigation';
+import { handleAuthBackNavigation, navigateToAuthFallback } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
 
 export default function VerificationRequiredScreen({ route, navigation }) {
     const insets = useSafeAreaInsets();
     const { email } = route.params || {};
+    const selectedRole = (() => {
+        const rawRole = String(route.params?.selectedRole || '').trim();
+        return rawRole ? normalizeSelectedRole(rawRole) : null;
+    })();
     const [loading, setLoading] = useState(false);
 
     const handleResendVerification = async () => {
@@ -39,19 +44,17 @@ export default function VerificationRequiredScreen({ route, navigation }) {
     };
 
     const handleBackToLogin = () => {
-        navigation.reset({
-            index: 0,
-            routes: [{ name: 'Login' }],
+        navigateToAuthFallback(navigation, {
+            selectedRole,
+            target: 'Login',
         });
     };
 
     const handleBackPress = () => {
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-            return;
-        }
-
-        navigateToWelcomeFallback(navigation);
+        handleAuthBackNavigation(navigation, {
+            selectedRole,
+            target: 'Login',
+        });
     };
 
     return (

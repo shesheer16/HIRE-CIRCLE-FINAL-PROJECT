@@ -38,8 +38,8 @@
       "edgeToEdgeEnabled": false
     },
     "androidStatusBar": {
-      "backgroundColor": "#7c3aed",
-      "barStyle": "light-content",
+      "backgroundColor": "#ffffff",
+      "barStyle": "dark-content",
       "translucent": false
     },
     "androidNavigationBar": {

@@ -8,6 +8,7 @@ import {
     Modal,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
@@ -156,6 +157,52 @@ const REQUIRED_SLOT_FIELD_SET = new Set([
     'expectedSalary',
     'availabilityType',
 ]);
+const REVIEW_COMMUTE_DISTANCE_OPTIONS = [5, 10, 25, 40];
+const REVIEW_MATCH_TIER_OPTIONS = [
+    { label: 'Explore more', value: 'POSSIBLE' },
+    { label: 'Balanced', value: 'GOOD' },
+    { label: 'Top only', value: 'STRONG' },
+];
+const REVIEW_AVAILABILITY_OPTIONS = [
+    { label: 'Immediate', value: 0 },
+    { label: '15 days', value: 15 },
+    { label: '30 days', value: 30 },
+];
+const REVIEW_SHIFT_OPTIONS = ['Flexible', 'Day', 'Night'];
+
+const normalizeWorkerShift = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'day') return 'Day';
+    if (normalized === 'night') return 'Night';
+    return 'Flexible';
+};
+
+const normalizeMatchTier = (value) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    return ['STRONG', 'GOOD', 'POSSIBLE'].includes(normalized) ? normalized : 'GOOD';
+};
+
+const normalizeAvailabilityWindowDays = (value) => {
+    const numeric = Number(value);
+    return [0, 15, 30].includes(numeric) ? numeric : 0;
+};
+
+const normalizeCommuteDistance = (value) => {
+    const numeric = Number(value);
+    return REVIEW_COMMUTE_DISTANCE_OPTIONS.includes(numeric) ? numeric : 25;
+};
+
+const normalizeBooleanFlag = (value, fallback = false) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', 'yes', 'y', '1'].includes(normalized)) return true;
+        if (['false', 'no', 'n', '0'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+};
+
+const normalizeLanguageText = (value, fallback = '') => String(value || fallback || '').trim();
 
 const buildDefaultExtractedData = (role, userInfo) => {
     if (role === 'employer') {
@@ -178,7 +225,15 @@ const buildDefaultExtractedData = (role, userInfo) => {
         skills: [],
         experienceYears: 0,
         expectedSalary: '',
-        preferredShift: 'flexible',
+        panchayat: '',
+        language: normalizeLanguageText(userInfo?.languageCode),
+        maxCommuteDistanceKm: 25,
+        minimumMatchTier: 'GOOD',
+        preferredShift: 'Flexible',
+        availabilityWindowDays: 0,
+        isAvailable: true,
+        openToRelocation: false,
+        openToNightShift: false,
         location: '',
         summary: '',
         confidenceScore: null,
@@ -377,6 +432,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
     const pollingRef = useRef(null);
     const processingElapsedTimerRef = useRef(null);
     const processingStageStartedAtRef = useRef(0);
+    const processingIdRef = useRef(processingId);
     const appStateRef = useRef(AppState.currentState);
     const statusRequestInFlightRef = useRef(false);
     const mountedRef = useRef(true);
@@ -473,6 +529,10 @@ export default function SmartInterviewScreen({ navigation, route }) {
     const thinkingOpacityAnim = thinkingOpacityAnimRef.current;
     const reviewBadgePulse = reviewBadgePulseRef.current;
     const successOpacity = successOpacityRef.current;
+
+    useEffect(() => {
+        processingIdRef.current = processingId;
+    }, [processingId]);
 
     const truncateSnippet = useCallback((text) => {
         const normalized = String(text || '').replace(/\s+/g, ' ').trim();
@@ -643,11 +703,19 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 ? Number(slots.totalExperienceYears)
                 : 0,
             expectedSalary: slots.expectedSalary != null ? String(slots.expectedSalary) : '',
-            preferredShift: slots.shiftPreference || 'flexible',
-            location: slots.city || '',
+            panchayat: String(slots.panchayat || slots.locality || '').trim(),
+            language: normalizeLanguageText(slots.language || slots.primaryLanguage, userInfo?.languageCode),
+            maxCommuteDistanceKm: normalizeCommuteDistance(slots.maxCommuteDistanceKm),
+            minimumMatchTier: normalizeMatchTier(slots.minimumMatchTier),
+            preferredShift: normalizeWorkerShift(slots.shiftPreference),
+            availabilityWindowDays: normalizeAvailabilityWindowDays(slots.availabilityWindowDays),
+            isAvailable: normalizeBooleanFlag(slots.isAvailable, true),
+            openToRelocation: normalizeBooleanFlag(slots.openToRelocation, false),
+            openToNightShift: normalizeBooleanFlag(slots.openToNightShift, false),
+            location: String(slots.city || slots.location || '').trim(),
             summary: '',
         };
-    }, [isEmployer, userInfo?.name]);
+    }, [isEmployer, userInfo?.languageCode, userInfo?.name]);
 
     const finalizeInterviewCompletion = useCallback(async (data = {}) => {
         if (completionAlertShownRef.current) {
@@ -1116,19 +1184,29 @@ export default function SmartInterviewScreen({ navigation, route }) {
         statusRequestInFlightRef.current = true;
 
         try {
-            const { data } = await client.get('/api/v2/interview-processing/latest', {
+            const trackedProcessingId = String(
+                processingIdRef.current
+                || route?.params?.processingId
+                || ''
+            ).trim();
+            const statusEndpoint = trackedProcessingId
+                ? `/api/v2/interview-processing/${encodeURIComponent(trackedProcessingId)}`
+                : '/api/v2/interview-processing/latest';
+
+            const { data } = await client.get(statusEndpoint, {
                 __skipApiErrorHandler: true,
             });
             if (!mountedRef.current) return;
 
-            const latestProcessingId = String(data?.processingId || '').trim();
-            if (!latestProcessingId) {
+            const resolvedProcessingId = String(data?.processingId || '').trim();
+            if (!resolvedProcessingId) {
                 setProcessingFallbackMessage('Waiting for interview processing session to initialize...');
                 setStage(STAGES.PROCESSING);
                 return;
             }
-            if (String(processingId || '').trim() !== latestProcessingId) {
-                setProcessingId(latestProcessingId);
+            if (String(processingIdRef.current || '').trim() !== resolvedProcessingId) {
+                processingIdRef.current = resolvedProcessingId;
+                setProcessingId(resolvedProcessingId);
             }
 
             const status = String(data?.status || '').toLowerCase();
@@ -1170,15 +1248,33 @@ export default function SmartInterviewScreen({ navigation, route }) {
 
             if (Boolean(data?.staleProcessing)) {
                 setProcessingFallbackMessage('Processing is delayed on server. Waiting for verified extraction result.');
+            } else {
+                setProcessingFallbackMessage(null);
             }
 
             setStage(STAGES.PROCESSING);
         } catch (error) {
+            if (!mountedRef.current) return;
+            const statusCode = Number(error?.response?.status || 0);
+            if (statusCode === 404 && String(processingIdRef.current || route?.params?.processingId || '').trim()) {
+                stopStatusTracking();
+                setProcessingFallbackMessage('We could not find this interview session anymore. You can retry or record again.');
+                setStage(STAGES.PROCESSING);
+                logger.warn('Interview session missing during status check:', error?.message || error);
+                return;
+            }
+
+            setProcessingFallbackMessage(
+                statusCode >= 500
+                    ? 'Server is taking longer than usual. Tap below to retry status sync.'
+                    : 'Connection interrupted while checking progress. Tap below to retry.'
+            );
+            setStage(STAGES.PROCESSING);
             logger.warn('Interview status check failed:', error?.message || error);
         } finally {
             statusRequestInFlightRef.current = false;
         }
-    }, [applyHybridPayload, finalizeInterviewCompletion, processingId, stopStatusTracking]);
+    }, [applyHybridPayload, finalizeInterviewCompletion, route?.params?.processingId, stopStatusTracking]);
 
     const beginHybridStatusTracking = useCallback(() => {
         stopStatusTracking();
@@ -1237,6 +1333,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
             }
 
             if (data?.processingId) {
+                processingIdRef.current = data.processingId;
                 setProcessingId(data.processingId);
                 setStage(STAGES.PROCESSING);
                 beginHybridStatusTracking();
@@ -1397,6 +1494,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
         setIsRecording(false);
         setTimer(0);
         setVideoUri(null);
+        processingIdRef.current = null;
         setProcessingId(null);
         setCreatedJobId(null);
         setExtractedData(null);
@@ -1525,6 +1623,10 @@ export default function SmartInterviewScreen({ navigation, route }) {
         const normalizedExperience = Number.isFinite(Number(hydrated?.experienceYears))
             ? Number(hydrated.experienceYears)
             : 0;
+        const normalizedCommuteDistance = normalizeCommuteDistance(hydrated?.maxCommuteDistanceKm);
+        const normalizedMinimumMatchTier = normalizeMatchTier(hydrated?.minimumMatchTier);
+        const normalizedAvailabilityWindowDays = normalizeAvailabilityWindowDays(hydrated?.availabilityWindowDays);
+        const normalizedPreferredShift = normalizeWorkerShift(hydrated?.preferredShift);
 
         return {
             ...hydrated,
@@ -1533,11 +1635,19 @@ export default function SmartInterviewScreen({ navigation, route }) {
             skills: parseSkills(hydrated?.skills),
             experienceYears: normalizedExperience,
             expectedSalary: normalizedSalary,
-            preferredShift: String(hydrated?.preferredShift || 'flexible').trim() || 'flexible',
+            panchayat: String(hydrated?.panchayat || '').trim(),
+            language: normalizeLanguageText(hydrated?.language, userInfo?.languageCode),
+            maxCommuteDistanceKm: normalizedCommuteDistance,
+            minimumMatchTier: normalizedMinimumMatchTier,
+            preferredShift: normalizedPreferredShift,
+            availabilityWindowDays: normalizedAvailabilityWindowDays,
+            isAvailable: normalizeBooleanFlag(hydrated?.isAvailable, true),
+            openToRelocation: normalizeBooleanFlag(hydrated?.openToRelocation, false),
+            openToNightShift: normalizeBooleanFlag(hydrated?.openToNightShift, false),
             location: String(hydrated?.location || '').trim(),
             summary: String(hydrated?.summary || '').trim(),
         };
-    }, [hydrateExtractedData, isEmployer, parseSkills, userInfo?.name]);
+    }, [hydrateExtractedData, isEmployer, parseSkills, userInfo?.languageCode, userInfo?.name]);
 
     const getMissingMandatoryFields = useCallback((candidateData = {}) => {
         if (isEmployer) {
@@ -1741,12 +1851,27 @@ export default function SmartInterviewScreen({ navigation, route }) {
                 const experienceYears = Number.isFinite(Number(optimizedData.experienceYears))
                     ? Number(optimizedData.experienceYears)
                     : 0;
+                const maxCommuteDistanceKm = normalizeCommuteDistance(optimizedData.maxCommuteDistanceKm);
+                const minimumMatchTier = normalizeMatchTier(optimizedData.minimumMatchTier);
+                const availabilityWindowDays = normalizeAvailabilityWindowDays(optimizedData.availabilityWindowDays);
+                const preferredShift = normalizeWorkerShift(optimizedData.preferredShift);
 
                 await client.put('/api/users/profile', {
                     firstName,
                     lastName,
-                    city: optimizedData.location || '',
+                    city: String(optimizedData.location || '').trim(),
+                    panchayat: String(optimizedData.panchayat || '').trim(),
+                    language: normalizeLanguageText(optimizedData.language, userInfo?.languageCode),
                     totalExperience: experienceYears,
+                    preferredShift,
+                    availabilityWindowDays,
+                    isAvailable: normalizeBooleanFlag(optimizedData.isAvailable, true),
+                    openToRelocation: Boolean(optimizedData.openToRelocation),
+                    openToNightShift: Boolean(optimizedData.openToNightShift),
+                    matchPreferences: {
+                        maxCommuteDistanceKm,
+                        minimumMatchTier,
+                    },
                     roleProfiles: [{
                         roleName: optimizedData.roleTitle || '',
                         experienceInRole: experienceYears,
@@ -1981,6 +2106,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
         if (!incomingProcessingId) return;
         if (String(incomingProcessingId) === String(processingId)) return;
 
+        processingIdRef.current = incomingProcessingId;
         setProcessingId(incomingProcessingId);
         setStage(STAGES.PROCESSING);
         beginHybridStatusTracking();
@@ -2001,7 +2127,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
     if (!SMART_INTERVIEW_LIVE_ENABLED) {
         return (
             <>
-                <LinearGradient colors={['#120526', '#2b0a47', '#5b21b6']} style={[styles.container, { paddingTop: insets.top + 8 }]}>
+                <LinearGradient colors={['#ffffff', '#f8fafc', '#f1f5f9']} style={[styles.container, { paddingTop: insets.top + 8 }]}>
                     <TouchableOpacity style={styles.backButton} onPress={safeGoBack}>
                         <Text style={styles.backButtonText}>‹</Text>
                     </TouchableOpacity>
@@ -2014,7 +2140,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                     >
                         <View style={styles.interviewHeroShell}>
                             <View style={styles.comingSoonBadge}>
-                                <Ionicons name="sparkles-outline" size={14} color="#efe4ff" />
+                                <Ionicons name="sparkles-outline" size={14} color="#7c3aed" />
                                 <Text style={styles.comingSoonBadgeText}>Interview AI</Text>
                             </View>
                             <Text style={styles.heroBrandTitle}>HIRE Interview AI</Text>
@@ -2053,7 +2179,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         </TouchableOpacity>
 
                         <View style={styles.trustPill}>
-                            <Ionicons name="information-circle-outline" size={13} color="#dbeafe" />
+                            <Ionicons name="information-circle-outline" size={13} color="#6366f1" />
                             <Text style={styles.trustPillText}>Use Quick Form in Profile tab until Interview AI goes live.</Text>
                         </View>
                     </ScrollView>
@@ -2095,7 +2221,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
     if (stage === STAGES.INTRO) {
         return (
             <>
-                <LinearGradient colors={['#120526', '#2b0a47', '#5b21b6']} style={[styles.container, { paddingTop: insets.top + 8 }]}>
+                <LinearGradient colors={['#ffffff', '#f8fafc', '#f1f5f9']} style={[styles.container, { paddingTop: insets.top + 8 }]}>
                     <TouchableOpacity style={styles.backButton} onPress={safeGoBack}>
                         <Text style={styles.backButtonText}>‹</Text>
                     </TouchableOpacity>
@@ -2106,7 +2232,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                     >
-                        <LinearGradient colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.03)']} style={styles.previewPhoneFrame}>
+                        <LinearGradient colors={['#f8fafc', '#f1f5f9']} style={styles.previewPhoneFrame}>
                             <View style={styles.previewFaceGlow} />
                             <View style={styles.previewFocusFrame} />
                             <View style={styles.previewWaveformRow}>
@@ -2119,10 +2245,10 @@ export default function SmartInterviewScreen({ navigation, route }) {
                                     <Ionicons name="camera-reverse-outline" size={18} color="#0f172a" />
                                 </View>
                                 <View style={styles.previewCtrl}>
-                                    <Ionicons name="checkmark" size={18} color="#ffffff" />
+                                    <Ionicons name="checkmark" size={18} color="#0f172a" />
                                 </View>
                                 <View style={styles.previewCtrl}>
-                                    <Ionicons name="pause" size={18} color="#ffffff" />
+                                    <Ionicons name="pause" size={18} color="#0f172a" />
                                 </View>
                                 <View style={[styles.previewCtrl, styles.previewCtrlDanger]}>
                                     <Ionicons name="close" size={20} color="#ffffff" />
@@ -2153,7 +2279,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                             <View style={styles.introBulletStack}>
                                 {introSlide.bullets.map((bullet) => (
                                     <View key={bullet} style={styles.introBulletRow}>
-                                        <Ionicons name="checkmark-circle" size={14} color="#d8b4fe" />
+                                        <Ionicons name="checkmark-circle" size={14} color="#7c3aed" />
                                         <Text style={styles.introBulletText}>{bullet}</Text>
                                     </View>
                                 ))}
@@ -2174,7 +2300,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                         </View>
 
                         <View style={styles.trustPill}>
-                            <Ionicons name="shield-checkmark-outline" size={13} color="#dbeafe" />
+                            <Ionicons name="shield-checkmark-outline" size={13} color="#6366f1" />
                             <Text style={styles.trustPillText}>Your interview data stays secure</Text>
                         </View>
                     </ScrollView>
@@ -2322,6 +2448,11 @@ export default function SmartInterviewScreen({ navigation, route }) {
                             </>
                         ) : (
                             <>
+                                <Text style={styles.reviewSectionTitle}>Match basics</Text>
+                                <Text style={styles.reviewFieldHint}>
+                                    These fields directly shape role, salary, and AP-locality matching.
+                                </Text>
+
                                 <Text style={styles.reviewLabel}>Name</Text>
                                 <TextInput
                                     style={styles.reviewInput}
@@ -2351,12 +2482,139 @@ export default function SmartInterviewScreen({ navigation, route }) {
                                     onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), experienceYears: value }))}
                                 />
 
-                                <Text style={styles.reviewLabel}>Location</Text>
+                                <Text style={styles.reviewLabel}>Expected monthly pay</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    keyboardType="numeric"
+                                    value={String(extractedData?.expectedSalary || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), expectedSalary: value }))}
+                                />
+
+                                <Text style={styles.reviewLabel}>City</Text>
                                 <TextInput
                                     style={styles.reviewInput}
                                     value={String(extractedData?.location || '')}
                                     onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), location: value }))}
                                 />
+
+                                <Text style={styles.reviewLabel}>Local area / panchayat</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.panchayat || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), panchayat: value }))}
+                                />
+
+                                <Text style={styles.reviewLabel}>Primary language</Text>
+                                <TextInput
+                                    style={styles.reviewInput}
+                                    value={String(extractedData?.language || '')}
+                                    onChangeText={(value) => setExtractedData((prev) => ({ ...(prev || {}), language: value }))}
+                                />
+
+                                <Text style={styles.reviewSectionTitle}>Match preferences</Text>
+                                <Text style={styles.reviewFieldHint}>
+                                    We use these settings to decide nearby commute range, strictness, and availability.
+                                </Text>
+
+                                <Text style={styles.reviewLabel}>Preferred shift</Text>
+                                <View style={styles.reviewChipRow}>
+                                    {REVIEW_SHIFT_OPTIONS.map((option) => {
+                                        const active = normalizeWorkerShift(extractedData?.preferredShift) === option;
+                                        return (
+                                            <TouchableOpacity
+                                                key={`review-shift-${option}`}
+                                                style={[styles.reviewChip, active ? styles.reviewChipActive : null]}
+                                                onPress={() => setExtractedData((prev) => ({ ...(prev || {}), preferredShift: option }))}
+                                                activeOpacity={0.82}
+                                            >
+                                                <Text style={[styles.reviewChipText, active ? styles.reviewChipTextActive : null]}>
+                                                    {option}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <Text style={styles.reviewLabel}>Max travel distance</Text>
+                                <View style={styles.reviewChipRow}>
+                                    {REVIEW_COMMUTE_DISTANCE_OPTIONS.map((distance) => {
+                                        const active = normalizeCommuteDistance(extractedData?.maxCommuteDistanceKm) === distance;
+                                        return (
+                                            <TouchableOpacity
+                                                key={`review-commute-${distance}`}
+                                                style={[styles.reviewChip, active ? styles.reviewChipActive : null]}
+                                                onPress={() => setExtractedData((prev) => ({ ...(prev || {}), maxCommuteDistanceKm: distance }))}
+                                                activeOpacity={0.82}
+                                            >
+                                                <Text style={[styles.reviewChipText, active ? styles.reviewChipTextActive : null]}>
+                                                    {distance} km
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <Text style={styles.reviewLabel}>Match strictness</Text>
+                                <View style={styles.reviewChipRow}>
+                                    {REVIEW_MATCH_TIER_OPTIONS.map((option) => {
+                                        const active = normalizeMatchTier(extractedData?.minimumMatchTier) === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={`review-tier-${option.value}`}
+                                                style={[styles.reviewChip, active ? styles.reviewChipActive : null]}
+                                                onPress={() => setExtractedData((prev) => ({ ...(prev || {}), minimumMatchTier: option.value }))}
+                                                activeOpacity={0.82}
+                                            >
+                                                <Text style={[styles.reviewChipText, active ? styles.reviewChipTextActive : null]}>
+                                                    {option.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <Text style={styles.reviewLabel}>Joining window</Text>
+                                <View style={styles.reviewChipRow}>
+                                    {REVIEW_AVAILABILITY_OPTIONS.map((option) => {
+                                        const active = normalizeAvailabilityWindowDays(extractedData?.availabilityWindowDays) === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={`review-availability-${option.value}`}
+                                                style={[styles.reviewChip, active ? styles.reviewChipActive : null]}
+                                                onPress={() => setExtractedData((prev) => ({ ...(prev || {}), availabilityWindowDays: option.value }))}
+                                                activeOpacity={0.82}
+                                            >
+                                                <Text style={[styles.reviewChipText, active ? styles.reviewChipTextActive : null]}>
+                                                    {option.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <View style={styles.reviewToggleRow}>
+                                    <Text style={styles.reviewToggleLabel}>Open to opportunities</Text>
+                                    <Switch
+                                        value={normalizeBooleanFlag(extractedData?.isAvailable, true)}
+                                        onValueChange={(value) => setExtractedData((prev) => ({ ...(prev || {}), isAvailable: value }))}
+                                    />
+                                </View>
+
+                                <View style={styles.reviewToggleRow}>
+                                    <Text style={styles.reviewToggleLabel}>Open to relocation</Text>
+                                    <Switch
+                                        value={Boolean(extractedData?.openToRelocation)}
+                                        onValueChange={(value) => setExtractedData((prev) => ({ ...(prev || {}), openToRelocation: value }))}
+                                    />
+                                </View>
+
+                                <View style={styles.reviewToggleRow}>
+                                    <Text style={styles.reviewToggleLabel}>Open to night shift</Text>
+                                    <Switch
+                                        value={Boolean(extractedData?.openToNightShift)}
+                                        onValueChange={(value) => setExtractedData((prev) => ({ ...(prev || {}), openToNightShift: value }))}
+                                    />
+                                </View>
                             </>
                         )}
                     </View>
@@ -2395,7 +2653,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
     if (stage === STAGES.COMPLETE) {
         return (
             <>
-                <LinearGradient colors={['#041026', '#0c2c57']} style={[styles.container, { paddingTop: insets.top + 24 }]}> 
+                <LinearGradient colors={['#020813', '#081736', '#122c66']} style={[styles.container, { paddingTop: insets.top + 24 }]}> 
                     <Animated.View style={[styles.centeredContent, { opacity: successOpacity }]}>
                     <Text style={styles.successEmoji}>✓</Text>
                     <Text style={styles.headerTitle}>Your Smart Profile Is Live</Text>
@@ -2466,7 +2724,7 @@ export default function SmartInterviewScreen({ navigation, route }) {
                     ref={cameraRef}
                     onCameraReady={() => setCameraReady(true)}
                 >
-                    <LinearGradient colors={['rgba(3,10,24,0.62)', 'rgba(3,10,24,0.12)', 'rgba(3,10,24,0.9)']} style={styles.overlay}> 
+                    <LinearGradient colors={['rgba(5,2,13,0.7)', 'rgba(5,2,13,0.1)', 'rgba(5,2,13,0.95)']} style={styles.overlay}> 
                     <View style={[styles.topHeader, { paddingTop: insets.top + 8 }]}> 
                         <Text style={styles.headerTitleSmall}>Smart Interview</Text>
                         <Text style={styles.headerSubtitleSmall}>{statusSubtitle}</Text>
@@ -2512,6 +2770,28 @@ export default function SmartInterviewScreen({ navigation, route }) {
                                     <SkeletonLoader width="82%" height={8} borderRadius={4} tone="tint" />
                                     <SkeletonLoader width="64%" height={8} borderRadius={4} tone="tint" />
                                 </View>
+                                {stage === STAGES.PROCESSING && (processingFallbackMessage || processingElapsedSeconds >= 20) ? (
+                                    <>
+                                        <TouchableOpacity
+                                            style={styles.processingFallbackButton}
+                                            onPress={checkProcessingStatus}
+                                            activeOpacity={0.84}
+                                        >
+                                            <Text style={styles.processingFallbackButtonText}>Retry status sync</Text>
+                                        </TouchableOpacity>
+                                        {processingFallbackMessage ? (
+                                            <TouchableOpacity
+                                                style={[styles.processingFallbackButton, styles.processingFallbackButtonSecondary]}
+                                                onPress={handleRetakeInterview}
+                                                activeOpacity={0.84}
+                                            >
+                                                <Text style={[styles.processingFallbackButtonText, styles.processingFallbackButtonSecondaryText]}>
+                                                    Record again
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ) : null}
+                                    </>
+                                ) : null}
                                 {stage === STAGES.UPLOADING ? (
                                     <Text style={styles.uploadProgressText}>{Math.max(0, Math.min(100, uploadProgress))}% uploaded</Text>
                                 ) : null}
@@ -2658,11 +2938,11 @@ export default function SmartInterviewScreen({ navigation, route }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#140829',
+        backgroundColor: '#f8fafc',
     },
     loaderContainer: {
         flex: 1,
-        backgroundColor: '#140829',
+        backgroundColor: '#f8fafc',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -2679,24 +2959,27 @@ const styles = StyleSheet.create({
         marginLeft: 16,
         marginTop: 8,
         alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.14)',
-        borderWidth: 1,
-        borderColor: 'rgba(233,213,255,0.3)',
+        backgroundColor: '#ffffff',
+        borderColor: '#e2e8f0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
     backButtonText: {
-        color: '#f8f5ff',
+        color: '#0f172a',
         fontSize: 26,
         marginTop: -2,
     },
     headerTitle: {
-        color: '#fff',
+        color: '#0f172a',
         fontSize: 32,
         fontWeight: '700',
         textAlign: 'center',
     },
     headerSubtitle: {
-        color: '#cbd5e1',
+        color: '#64748b',
         marginTop: 10,
         fontSize: 15,
         fontWeight: '500',
@@ -2739,11 +3022,11 @@ const styles = StyleSheet.create({
         minHeight: 420,
         borderRadius: 28,
         borderWidth: 1.4,
-        borderColor: 'rgba(233,213,255,0.7)',
+        borderColor: '#e2e8f0',
         overflow: 'hidden',
         marginTop: 8,
         marginBottom: 20,
-        backgroundColor: 'rgba(29,13,56,0.56)',
+        backgroundColor: '#f1f5f9',
     },
     previewFaceGlow: {
         position: 'absolute',
@@ -2751,7 +3034,7 @@ const styles = StyleSheet.create({
         left: -20,
         right: -20,
         height: 280,
-        backgroundColor: 'rgba(216,180,254,0.28)',
+        backgroundColor: 'rgba(124,58,237,0.1)',
         borderBottomLeftRadius: 180,
         borderBottomRightRadius: 180,
     },
@@ -2763,8 +3046,12 @@ const styles = StyleSheet.create({
         bottom: 88,
         borderRadius: 26,
         borderWidth: 1.6,
-        borderColor: 'rgba(233,213,255,0.72)',
-        backgroundColor: 'rgba(255,255,255,0.02)',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 16,
     },
     previewWaveformRow: {
         position: 'absolute',
@@ -2779,7 +3066,7 @@ const styles = StyleSheet.create({
         width: 4,
         borderRadius: 4,
         marginHorizontal: 2,
-        backgroundColor: 'rgba(233,213,255,0.92)',
+        backgroundColor: '#e2e8f0',
     },
     previewControlsRow: {
         marginTop: 'auto',
@@ -2792,32 +3079,43 @@ const styles = StyleSheet.create({
         width: 46,
         height: 46,
         borderRadius: 23,
-        backgroundColor: 'rgba(23,10,42,0.86)',
+        backgroundColor: '#ffffff',
         alignItems: 'center',
         justifyContent: 'center',
         marginHorizontal: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(233,213,255,0.26)',
+        borderColor: '#e2e8f0',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
     },
     previewCtrlWhite: {
-        backgroundColor: '#ffffff',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
     },
     previewCtrlDanger: {
-        backgroundColor: '#dc2626',
+        backgroundColor: '#fee2e2',
+        borderWidth: 0,
     },
     interviewHeroShell: {
         width: '100%',
         borderRadius: 18,
         borderWidth: 1,
-        borderColor: 'rgba(233,213,255,0.3)',
-        backgroundColor: 'rgba(30,13,56,0.36)',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.03,
+        shadowRadius: 8,
+        elevation: 2,
         paddingHorizontal: 14,
         paddingVertical: 12,
         marginBottom: 14,
         alignItems: 'center',
     },
     heroBrandTitle: {
-        color: '#ffffff',
+        color: '#0f172a',
         fontSize: 34,
         fontWeight: '800',
         letterSpacing: -0.6,
@@ -2825,7 +3123,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     heroTagline: {
-        color: '#ece6ff',
+        color: '#64748b',
         fontSize: 14,
         fontWeight: '600',
         textAlign: 'center',
@@ -2835,8 +3133,8 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.55)',
-        backgroundColor: 'rgba(109,40,217,0.35)',
+        borderColor: '#ede9fe',
+        backgroundColor: '#f3e8ff',
         paddingHorizontal: 12,
         paddingVertical: 6,
         marginBottom: 10,
@@ -2845,7 +3143,7 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     comingSoonBadgeText: {
-        color: '#efe4ff',
+        color: '#7c3aed',
         fontSize: 12,
         fontWeight: '800',
         letterSpacing: 0.2,
@@ -2854,20 +3152,25 @@ const styles = StyleSheet.create({
         width: '100%',
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.35)',
-        backgroundColor: 'rgba(30,13,56,0.4)',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.02,
+        shadowRadius: 4,
+        elevation: 1,
         paddingHorizontal: 14,
         paddingVertical: 12,
         marginBottom: 12,
     },
     comingSoonNoticeTitle: {
-        color: '#ffffff',
+        color: '#0f172a',
         fontSize: 14,
         fontWeight: '700',
         marginBottom: 4,
     },
     comingSoonNoticeText: {
-        color: '#ede9fe',
+        color: '#64748b',
         fontSize: 12,
         lineHeight: 18,
     },
@@ -2878,8 +3181,13 @@ const styles = StyleSheet.create({
     comingSoonStepCard: {
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.26)',
-        backgroundColor: 'rgba(30,13,56,0.32)',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.02,
+        shadowRadius: 4,
+        elevation: 1,
         paddingHorizontal: 14,
         paddingVertical: 12,
     },
@@ -2891,16 +3199,16 @@ const styles = StyleSheet.create({
         width: 24,
         height: 24,
         borderRadius: 12,
-        backgroundColor: 'rgba(216,180,254,0.3)',
+        backgroundColor: '#f3e8ff',
         borderWidth: 1,
-        borderColor: 'rgba(233,213,255,0.45)',
+        borderColor: '#ede9fe',
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 10,
         marginTop: 1,
     },
     comingSoonStepIndexText: {
-        color: '#f3e8ff',
+        color: '#7c3aed',
         fontSize: 12,
         fontWeight: '800',
     },
@@ -2908,7 +3216,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     comingSoonStepLabel: {
-        color: '#d8b4fe',
+        color: '#7c3aed',
         fontSize: 10,
         fontWeight: '700',
         textTransform: 'uppercase',
@@ -2916,13 +3224,13 @@ const styles = StyleSheet.create({
         letterSpacing: 0.4,
     },
     comingSoonStepTitle: {
-        color: '#ffffff',
+        color: '#0f172a',
         fontSize: 14,
         fontWeight: '700',
         marginBottom: 3,
     },
     comingSoonStepText: {
-        color: '#ede9fe',
+        color: '#64748b',
         fontSize: 12,
         lineHeight: 17,
     },
@@ -2941,23 +3249,28 @@ const styles = StyleSheet.create({
         height: 7,
         borderRadius: 4,
         marginHorizontal: 4,
-        backgroundColor: 'rgba(233,213,255,0.34)',
+        backgroundColor: '#e2e8f0',
     },
     introSlideDotActive: {
         width: 18,
-        backgroundColor: '#d8b4fe',
+        backgroundColor: '#7c3aed',
     },
     introCard: {
         width: '100%',
-        backgroundColor: 'rgba(30,13,56,0.34)',
+        backgroundColor: '#ffffff',
         borderRadius: 20,
         padding: 20,
         marginBottom: 16,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.28)',
+        borderColor: '#e2e8f0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.04,
+        shadowRadius: 12,
+        elevation: 3,
     },
     introCardStepLabel: {
-        color: '#d8b4fe',
+        color: '#7c3aed',
         fontSize: 11,
         fontWeight: '700',
         textTransform: 'uppercase',
@@ -2965,13 +3278,13 @@ const styles = StyleSheet.create({
         marginBottom: 6,
     },
     introCardTitle: {
-        color: '#ffffff',
+        color: '#0f172a',
         fontWeight: '700',
         fontSize: 16,
         marginBottom: 6,
     },
     introCardText: {
-        color: '#ede9fe',
+        color: '#64748b',
         fontSize: 14,
         lineHeight: 20,
     },
@@ -2984,7 +3297,7 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
     },
     introBulletText: {
-        color: '#f3e8ff',
+        color: '#475569',
         fontSize: 12,
         lineHeight: 18,
         marginLeft: 8,
@@ -3000,15 +3313,15 @@ const styles = StyleSheet.create({
         minWidth: 84,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.52)',
-        backgroundColor: 'rgba(109,40,217,0.22)',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
         paddingHorizontal: 14,
         paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
     },
     introGhostButtonText: {
-        color: '#f3e8ff',
+        color: '#334155',
         fontSize: 14,
         fontWeight: '700',
     },
@@ -3018,8 +3331,8 @@ const styles = StyleSheet.create({
     trustPill: {
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: 'rgba(216,180,254,0.34)',
-        backgroundColor: 'rgba(109,40,217,0.2)',
+        borderColor: '#e0e7ff',
+        backgroundColor: '#eff6ff',
         paddingHorizontal: 12,
         paddingVertical: 6,
         marginTop: 12,
@@ -3028,7 +3341,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     trustPillText: {
-        color: '#f3e8ff',
+        color: '#4f46e5',
         fontSize: 12,
         fontWeight: '600',
         marginLeft: 6,
@@ -3056,16 +3369,16 @@ const styles = StyleSheet.create({
     },
     primaryButton: {
         width: '100%',
-        backgroundColor: '#7c3aed',
-        borderRadius: 12,
-        paddingVertical: 14,
+        backgroundColor: '#8b5cf6',
+        borderRadius: 16,
+        paddingVertical: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#6d28d9',
+        shadowColor: '#7c3aed',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.22,
-        shadowRadius: 12,
-        elevation: 6,
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
+        elevation: 8,
     },
     reviewPrimaryAction: {
         flex: 2,
@@ -3139,8 +3452,8 @@ const styles = StyleSheet.create({
         height: width * 0.86,
         borderRadius: 34,
         borderWidth: 1.4,
-        borderColor: 'rgba(219,234,254,0.74)',
-        backgroundColor: 'rgba(255,255,255,0.015)',
+        borderColor: 'rgba(233,213,255,0.6)',
+        backgroundColor: 'rgba(255,255,255,0.02)',
     },
     recordingGuideFrameInner: {
         position: 'absolute',
@@ -3148,39 +3461,39 @@ const styles = StyleSheet.create({
         height: width * 0.79,
         borderRadius: 30,
         borderWidth: 1,
-        borderColor: 'rgba(148,163,184,0.35)',
+        borderColor: 'rgba(216,180,254,0.3)',
     },
     centerGlowRing: {
-        width: width * 0.46,
-        height: width * 0.46,
-        borderRadius: (width * 0.46) / 2,
-        borderWidth: 1.8,
-        borderColor: 'rgba(66,133,244,0.7)',
-        backgroundColor: 'rgba(66,133,244,0.14)',
-        shadowColor: '#1d4ed8',
+        width: width * 0.48,
+        height: width * 0.48,
+        borderRadius: (width * 0.48) / 2,
+        borderWidth: 2,
+        borderColor: 'rgba(168,85,247,0.8)',
+        backgroundColor: 'rgba(168,85,247,0.18)',
+        shadowColor: '#a855f7',
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.24,
-        shadowRadius: 18,
+        shadowOpacity: 0.4,
+        shadowRadius: 24,
     },
     recordingFocusPulse: {
         position: 'absolute',
-        width: width * 0.7,
-        height: width * 0.7,
-        borderRadius: (width * 0.7) / 2,
-        borderWidth: 1.2,
-        borderColor: 'rgba(147,197,253,0.22)',
+        width: width * 0.75,
+        height: width * 0.75,
+        borderRadius: (width * 0.75) / 2,
+        borderWidth: 1.5,
+        borderColor: 'rgba(216,180,254,0.25)',
         backgroundColor: 'transparent',
     },
     recordingGuideCenterDot: {
         position: 'absolute',
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: 'rgba(147,197,253,0.8)',
-        shadowColor: '#60a5fa',
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: 'rgba(216,180,254,0.9)',
+        shadowColor: '#d8b4fe',
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.45,
-        shadowRadius: 8,
+        shadowOpacity: 0.6,
+        shadowRadius: 10,
     },
     processingCard: {
         width: '100%',
@@ -3261,11 +3574,18 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(191,219,254,0.45)',
     },
+    processingFallbackButtonSecondary: {
+        backgroundColor: 'rgba(15,23,42,0.8)',
+        borderColor: 'rgba(148,163,184,0.35)',
+    },
     processingFallbackButtonText: {
         color: '#eff6ff',
         fontSize: 13,
         fontWeight: '700',
         textAlign: 'center',
+    },
+    processingFallbackButtonSecondaryText: {
+        color: '#e2e8f0',
     },
     bottomControls: {
         paddingHorizontal: 18,
@@ -3786,6 +4106,19 @@ const styles = StyleSheet.create({
         padding: 16,
         marginBottom: 16,
     },
+    reviewSectionTitle: {
+        color: '#f8fafc',
+        fontSize: 14,
+        fontWeight: '800',
+        marginTop: 8,
+        marginBottom: 6,
+    },
+    reviewFieldHint: {
+        color: '#94a3b8',
+        fontSize: 12,
+        lineHeight: 18,
+        marginBottom: 6,
+    },
     reviewLabel: {
         color: '#cbd5e1',
         fontSize: 12,
@@ -3802,6 +4135,46 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 10,
         fontSize: 14,
+    },
+    reviewChipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 4,
+    },
+    reviewChip: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: '#334155',
+        backgroundColor: '#0f172a',
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+    },
+    reviewChipActive: {
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.14)',
+    },
+    reviewChipText: {
+        color: '#cbd5e1',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    reviewChipTextActive: {
+        color: '#dcfce7',
+    },
+    reviewToggleRow: {
+        marginTop: 8,
+        paddingVertical: 6,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+    },
+    reviewToggleLabel: {
+        flex: 1,
+        color: '#e2e8f0',
+        fontSize: 13,
+        fontWeight: '600',
     },
     trustBadgeCard: {
         marginTop: 12,

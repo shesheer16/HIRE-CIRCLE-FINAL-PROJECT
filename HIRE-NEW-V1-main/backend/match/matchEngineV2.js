@@ -1,5 +1,8 @@
 const algo = require('../utils/matchingAlgorithm');
 const { evaluateCompositeMatch } = require('./apexSynthesisMatcher');
+const { getApDistanceScore, getApRegionalAdjustment } = require('./apMatchEngineV19');
+const { isUserProfileMarkedComplete } = require('../services/profileCompletionService');
+const { getNormalizedLocationParts } = require('../utils/locationFields');
 
 const MAX_RESULTS = 20;
 
@@ -157,9 +160,14 @@ const hasMandatoryLicenses = ({ job = {}, worker = {} }) => {
 };
 
 const getDistanceScore = ({ job = {}, worker = {}, scoringContext = {} }) => {
-    const jobCity = normalizeText(job.location);
-    const workerCity = normalizeText(worker.city);
-    if (!jobCity || !workerCity) {
+    const jobLocation = getNormalizedLocationParts(job);
+    const workerLocation = getNormalizedLocationParts(worker);
+    const jobDistrict = jobLocation.district;
+    const workerDistrict = workerLocation.district;
+    const jobMandal = jobLocation.mandal;
+    const workerMandal = workerLocation.mandal;
+
+    if (!jobDistrict || !workerDistrict) {
         return {
             distanceScore: 0.8,
             outsideRadius: false,
@@ -167,7 +175,7 @@ const getDistanceScore = ({ job = {}, worker = {}, scoringContext = {} }) => {
         };
     }
 
-    const remoteText = `${String(job.location || '')} ${String(job.jobLocationType || '')} ${String(job.description || '')}`.toLowerCase();
+    const remoteText = `${String(job.location || '')} ${String(job.locationLabel || '')} ${String(job.jobLocationType || '')} ${String(job.description || '')}`.toLowerCase();
     const remoteAllowed = Boolean(job?.remoteAllowed || job?.remote) || ['remote', 'wfh', 'telecommute', 'work from home', 'anywhere'].some((token) => remoteText.includes(token));
     if (remoteAllowed) {
         return {
@@ -177,7 +185,7 @@ const getDistanceScore = ({ job = {}, worker = {}, scoringContext = {} }) => {
         };
     }
 
-    if (jobCity === workerCity) {
+    if (jobDistrict === workerDistrict && jobMandal && workerMandal && jobMandal === workerMandal) {
         return {
             distanceScore: 1,
             outsideRadius: false,
@@ -185,7 +193,25 @@ const getDistanceScore = ({ job = {}, worker = {}, scoringContext = {} }) => {
         };
     }
 
-    if (jobCity.includes(workerCity) || workerCity.includes(jobCity)) {
+    if (jobDistrict === workerDistrict) {
+        return {
+            distanceScore: 0.93,
+            outsideRadius: false,
+            toleranceApplied: false,
+        };
+    }
+
+    const apDistanceScore = getApDistanceScore({ job, worker, scoringContext });
+    if (apDistanceScore) {
+        return apDistanceScore;
+    }
+
+    const jobLocationLabel = jobLocation.locationLabel;
+    const workerLocationLabel = workerLocation.locationLabel;
+    if (
+        (jobMandal && workerMandal && (jobMandal.includes(workerMandal) || workerMandal.includes(jobMandal)))
+        || (jobLocationLabel && workerLocationLabel && (jobLocationLabel.includes(workerLocationLabel) || workerLocationLabel.includes(jobLocationLabel)))
+    ) {
         return {
             distanceScore: 0.9,
             outsideRadius: false,
@@ -210,8 +236,8 @@ const getDistanceScore = ({ job = {}, worker = {}, scoringContext = {} }) => {
 };
 
 const isCriticalFieldsMissing = ({ job = {}, worker = {}, roleData = {} }) => {
-    if (!job?._id || !job.title || !job.location) return true;
-    if (!worker?._id || !worker.city) return true;
+    if (!job?._id || !job.title || !(job.location || job.district)) return true;
+    if (!worker?._id || !(worker.city || worker.district)) return true;
     if (!roleData?.roleName) return true;
     return false;
 };
@@ -219,12 +245,12 @@ const isCriticalFieldsMissing = ({ job = {}, worker = {}, roleData = {} }) => {
 const computeProfileCompleteness = ({ worker = {}, workerUser = {}, roleData = {} }) => {
     const checks = [
         Boolean(worker.firstName),
-        Boolean(worker.city),
+        Boolean(worker.district || worker.city),
         Boolean(Array.isArray(roleData.skills) && roleData.skills.length > 0),
         Number(roleData.experienceInRole || 0) > 0,
         Number(roleData.expectedSalary || 0) > 0,
         Boolean(worker.interviewVerified),
-        Boolean(workerUser.hasCompletedProfile),
+        isUserProfileMarkedComplete(workerUser),
     ];
 
     const completed = checks.filter(Boolean).length;
@@ -441,7 +467,7 @@ const evaluateRoleAgainstJob = ({ job, worker, workerUser, roleData, scoringCont
         + (apexCompositeScore * 0.65)
     );
     const educationBlendMultiplier = clamp(0.95 + (educationScore * 0.08), 0.95, 1.03);
-    const baseScore = clamp01(
+    const baseScorePreRegional = clamp01(
         (
             (hybridCoreScore * 0.7)
             + (weightedCapabilityScore * 0.3)
@@ -449,6 +475,17 @@ const evaluateRoleAgainstJob = ({ job, worker, workerUser, roleData, scoringCont
             + softBonus
         ) * educationBlendMultiplier
     );
+    const apRegional = getApRegionalAdjustment({
+        job,
+        worker,
+        workerUser,
+        roleData,
+        scoringContext,
+        distanceKm: distanceResolution?.distanceKm ?? null,
+        requiredExp,
+    });
+    const apRegionalMultiplier = Number(apRegional?.multiplier) || 1;
+    const baseScore = clamp01(baseScorePreRegional * apRegionalMultiplier);
     const sparseMarketSignals = hasSparseMarketSignals(scoringContext);
     const reliabilityFloor = sparseMarketSignals ? 0.97 : 0.9;
     const employerFloor = sparseMarketSignals ? 0.97 : 0.9;
@@ -536,6 +573,10 @@ const evaluateRoleAgainstJob = ({ job, worker, workerUser, roleData, scoringCont
     if (Number(scoringContext?.skillReputationScore || 0) >= 0.65) explainabilityReasons.push('Strong skill reputation');
     if (badgeRankingMultiplier > 1.01) explainabilityReasons.push('Verified badge advantage');
 
+    const resolvedDistanceKm = Number.isFinite(Number(distanceResolution?.distanceKm))
+        ? Number(distanceResolution.distanceKm)
+        : (distanceScore === 1 ? 0 : 999);
+
     return {
         accepted,
         rejectReason: accepted ? null : 'SCORE_BELOW_THRESHOLD',
@@ -573,6 +614,7 @@ const evaluateRoleAgainstJob = ({ job, worker, workerUser, roleData, scoringCont
             profileMultiplier: profileCompletenessMultiplier,
             profileCompletenessPenalty,
             baseScore,
+            baseScorePreRegional,
             geometricCoreScore,
             apexCompositeScore,
             phase3CompositeScore,
@@ -622,11 +664,20 @@ const evaluateRoleAgainstJob = ({ job, worker, workerUser, roleData, scoringCont
             topReasons: explainabilityReasons.slice(0, 3),
             finalScore,
             tier,
+            apRegional: apRegional ? {
+                engineVersion: apRegional.apEngineVersion,
+                multiplier: apRegionalMultiplier,
+                uncappedMultiplier: apRegional.uncappedMultiplier,
+                reasons: apRegional.reasons,
+                job: apRegional.job,
+                worker: apRegional.worker,
+                distanceKm: apRegional.distanceKm,
+            } : null,
         },
         verificationStatus,
         profileCompleteness: profileCompletenessMultiplier,
         lastActive: getLastActive({ worker }),
-        distanceKm: distanceScore === 1 ? 0 : 999,
+        distanceKm: resolvedDistanceKm,
     };
 };
 

@@ -1,25 +1,19 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+    ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
+    ScrollView, StyleSheet, Text, TextInput,
+    TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { handleAuthBackNavigation } from '../utils/authNavigation';
+import { normalizeSelectedRole } from '../utils/authRoleSelection';
+import { PALETTE, RADIUS, SPACING, SHADOWS } from '../theme/theme';
 
 export default function ForgotPasswordScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const selectedRole = String(route?.params?.selectedRole || 'worker').toLowerCase() === 'employer'
-        ? 'employer'
-        : 'worker';
+    const selectedRole = normalizeSelectedRole(route?.params?.selectedRole || 'worker');
     const [stage, setStage] = useState('identity');
     const [identityMode, setIdentityMode] = useState('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -42,23 +36,13 @@ export default function ForgotPasswordScreen({ navigation, route }) {
 
     const handleBack = useCallback(() => {
         if (stage !== 'identity') {
-            if (stage === 'verify') {
-                setStage('identity');
-                return;
-            }
-            if (stage === 'reset') {
-                setStage('verify');
-                return;
-            }
-            if (stage === 'success') {
-                setStage('identity');
-                return;
-            }
+            if (stage === 'verify') { setStage('identity'); return; }
+            if (stage === 'reset') { setStage('verify'); return; }
+            if (stage === 'success') { setStage('identity'); return; }
         }
-        if (navigation.canGoBack()) {
-            navigation.goBack();
-        }
-    }, [navigation, stage]);
+        if (navigation.canGoBack()) { navigation.goBack(); return; }
+        handleAuthBackNavigation(navigation, { selectedRole, target: 'Login' });
+    }, [navigation, selectedRole, stage]);
 
     const sendOtp = useCallback(async () => {
         if (loading || !canSendOtp) return;
@@ -66,9 +50,7 @@ export default function ForgotPasswordScreen({ navigation, route }) {
         try {
             await new Promise((resolve) => setTimeout(resolve, 400));
             setStage('verify');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     }, [canSendOtp, loading]);
 
     const verifyOtp = useCallback(async () => {
@@ -77,9 +59,7 @@ export default function ForgotPasswordScreen({ navigation, route }) {
         try {
             await new Promise((resolve) => setTimeout(resolve, 350));
             setStage('reset');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     }, [canVerifyOtp, loading]);
 
     const resendOtp = useCallback(async () => {
@@ -88,9 +68,7 @@ export default function ForgotPasswordScreen({ navigation, route }) {
         try {
             await new Promise((resolve) => setTimeout(resolve, 300));
             Alert.alert('OTP Sent', 'A new OTP has been sent.');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     }, [loading]);
 
     const resetPassword = useCallback(async () => {
@@ -105,45 +83,50 @@ export default function ForgotPasswordScreen({ navigation, route }) {
             Alert.alert('Password mismatch', 'Password and confirm password should match.');
             return;
         }
-
         setLoading(true);
         try {
             await new Promise((resolve) => setTimeout(resolve, 450));
             setStage('success');
-        } finally {
-            setLoading(false);
-        }
+        } finally { setLoading(false); }
     }, [canReset, confirmPassword, loading, newPassword]);
 
     const goToLogin = useCallback(() => {
         navigation.navigate('Login', { selectedRole });
     }, [navigation, selectedRole]);
 
+    const stageConfig = {
+        identity: { icon: 'lock-closed-outline', title: 'Forgot Password', sub: 'Recover access in a few quick steps.' },
+        verify:   { icon: 'keypad-outline',      title: 'Verify OTP',       sub: 'Enter the OTP sent to your account.' },
+        reset:    { icon: 'shield-checkmark-outline', title: 'New Password', sub: 'Set a new password for your account.' },
+        success:  { icon: 'checkmark-circle-outline', title: 'All Set!',     sub: 'Your password has been updated.' },
+    };
+
+    const current = stageConfig[stage];
+
     const renderIdentityStage = () => (
         <>
+            {/* Segment */}
             <View style={styles.segmentWrap}>
                 <TouchableOpacity
-                    style={[styles.segmentButton, identityMode === 'phone' && styles.segmentButtonActive]}
-                    activeOpacity={0.9}
-                    onPress={() => setIdentityMode('phone')}
+                    style={[styles.segmentBtn, identityMode === 'phone' && styles.segmentBtnActive]}
+                    activeOpacity={0.85} onPress={() => setIdentityMode('phone')}
                 >
-                    <Text style={[styles.segmentText, identityMode === 'phone' && styles.segmentTextActive]}>PHONE</Text>
+                    <Text style={[styles.segmentText, identityMode === 'phone' && styles.segmentTextActive]}>Phone</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.segmentButton, identityMode === 'email' && styles.segmentButtonActive]}
-                    activeOpacity={0.9}
-                    onPress={() => setIdentityMode('email')}
+                    style={[styles.segmentBtn, identityMode === 'email' && styles.segmentBtnActive]}
+                    activeOpacity={0.85} onPress={() => setIdentityMode('email')}
                 >
-                    <Text style={[styles.segmentText, identityMode === 'email' && styles.segmentTextActive]}>EMAIL</Text>
+                    <Text style={[styles.segmentText, identityMode === 'email' && styles.segmentTextActive]}>Email</Text>
                 </TouchableOpacity>
             </View>
 
             <View style={styles.formBlock}>
                 {identityMode === 'phone' ? (
                     <View>
-                        <Text style={styles.fieldLabel}>PHONE NUMBER</Text>
+                        <Text style={styles.fieldLabel}>Phone number</Text>
                         <View style={styles.phoneRow}>
-                            <View style={styles.countryCodeWrap}>
+                            <View style={styles.countryCode}>
                                 <Text style={styles.countryCodeText}>+91</Text>
                             </View>
                             <TextInput
@@ -152,43 +135,38 @@ export default function ForgotPasswordScreen({ navigation, route }) {
                                 onChangeText={setPhoneNumber}
                                 keyboardType="phone-pad"
                                 placeholder="98765 43210"
-                                placeholderTextColor="#94a3b8"
+                                placeholderTextColor={PALETTE.textTertiary}
                                 maxLength={15}
                             />
                         </View>
                     </View>
                 ) : (
                     <View>
-                        <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
+                        <Text style={styles.fieldLabel}>Email address</Text>
                         <TextInput
                             style={styles.input}
                             value={email}
                             onChangeText={setEmail}
                             autoCapitalize="none"
                             keyboardType="email-address"
-                            placeholder="user@example.com"
-                            placeholderTextColor="#94a3b8"
+                            placeholder="you@example.com"
+                            placeholderTextColor={PALETTE.textTertiary}
                         />
                     </View>
                 )}
 
                 <TouchableOpacity
-                    style={[styles.submitWrap, (!canSendOtp || loading) && styles.submitWrapDisabled]}
-                    activeOpacity={0.9}
-                    onPress={sendOtp}
+                    style={[styles.submitBtn, (!canSendOtp || loading) && styles.submitBtnDisabled]}
+                    activeOpacity={0.88} onPress={sendOtp}
                     disabled={!canSendOtp || loading}
                 >
                     <LinearGradient
-                        colors={['#7c3aed', '#9333ea']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
+                        colors={['#C084FC', PALETTE.accent, PALETTE.accentDeep]}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                         style={styles.submitGradient}
                     >
-                        {loading ? (
-                            <ActivityIndicator size="small" color="#ffffff" />
-                        ) : (
-                            <Text style={styles.submitText}>Send OTP</Text>
-                        )}
+                        {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> :
+                            <Text style={styles.submitText}>Send OTP</Text>}
                     </LinearGradient>
                 </TouchableOpacity>
             </View>
@@ -198,39 +176,34 @@ export default function ForgotPasswordScreen({ navigation, route }) {
     const renderVerifyStage = () => (
         <View style={styles.formBlock}>
             <View>
-                <Text style={styles.fieldLabel}>ENTER OTP</Text>
+                <Text style={styles.fieldLabel}>Enter OTP</Text>
                 <TextInput
                     style={styles.input}
                     value={otp}
                     onChangeText={setOtp}
                     keyboardType="number-pad"
                     placeholder="4-6 digit OTP"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={PALETTE.textTertiary}
                     maxLength={6}
                 />
             </View>
 
             <TouchableOpacity
-                style={[styles.submitWrap, (!canVerifyOtp || loading) && styles.submitWrapDisabled]}
-                activeOpacity={0.9}
-                onPress={verifyOtp}
+                style={[styles.submitBtn, (!canVerifyOtp || loading) && styles.submitBtnDisabled]}
+                activeOpacity={0.88} onPress={verifyOtp}
                 disabled={!canVerifyOtp || loading}
             >
                 <LinearGradient
-                    colors={['#7c3aed', '#9333ea']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
+                    colors={['#C084FC', PALETTE.accent, PALETTE.accentDeep]}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                     style={styles.submitGradient}
                 >
-                    {loading ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
-                    ) : (
-                        <Text style={styles.submitText}>Verify OTP</Text>
-                    )}
+                    {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> :
+                        <Text style={styles.submitText}>Verify OTP</Text>}
                 </LinearGradient>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.helperTap} onPress={resendOtp} activeOpacity={0.8} disabled={loading}>
+            <TouchableOpacity style={styles.helperTap} onPress={resendOtp} activeOpacity={0.7} disabled={loading}>
                 <Text style={styles.helperText}>Resend OTP</Text>
             </TouchableOpacity>
         </View>
@@ -239,334 +212,321 @@ export default function ForgotPasswordScreen({ navigation, route }) {
     const renderResetStage = () => (
         <View style={styles.formBlock}>
             <View>
-                <Text style={styles.fieldLabel}>NEW PASSWORD</Text>
+                <Text style={styles.fieldLabel}>New password</Text>
                 <TextInput
-                    style={styles.input}
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    secureTextEntry
+                    style={styles.input} value={newPassword}
+                    onChangeText={setNewPassword} secureTextEntry
                     placeholder="At least 6 characters"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={PALETTE.textTertiary}
                 />
             </View>
             <View>
-                <Text style={styles.fieldLabel}>CONFIRM PASSWORD</Text>
+                <Text style={styles.fieldLabel}>Confirm password</Text>
                 <TextInput
-                    style={styles.input}
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry
+                    style={styles.input} value={confirmPassword}
+                    onChangeText={setConfirmPassword} secureTextEntry
                     placeholder="Re-enter password"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={PALETTE.textTertiary}
                 />
             </View>
             <TouchableOpacity
-                style={[styles.submitWrap, (!canReset || loading) && styles.submitWrapDisabled]}
-                activeOpacity={0.9}
-                onPress={resetPassword}
+                style={[styles.submitBtn, (!canReset || loading) && styles.submitBtnDisabled]}
+                activeOpacity={0.88} onPress={resetPassword}
                 disabled={!canReset || loading}
             >
                 <LinearGradient
-                    colors={['#7c3aed', '#9333ea']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
+                    colors={['#C084FC', PALETTE.accent, PALETTE.accentDeep]}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                     style={styles.submitGradient}
                 >
-                    {loading ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
-                    ) : (
-                        <Text style={styles.submitText}>Reset Password</Text>
-                    )}
+                    {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> :
+                        <Text style={styles.submitText}>Reset Password</Text>}
                 </LinearGradient>
             </TouchableOpacity>
         </View>
     );
 
     const renderSuccessStage = () => (
-        <View style={styles.successWrap}>
-            <View style={styles.successIcon}>
-                <Ionicons name="checkmark" size={18} color="#ffffff" />
+        <View style={styles.successCard}>
+            <View style={styles.successIconWrap}>
+                <Ionicons name="checkmark" size={28} color="#FFFFFF" />
             </View>
             <Text style={styles.successTitle}>Password Updated</Text>
-            <Text style={styles.successSubtitle}>You can sign in with your new password.</Text>
-            <TouchableOpacity style={styles.successBtn} activeOpacity={0.9} onPress={goToLogin}>
+            <Text style={styles.successSub}>You can sign in with your new password.</Text>
+            <TouchableOpacity style={styles.successBtn} activeOpacity={0.88} onPress={goToLogin}>
                 <Text style={styles.successBtnText}>Back to Sign In</Text>
             </TouchableOpacity>
         </View>
     );
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-            <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="always"
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 24 },
-                ]}
+        <View style={styles.container}>
+            <View pointerEvents="none" style={styles.bgOrbTop} />
+            <View pointerEvents="none" style={styles.bgOrbBottom} />
+            <KeyboardAvoidingView
+                style={styles.flex}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             >
-                <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.8}>
-                    <Ionicons name="chevron-back" size={18} color="#94a3b8" />
-                    <Text style={styles.backBtnText}>Back</Text>
-                </TouchableOpacity>
+                <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="always"
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 },
+                    ]}
+                >
+                    {/* Back */}
+                    <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.7}>
+                        <Ionicons name="chevron-back" size={22} color={PALETTE.textPrimary} />
+                    </TouchableOpacity>
 
-                <View style={styles.headerBlock}>
-                    <Text style={styles.title}>Forgot Password</Text>
-                    <Text style={styles.subtitle}>
-                        {stage === 'identity' && 'Recover access in a few quick steps.'}
-                        {stage === 'verify' && 'Enter the OTP sent to your account.'}
-                        {stage === 'reset' && 'Set a new password for your account.'}
-                        {stage === 'success' && 'All set, you can sign in now.'}
-                    </Text>
-                </View>
+                    <View style={styles.heroCard}>
+                        <LinearGradient
+                            colors={[PALETTE.accent, PALETTE.accentDeep]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.heroAccent}
+                        />
+                        <View style={styles.stageIconSection}>
+                            <View style={styles.stageIconWrap}>
+                                <Ionicons name={current.icon} size={30} color={PALETTE.accentDeep} />
+                            </View>
+                        </View>
 
-                {stage === 'identity' && renderIdentityStage()}
-                {stage === 'verify' && renderVerifyStage()}
-                {stage === 'reset' && renderResetStage()}
-                {stage === 'success' && renderSuccessStage()}
+                        <Text style={styles.title}>{current.title}</Text>
+                        <Text style={styles.subtitle}>{current.sub}</Text>
 
-                {stage !== 'success' && (
-                    <View style={styles.footerRow}>
-                        <Text style={styles.footerText}>Remembered your password? </Text>
-                        <TouchableOpacity activeOpacity={0.8} onPress={goToLogin}>
-                            <Text style={styles.footerLink}>Sign In</Text>
-                        </TouchableOpacity>
+                        {stage !== 'success' && (
+                            <View style={styles.stepsPill}>
+                                {['identity', 'verify', 'reset'].map((s, i) => (
+                                    <View key={s} style={[
+                                        styles.stepDot,
+                                        (stage === s || ['identity', 'verify', 'reset'].indexOf(stage) > i)
+                                            && styles.stepDotActive,
+                                    ]} />
+                                ))}
+                            </View>
+                        )}
                     </View>
-                )}
-            </ScrollView>
-        </KeyboardAvoidingView>
+
+                    {stage !== 'success' ? (
+                        <View style={styles.formCard}>
+                            {stage === 'identity' && renderIdentityStage()}
+                            {stage === 'verify' && renderVerifyStage()}
+                            {stage === 'reset' && renderResetStage()}
+                        </View>
+                    ) : (
+                        renderSuccessStage()
+                    )}
+
+                    {stage !== 'success' && (
+                        <View style={styles.footerRow}>
+                            <Text style={styles.footerText}>Remembered your password?{' '}</Text>
+                            <TouchableOpacity activeOpacity={0.7} onPress={goToLogin}>
+                                <Text style={styles.footerLink}>Sign In</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f4f5f7',
+    container: { flex: 1, backgroundColor: PALETTE.background },
+    bgOrbTop: {
+        position: 'absolute',
+        top: -120,
+        right: -80,
+        width: 240,
+        height: 240,
+        borderRadius: 120,
+        backgroundColor: PALETTE.accentTint,
+        opacity: 0.6,
     },
-    scrollContent: {
-        flexGrow: 1,
-        paddingHorizontal: 24,
+    bgOrbBottom: {
+        position: 'absolute',
+        bottom: -140,
+        left: -90,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: PALETTE.accentSoft,
+        opacity: 0.6,
     },
+    flex: { flex: 1 },
+    scrollContent: { flexGrow: 1, paddingHorizontal: 24 },
     backBtn: {
-        minHeight: 44,
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        marginBottom: 22,
+        width: 44, height: 44,
+        alignItems: 'center', justifyContent: 'center',
+        alignSelf: 'flex-start', marginBottom: 12,
     },
-    backBtnText: {
-        fontSize: 13,
-        lineHeight: 18,
-        color: '#94a3b8',
-        fontWeight: '600',
+    heroCard: {
+        backgroundColor: PALETTE.background,
+        borderRadius: RADIUS.xl,
+        paddingVertical: 22,
+        paddingHorizontal: 18,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+        marginBottom: 16,
+        overflow: 'hidden',
+        ...SHADOWS.md,
     },
-    headerBlock: {
-        marginBottom: 18,
+    heroAccent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 6,
+    },
+    stageIconSection: { alignItems: 'center', marginBottom: 10 },
+    stageIconWrap: {
+        width: 68, height: 68, borderRadius: 34,
+        backgroundColor: PALETTE.accentTint,
+        borderWidth: 1, borderColor: PALETTE.accentBorder,
+        alignItems: 'center', justifyContent: 'center',
     },
     title: {
-        fontSize: 27,
-        lineHeight: 32,
-        fontWeight: '800',
-        color: '#0f172a',
-        letterSpacing: -0.2,
+        fontSize: 24, fontWeight: '800',
+        color: PALETTE.textPrimary, textAlign: 'center',
+        letterSpacing: -0.4,
     },
     subtitle: {
-        marginTop: 8,
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: '600',
-        color: '#64748b',
+        marginTop: 6, fontSize: 13.5, fontWeight: '500',
+        color: PALETTE.textSecondary, textAlign: 'center',
+        lineHeight: 19,
+    },
+    stepsPill: {
+        flexDirection: 'row', alignSelf: 'center',
+        gap: 6, marginTop: 12,
+    },
+    stepDot: {
+        width: 8, height: 8, borderRadius: 4,
+        backgroundColor: PALETTE.surface3,
+    },
+    stepDotActive: {
+        backgroundColor: PALETTE.accent, width: 20,
+    },
+    formCard: {
+        backgroundColor: PALETTE.background,
+        borderRadius: RADIUS.xl,
+        paddingHorizontal: 18,
+        paddingVertical: 16,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+        ...SHADOWS.md,
     },
     segmentWrap: {
-        flexDirection: 'row',
-        backgroundColor: '#e2e8f0',
-        borderRadius: 14,
-        padding: 4,
-        marginTop: 6,
+        flexDirection: 'row', backgroundColor: PALETTE.backgroundSoft,
+        borderRadius: RADIUS.md, padding: 4, marginBottom: 18,
+        borderWidth: 1, borderColor: PALETTE.borderLight,
     },
-    segmentButton: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: 46,
-        borderRadius: 10,
+    segmentBtn: {
+        flex: 1, alignItems: 'center', justifyContent: 'center',
+        minHeight: 44, borderRadius: RADIUS.sm,
     },
-    segmentButtonActive: {
-        backgroundColor: '#ffffff',
+    segmentBtnActive: {
+        backgroundColor: PALETTE.background,
+        borderWidth: 1,
+        borderColor: PALETTE.borderLight,
+        ...SHADOWS.sm,
     },
     segmentText: {
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: '700',
-        color: '#64748b',
+        fontSize: 14, fontWeight: '600', color: PALETTE.textSecondary,
     },
     segmentTextActive: {
-        color: '#0f172a',
+        color: PALETTE.textPrimary, fontWeight: '700',
     },
-    formBlock: {
-        marginTop: 20,
-        gap: 14,
-    },
+    formBlock: { gap: 16 },
     fieldLabel: {
-        marginBottom: 8,
-        fontSize: 11,
-        lineHeight: 14,
-        fontWeight: '700',
-        color: '#94a3b8',
-        letterSpacing: 0.9,
+        marginBottom: 8, fontSize: 13, fontWeight: '700',
+        color: PALETTE.textSecondary,
     },
     phoneRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d5dee8',
-        backgroundColor: '#f3f6f9',
-        minHeight: 54,
-        overflow: 'hidden',
+        flexDirection: 'row', alignItems: 'center',
+        borderRadius: RADIUS.md, borderWidth: 1,
+        borderColor: PALETTE.border,
+        backgroundColor: PALETTE.surface2,
+        minHeight: 50, overflow: 'hidden',
     },
-    countryCodeWrap: {
-        minWidth: 64,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 10,
-        paddingVertical: 14,
-        borderRightWidth: 1,
-        borderRightColor: '#d5dee8',
-        backgroundColor: '#f8fafc',
+    countryCode: {
+        paddingHorizontal: 14, borderRightWidth: 1,
+        borderRightColor: PALETTE.border,
+        backgroundColor: PALETTE.surface3,
+        justifyContent: 'center', minHeight: 50,
     },
     countryCodeText: {
-        fontSize: 14,
-        lineHeight: 18,
-        fontWeight: '700',
-        color: '#64748b',
+        fontSize: 15, fontWeight: '600', color: PALETTE.textSecondary,
     },
     phoneInput: {
-        flex: 1,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        fontSize: 14,
-        lineHeight: 19,
-        fontWeight: '500',
-        color: '#0f172a',
+        flex: 1, paddingHorizontal: 14, fontSize: 15,
+        fontWeight: '400', color: PALETTE.textPrimary,
     },
     input: {
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d5dee8',
-        backgroundColor: '#f3f6f9',
-        minHeight: 54,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        fontSize: 14,
-        lineHeight: 19,
-        fontWeight: '500',
-        color: '#0f172a',
+        borderRadius: RADIUS.md, borderWidth: 1,
+        borderColor: PALETTE.border,
+        backgroundColor: PALETTE.surface2,
+        minHeight: 50, paddingHorizontal: 14,
+        fontSize: 15, fontWeight: '400', color: PALETTE.textPrimary,
     },
-    submitWrap: {
-        marginTop: 10,
-        borderRadius: 14,
-        overflow: 'hidden',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.22,
-        shadowRadius: 10,
-        elevation: 4,
+    submitBtn: {
+        borderRadius: RADIUS.full, overflow: 'hidden',
+        marginTop: 6, ...SHADOWS.accent,
     },
-    submitWrapDisabled: {
-        opacity: 0.55,
-    },
+    submitBtnDisabled: { opacity: 0.50 },
     submitGradient: {
-        minHeight: 54,
-        alignItems: 'center',
-        justifyContent: 'center',
+        minHeight: 52, alignItems: 'center', justifyContent: 'center',
+        borderRadius: RADIUS.full,
     },
     submitText: {
-        fontSize: 17,
-        lineHeight: 22,
-        fontWeight: '800',
-        color: '#ffffff',
+        fontSize: 16, fontWeight: '700', color: '#FFFFFF',
     },
     helperTap: {
-        alignSelf: 'center',
-        minHeight: 30,
-        justifyContent: 'center',
+        alignSelf: 'center', minHeight: 44, justifyContent: 'center',
     },
     helperText: {
-        fontSize: 12,
-        lineHeight: 16,
-        color: '#7c3aed',
-        fontWeight: '700',
+        fontSize: 14, fontWeight: '700', color: PALETTE.accentDeep,
     },
-    successWrap: {
-        marginTop: 24,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f8f5ff',
-        paddingHorizontal: 20,
-        paddingVertical: 22,
+    successCard: {
+        marginTop: 12, borderRadius: RADIUS.xl,
+        borderWidth: 1, borderColor: PALETTE.border,
+        backgroundColor: PALETTE.background,
+        paddingHorizontal: 24, paddingVertical: 28,
         alignItems: 'center',
+        ...SHADOWS.md,
     },
-    successIcon: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: '#7c3aed',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 10,
+    successIconWrap: {
+        width: 56, height: 56, borderRadius: 28,
+        backgroundColor: PALETTE.accent,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 14,
+        ...SHADOWS.accent,
     },
     successTitle: {
-        fontSize: 16,
-        lineHeight: 20,
-        fontWeight: '800',
-        color: '#0f172a',
+        fontSize: 20, fontWeight: '800', color: PALETTE.textPrimary,
     },
-    successSubtitle: {
-        marginTop: 6,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: '500',
-        color: '#64748b',
-        textAlign: 'center',
+    successSub: {
+        marginTop: 6, fontSize: 14, fontWeight: '400',
+        color: PALETTE.textSecondary, textAlign: 'center',
     },
     successBtn: {
-        marginTop: 14,
-        minHeight: 44,
-        paddingHorizontal: 16,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#7c3aed',
+        marginTop: 18, minHeight: 48, borderRadius: RADIUS.full,
+        backgroundColor: PALETTE.accent, paddingHorizontal: 28,
+        alignItems: 'center', justifyContent: 'center',
+        ...SHADOWS.accent,
     },
     successBtnText: {
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: '700',
-        color: '#ffffff',
+        fontSize: 14, fontWeight: '700', color: '#FFFFFF',
     },
     footerRow: {
-        marginTop: 24,
-        marginBottom: 8,
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
+        marginTop: 28, flexDirection: 'row',
+        justifyContent: 'center', alignItems: 'center',
     },
     footerText: {
-        fontSize: 12,
-        lineHeight: 16,
-        color: '#94a3b8',
-        fontWeight: '600',
+        fontSize: 14, color: PALETTE.textSecondary, fontWeight: '400',
     },
     footerLink: {
-        fontSize: 12,
-        lineHeight: 16,
-        color: '#7c3aed',
-        fontWeight: '700',
+        fontSize: 14, color: PALETTE.accentDeep, fontWeight: '700',
     },
 });

@@ -80,8 +80,8 @@ const mapWorkerProfileForClient = ({ user = {}, workerProfile = {} }) => {
         avatar: workerProfile?.avatar || '',
         headline: roleName
             ? `${roleName} • ${location || 'Open to opportunities'}`
-            : (location ? `Professional • ${location}` : 'Candidate Profile'),
-        industryTag: 'CANDIDATE PROFILE',
+            : (location ? `Professional • ${location}` : 'Job Seeker Profile'),
+        industryTag: 'JOB SEEKER PROFILE',
         summary: summary || 'No profile summary available yet.',
         experienceYears: Number.isFinite(experienceYears) ? Math.max(0, experienceYears) : 0,
         skills: skills.length ? skills : ['Profile setup in progress'],

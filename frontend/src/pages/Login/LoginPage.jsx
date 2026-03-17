@@ -1,28 +1,71 @@
 // frontend/src/pages/Login/LoginPage.jsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import './LoginPage.css';
 import { IoChevronBack } from 'react-icons/io5';
 import { motion } from 'framer-motion';
 import axios from 'axios';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { buildApiUrl } from '../../config/api';
+import {
+  completeWebLogin,
+  ensureWebAccessToken,
+  getWebSession,
+  LOGIN_NOTICE_QUERY_PARAM,
+  LOGIN_NOTICE_SESSION_EXPIRED,
+  resolvePostLoginPath,
+} from '../../utils/webAuthSession';
 
 const LoginPage = () => {
+  const location = useLocation();
+  const loginNotice = new URLSearchParams(location.search).get(LOGIN_NOTICE_QUERY_PARAM) || '';
   const [activeTab, setActiveTab] = useState('email'); // 'phone' or 'email'
   const [formData, setFormData] = useState({
-    email: '',
+    email: location.state?.prefillEmail || '',
     phone: '',
     password: '',
   });
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState(
+    location.state?.message
+    || (loginNotice === LOGIN_NOTICE_SESSION_EXPIRED
+      ? 'Your session expired. Sign in again to continue.'
+      : '')
+  );
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
+  const redirectQueryPath = new URLSearchParams(location.search).get('redirect') || '';
+  const requestedPath = location.state?.from?.pathname || redirectQueryPath;
+
+  useEffect(() => {
+    let active = true;
+
+    const restoreExistingSession = async () => {
+      const existingSession = getWebSession();
+      if (!existingSession) {
+        return;
+      }
+
+      const token = await ensureWebAccessToken();
+      if (!active || !token) {
+        return;
+      }
+
+      navigate(resolvePostLoginPath(getWebSession(), requestedPath), { replace: true });
+    };
+
+    restoreExistingSession();
+
+    return () => {
+      active = false;
+    };
+  }, [navigate, requestedPath]);
 
   // Handle Input Changes
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     setError(''); // Clear error when typing
+    setInfoMessage('');
   };
 
   // Handle Login Submission
@@ -49,17 +92,18 @@ const LoginPage = () => {
       const { data } = await axios.post(
         buildApiUrl('/api/users/login'),
         { email: formData.email, password: formData.password },
-        config
+        {
+          ...config,
+          withCredentials: true,
+          headers: {
+            ...config.headers,
+            'X-Session-Mode': 'browser',
+          },
+        }
       );
 
-      localStorage.setItem('userInfo', JSON.stringify(data));
-
-      // Redirect to home page
-      if (data.role === 'recruiter') {
-        navigate('/recruiter/jobs');
-      } else {
-        navigate('/candidate/jobs');
-      }
+      completeWebLogin(data);
+      navigate(resolvePostLoginPath(data, requestedPath), { replace: true });
 
     } catch (err) {
       setError(
@@ -87,6 +131,7 @@ const LoginPage = () => {
 
         {/* Error Message */}
         {error && <div className="error-message">{error}</div>}
+        {infoMessage && <div className="success-message">{infoMessage}</div>}
 
         {/* Tabs */}
         <div className="tab-container">

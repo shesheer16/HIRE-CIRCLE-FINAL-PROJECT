@@ -1,9 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { create } from 'zustand';
 import NetInfo from '@react-native-community/netinfo';
-import { AuthContext } from '../context/AuthContext';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
-
-const AppStoreContext = createContext(null);
 
 const normalizePrimaryRole = (roleValue) => {
     const normalized = String(roleValue || '').toLowerCase();
@@ -16,121 +13,59 @@ const normalizePrimaryRole = (roleValue) => {
     return null;
 };
 
-export function AppStoreProvider({ children }) {
-    const { userInfo } = useContext(AuthContext);
+export const useAppStore = create((set) => ({
+    user: null,
+    role: null,
+    socketStatus: 'disconnected',
+    notificationsCount: 0,
+    activeChatId: null,
+    isOnline: true,
+    featureFlags: {},
 
-    const [user, setUserState] = useState(userInfo || null);
-    const [role, setRoleState] = useState(getPrimaryRoleFromUser(userInfo));
-    const [socketStatus, setSocketStatusState] = useState('disconnected');
-    const [notificationsCount, setNotificationsCountState] = useState(0);
-    const [activeChatId, setActiveChatIdState] = useState(null);
-    const [isOnline, setIsOnlineState] = useState(true);
-    const [featureFlags, setFeatureFlagsState] = useState({});
+    setUser: (nextUser) => set({
+        user: nextUser || null,
+        role: getPrimaryRoleFromUser(nextUser)
+    }),
 
-    useEffect(() => {
-        setUserState(userInfo || null);
-        setRoleState(getPrimaryRoleFromUser(userInfo));
-    }, [userInfo]);
+    setRole: (nextRole) => set({
+        role: normalizePrimaryRole(nextRole)
+    }),
 
-    useEffect(() => {
-        const unsubscribe = NetInfo.addEventListener((state) => {
-            setIsOnlineState(state.isConnected ?? true);
+    setSocketStatus: (nextStatus) => set({
+        socketStatus: nextStatus || 'disconnected'
+    }),
+
+    setNotificationsCount: (count) => set({
+        notificationsCount: Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
+    }),
+
+    incrementNotificationsCount: (delta = 1) => set((state) => ({
+        notificationsCount: Math.max(0, state.notificationsCount + (Number.isFinite(delta) ? Math.floor(delta) : 1))
+    })),
+
+    setActiveChatId: (chatId) => set({
+        activeChatId: chatId || null
+    }),
+
+    clearActiveChatId: (chatId = null) => set((state) => {
+        if (!chatId) return { activeChatId: null };
+        return String(state.activeChatId) === String(chatId) ? { activeChatId: null } : {};
+    }),
+
+    setIsOnline: (online) => set({
+        isOnline: Boolean(online)
+    }),
+
+    setFeatureFlags: (flags = {}) => set({
+        featureFlags: (!flags || typeof flags !== 'object' || Array.isArray(flags)) ? {} : { ...flags }
+    })
+}));
+
+let netInfoUnsubscribe = null;
+export const initAppStoreListeners = () => {
+    if (!netInfoUnsubscribe) {
+        netInfoUnsubscribe = NetInfo.addEventListener((state) => {
+            useAppStore.getState().setIsOnline(state.isConnected ?? true);
         });
-        return unsubscribe;
-    }, []);
-
-    const setUser = useCallback((nextUser) => {
-        setUserState(nextUser || null);
-        setRoleState(getPrimaryRoleFromUser(nextUser));
-    }, []);
-
-    const setRole = useCallback((nextRole) => {
-        setRoleState(normalizePrimaryRole(nextRole));
-    }, []);
-
-    const setSocketStatus = useCallback((nextStatus) => {
-        setSocketStatusState(nextStatus || 'disconnected');
-    }, []);
-
-    const setNotificationsCount = useCallback((count) => {
-        const safeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
-        setNotificationsCountState(safeCount);
-    }, []);
-
-    const incrementNotificationsCount = useCallback((delta = 1) => {
-        setNotificationsCountState((prev) => Math.max(0, prev + (Number.isFinite(delta) ? Math.floor(delta) : 1)));
-    }, []);
-
-    const setActiveChatId = useCallback((chatId) => {
-        setActiveChatIdState(chatId || null);
-    }, []);
-
-    const clearActiveChatId = useCallback((chatId = null) => {
-        setActiveChatIdState((prev) => {
-            if (!chatId) return null;
-            return String(prev) === String(chatId) ? null : prev;
-        });
-    }, []);
-
-    const setIsOnline = useCallback((online) => {
-        setIsOnlineState(Boolean(online));
-    }, []);
-
-    const setFeatureFlags = useCallback((flags = {}) => {
-        if (!flags || typeof flags !== 'object' || Array.isArray(flags)) {
-            setFeatureFlagsState({});
-            return;
-        }
-        setFeatureFlagsState({ ...flags });
-    }, []);
-
-    const storeValue = useMemo(() => ({
-        user,
-        role,
-        socketStatus,
-        notificationsCount,
-        activeChatId,
-        isOnline,
-        featureFlags,
-        setUser,
-        setRole,
-        setSocketStatus,
-        setNotificationsCount,
-        incrementNotificationsCount,
-        setActiveChatId,
-        clearActiveChatId,
-        setIsOnline,
-        setFeatureFlags,
-    }), [
-        user,
-        role,
-        socketStatus,
-        notificationsCount,
-        activeChatId,
-        isOnline,
-        featureFlags,
-        setUser,
-        setRole,
-        setSocketStatus,
-        setNotificationsCount,
-        incrementNotificationsCount,
-        setActiveChatId,
-        clearActiveChatId,
-        setIsOnline,
-        setFeatureFlags,
-    ]);
-
-    return (
-        <AppStoreContext.Provider value={storeValue}>
-            {children}
-        </AppStoreContext.Provider>
-    );
-}
-
-export function useAppStore() {
-    const context = useContext(AppStoreContext);
-    if (!context) {
-        throw new Error('useAppStore must be used within AppStoreProvider');
     }
-    return context;
-}
+};

@@ -13,10 +13,11 @@ import {
     Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import EmptyState from '../../../components/EmptyState';
 import BountyCard from './BountyCard';
 import { RADIUS } from '../../../theme/theme';
 import { connectPalette, connectShadow } from '../connectPalette';
+import { ConnectSkeletonList } from '../ConnectSkeletons';
+import ConnectEmptyStateCard from '../ConnectEmptyState';
 
 const STATUS_FILTERS = ['all', 'open', 'reviewing', 'completed', 'expired'];
 const OPEN_STATUSES = new Set(['open', 'reviewing']);
@@ -39,11 +40,14 @@ function BountiesTabComponent({
     totalEarned,
     onOpenReferModal,
     onRefreshBounties,
+    onRetryBounties,
     onCreateBounty,
     onSubmitBountyEntry,
     onStartAction,
     contentContainerStyle,
 }) {
+    // Use the more specific retry handler if provided, fall back to refresh
+    const retryHandler = onRetryBounties || onRefreshBounties;
     const [activeStatusFilter, setActiveStatusFilter] = useState('all');
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -242,17 +246,16 @@ function BountiesTabComponent({
                 })}
             </View>
 
-            {errorMessage ? (
-                <View style={styles.errorBanner}>
-                    <Text style={styles.errorBannerText}>{errorMessage}</Text>
-                    <TouchableOpacity
-                        style={styles.errorBannerRetryButton}
-                        activeOpacity={0.85}
-                        onPress={onRefreshBounties}
-                    >
-                        <Text style={styles.errorBannerRetryText}>Retry</Text>
-                    </TouchableOpacity>
-                </View>
+            {errorMessage && safeBounties.length > 0 ? (
+                <ConnectEmptyStateCard
+                    title="Showing saved bounties"
+                    subtitle="We couldn't refresh just now. Pull to refresh anytime."
+                    actionLabel="Try again"
+                    onAction={retryHandler}
+                    tone="info"
+                    inline
+                    style={styles.inlineStatusCard}
+                />
             ) : null}
         </>
     ), [
@@ -271,25 +274,31 @@ function BountiesTabComponent({
     ), []);
 
     const listLoading = useMemo(() => (
-        <View style={styles.loaderCard}>
-            <ActivityIndicator size="small" color={connectPalette.accent} />
-            <Text style={styles.loaderText}>Loading bounties...</Text>
-        </View>
+        <ConnectSkeletonList count={3} />
     ), []);
 
     const listEmpty = useMemo(() => (
-        <EmptyState
-            icon="🚀"
-            title={normalizedFilter === 'all' ? 'No bounties yet' : `No ${formatFilterLabel(normalizedFilter).toLowerCase()} bounties`}
-            subtitle={
-                isEmployerRole
-                    ? 'Create your first bounty and watch submissions appear here.'
-                    : 'Open bounties and referral opportunities will appear here.'
-            }
-            actionLabel={isEmployerRole ? 'Create Bounty' : 'Start Referring'}
-            onAction={isEmployerRole ? handleOpenCreateModal : onStartAction}
-        />
-    ), [handleOpenCreateModal, isEmployerRole, normalizedFilter, onStartAction]);
+        errorMessage && safeBounties.length === 0 ? (
+            <ConnectEmptyStateCard
+                title="No bounties to show right now"
+                subtitle="We couldn't load new bounties just now. Pull to refresh."
+                actionLabel="Try again"
+                onAction={retryHandler}
+                tone="info"
+            />
+        ) : (
+            <ConnectEmptyStateCard
+                title={normalizedFilter === 'all' ? 'No bounties yet' : `No ${formatFilterLabel(normalizedFilter).toLowerCase()} bounties`}
+                subtitle={
+                    isEmployerRole
+                        ? 'Create your first bounty and watch submissions appear here.'
+                        : 'Open bounties and referral opportunities will appear here.'
+                }
+                actionLabel={isEmployerRole ? 'Create Bounty' : 'Start Referring'}
+                onAction={isEmployerRole ? handleOpenCreateModal : onStartAction}
+            />
+        )
+    ), [errorMessage, handleOpenCreateModal, isEmployerRole, normalizedFilter, retryHandler, onStartAction, safeBounties.length]);
 
     return (
         <>
@@ -310,7 +319,7 @@ function BountiesTabComponent({
                         colors={[connectPalette.accent]}
                     />
                 )}
-                removeClippedSubviews
+                removeClippedSubviews={Platform.OS === 'android'}
                 windowSize={10}
                 maxToRenderPerBatch={8}
                 initialNumToRender={6}
@@ -586,6 +595,9 @@ const styles = StyleSheet.create({
     filterChipTextActive: {
         color: connectPalette.accentDark,
     },
+    inlineStatusCard: {
+        marginBottom: 12,
+    },
     errorBanner: {
         backgroundColor: '#fef2f2',
         borderColor: '#fecaca',
@@ -612,22 +624,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '800',
         color: '#ffffff',
-    },
-    loaderCard: {
-        backgroundColor: connectPalette.surface,
-        borderRadius: RADIUS.lg,
-        borderWidth: 1,
-        borderColor: connectPalette.line,
-        padding: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-        ...connectShadow,
-    },
-    loaderText: {
-        marginTop: 8,
-        fontSize: 12,
-        color: connectPalette.muted,
-        fontWeight: '700',
     },
     bottomSpacer: {
         height: 32,

@@ -1,33 +1,65 @@
-export const navigateToWelcomeFallback = (navigation) => {
+const buildTargetRoute = ({ routeNames = [], target = 'Login', selectedRole = null }) => {
+    const normalizedTarget = String(target || 'Login').trim();
+    if (normalizedTarget === 'RoleSelection' && routeNames.includes('RoleSelection')) {
+        return { name: 'RoleSelection', params: undefined };
+    }
+    if (normalizedTarget === 'Register' && routeNames.includes('Register')) {
+        return {
+            name: 'Register',
+            params: selectedRole ? { selectedRole } : undefined,
+        };
+    }
+    if (routeNames.includes('Login')) {
+        return {
+            name: 'Login',
+            params: selectedRole ? { selectedRole } : undefined,
+        };
+    }
+    if (routeNames.includes('RoleSelection')) {
+        return { name: 'RoleSelection', params: undefined };
+    }
+    if (routeNames.includes('Onboarding')) {
+        return { name: 'Onboarding', params: undefined };
+    }
+    const fallbackName = routeNames[0];
+    return fallbackName ? { name: fallbackName, params: undefined } : null;
+};
+
+export const navigateToAuthFallback = (navigation, options = {}) => {
     if (!navigation || typeof navigation.navigate !== 'function') return;
 
     const state = navigation.getState?.() || {};
     const routeNames = state.routeNames || [];
-    const currentRoute = state.routes?.[state.index || 0]?.name || '';
+    const targetRoute = buildTargetRoute({
+        routeNames,
+        target: options?.target,
+        selectedRole: options?.selectedRole || null,
+    });
 
-    if (routeNames.includes('Onboarding')) {
-        navigation.navigate('Onboarding');
-        return;
-    }
+    if (!targetRoute) return;
 
-    if (routeNames.includes('Login') && currentRoute !== 'Login') {
-        navigation.navigate('Login');
-        return;
-    }
-
-    if (routeNames.includes('Register') && currentRoute !== 'Register') {
-        navigation.navigate('Register');
-        return;
-    }
-
-    const fallbackRoute = routeNames.includes('Login')
-        ? 'Login'
-        : (routeNames.includes('Onboarding') ? 'Onboarding' : routeNames[0]);
-
-    if (fallbackRoute && typeof navigation.reset === 'function') {
+    if (typeof navigation.reset === 'function') {
         navigation.reset({
             index: 0,
-            routes: [{ name: fallbackRoute }],
+            routes: [{
+                name: targetRoute.name,
+                params: targetRoute.params,
+            }],
         });
+        return;
     }
+
+    navigation.navigate(targetRoute.name, targetRoute.params);
+};
+
+export const handleAuthBackNavigation = (navigation, options = {}) => {
+    if (navigation?.canGoBack?.()) {
+        navigation.goBack();
+        return;
+    }
+    navigateToAuthFallback(navigation, options);
+};
+
+export const navigateToWelcomeFallback = (navigation) => {
+    navigateToAuthFallback(navigation, { target: 'RoleSelection' });
 };

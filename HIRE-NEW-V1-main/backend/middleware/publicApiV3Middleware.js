@@ -1,4 +1,3 @@
-const ApiKey = require('../models/ApiKey');
 const ApiAuditLog = require('../models/ApiAuditLog');
 const redisClient = require('../config/redis');
 const {
@@ -7,6 +6,8 @@ const {
     readIpAddress,
 } = require('../services/externalRateLimitService');
 const {
+    API_KEY_TRANSPORT,
+    resolveApiKeyFromRequest,
     findApiKeyByRawValue,
     toRateLimitPerHour,
 } = require('../services/externalApiKeyService');
@@ -15,7 +16,10 @@ const {
     resolveTenantContextFromApiKey,
 } = require('../services/tenantIsolationService');
 const { appendPlatformAuditLog } = require('../services/platformAuditService');
-const { verifyWidgetToken } = require('../services/widgetTokenService');
+const {
+    resolveApiKeyFromWidgetToken,
+    resolveWidgetRequestDomain,
+} = require('../services/widgetTokenService');
 
 const BURST_WINDOW_MS = Number.parseInt(process.env.PUBLIC_API_BURST_WINDOW_MS || '60000', 10);
 const BURST_MAX_REQUESTS = Number.parseInt(process.env.PUBLIC_API_BURST_MAX_REQUESTS || '120', 10);
@@ -27,32 +31,12 @@ const SCOPE_ACCESS = {
     profiles: new Set(['read-only', 'jobs', 'applications', 'full-access']),
 };
 
-const getApiKeyFromRequest = (req = {}) => (
-    req.headers?.['x-api-key']
-    || req.query?.api_key
-    || req.query?.apiKey
-    || req.body?.api_key
-    || req.body?.apiKey
-    || null
-);
-
 const getWidgetTokenFromRequest = (req = {}) => (
     req.headers?.['x-widget-token']
     || req.query?.widget_token
     || req.query?.widgetToken
     || null
 );
-
-const normalizeHost = (value = '') => {
-    const input = String(value || '').trim();
-    if (!input) return '';
-    try {
-        const parsed = input.includes('://') ? new URL(input) : new URL(`https://${input}`);
-        return String(parsed.hostname || '').toLowerCase();
-    } catch (_error) {
-        return input.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
-    }
-};
 
 const isScopeAllowed = (apiKey, requiredScope) => {
     if (!requiredScope) return true;
@@ -62,27 +46,11 @@ const isScopeAllowed = (apiKey, requiredScope) => {
 };
 
 const resolveKeyFromWidgetToken = async ({ req, widgetToken }) => {
-    const requestOrigin = req.headers?.origin || req.headers?.referer || '';
-    const requestDomain = normalizeHost(requestOrigin);
-
-    const tokenPayload = verifyWidgetToken({
+    const requestDomain = resolveWidgetRequestDomain(req);
+    const { apiKeyDoc, tokenPayload } = await resolveApiKeyFromWidgetToken({
         token: widgetToken,
         requestDomain,
     });
-
-    if (!tokenPayload?.sub) {
-        throw new Error('Invalid widget token payload');
-    }
-
-    const apiKeyDoc = await ApiKey.findOne({
-        _id: tokenPayload.sub,
-        isActive: true,
-        revoked: { $ne: true },
-    }).select('+key +scope +rateLimitTier +rateLimit +planType +tier +ownerId +employerId +organization +allowedDomains +usageMetrics +usageCount +isActive +revoked +keyId');
-
-    if (!apiKeyDoc) {
-        throw new Error('Widget token key not found');
-    }
 
     return {
         apiKeyDoc,
@@ -127,10 +95,27 @@ const incrementUsageMetrics = async ({ apiKeyDoc, burstViolation = false }) => {
     await apiKeyDoc.save();
 };
 
+const applyLegacyApiKeyTransportHeaders = (res, transport) => {
+    if (!res || typeof res.setHeader !== 'function') {
+        return;
+    }
+
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Warning', '299 - "API key query/body transport is deprecated; use the X-API-Key header instead."');
+    res.setHeader('X-API-Key-Transport', transport);
+};
+
+const resolveApiKeyAuthSource = (transport) => {
+    if (transport === API_KEY_TRANSPORT.query) return 'api_key_query';
+    if (transport === API_KEY_TRANSPORT.body) return 'api_key_body';
+    return 'api_key';
+};
+
 const applyPublicApiGuard = (requiredScope) => async (req, res, next) => {
     const startedAt = process.hrtime.bigint();
     const ipAddress = readIpAddress(req);
-    const rawApiKey = getApiKeyFromRequest(req);
+    const apiKeyRequest = resolveApiKeyFromRequest(req);
+    const rawApiKey = apiKeyRequest.apiKey;
     const widgetToken = getWidgetTokenFromRequest(req);
 
     try {
@@ -144,6 +129,12 @@ const applyPublicApiGuard = (requiredScope) => async (req, res, next) => {
             req.widgetTokenPayload = resolved.tokenPayload;
         } else if (rawApiKey) {
             apiKeyDoc = await findApiKeyByRawValue(rawApiKey);
+            authSource = resolveApiKeyAuthSource(apiKeyRequest.transport);
+            if (apiKeyRequest.isLegacyTransport) {
+                applyLegacyApiKeyTransportHeaders(res, apiKeyRequest.transport);
+            }
+        } else if (apiKeyRequest.legacyTransportBlocked) {
+            return res.status(401).json({ message: 'API key is required via the X-API-Key header' });
         }
 
         if (!apiKeyDoc || apiKeyDoc.isActive === false || apiKeyDoc.revoked === true) {

@@ -1,16 +1,30 @@
 import React, { createContext, useState, useEffect } from 'react';
+import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { wipeSensitiveCache } from '../utils/cacheManager';
 import { getPrimaryRoleFromUser, hasUserSelectedRole, getRoleContractFromUser } from '../utils/roleMode';
 import SocketService from '../services/socket';
-import client from '../api/client';
+import client, { setUnauthorizedHandler } from '../api/client';
 import { logger } from '../utils/logger';
+import { getNormalizedProfileReadiness } from '../utils/profileReadiness';
+import {
+    clearPendingPostAuthSetupIntent,
+    deriveAuthEntryRoleFromUser,
+    getPendingPostAuthSetupIntent,
+    getRememberedAuthEntryRole,
+    normalizeAuthEntryRole,
+    normalizePendingPostAuthSetup,
+    setPendingPostAuthSetupIntent,
+    setRememberedAuthEntryRole,
+} from '../utils/authEntryState';
+import { useAppStore } from '../store/AppStore';
 
 export const AuthContext = createContext();
 
 const normalizeUserInfo = (value = {}) => {
     const roleContract = getRoleContractFromUser(value);
+    const readiness = getNormalizedProfileReadiness(value);
     return {
         ...value,
         roles: roleContract.roles,
@@ -18,7 +32,8 @@ const normalizeUserInfo = (value = {}) => {
         primaryRole: roleContract.activeRole || getPrimaryRoleFromUser(value),
         capabilities: roleContract.capabilities,
         hasSelectedRole: hasUserSelectedRole({ ...value, ...roleContract }),
-        hasCompletedProfile: Boolean(value?.hasCompletedProfile),
+        hasCompletedProfile: readiness.hasCompletedProfile,
+        profileComplete: readiness.profileComplete,
     };
 };
 
@@ -39,6 +54,7 @@ const PERSISTED_USER_FIELDS = [
     'interviewVerified',
     'isVerified',
     'isAdmin',
+    'signupSetupDraft',
     'token',
     'refreshToken',
 ];
@@ -54,11 +70,49 @@ const toPersistedUserInfo = (value = {}) => {
     return compact;
 };
 
+let secureStoreAvailable = null;
+const isSecureStoreAvailable = async () => {
+    if (secureStoreAvailable !== null) return secureStoreAvailable;
+    try {
+        secureStoreAvailable = typeof SecureStore.isAvailableAsync === 'function'
+            ? await SecureStore.isAvailableAsync()
+            : false;
+    } catch {
+        secureStoreAvailable = false;
+    }
+    return secureStoreAvailable;
+};
+
+const setSecureItem = async (key, value) => {
+    if (await isSecureStoreAvailable()) {
+        await SecureStore.setItemAsync(key, value);
+        return;
+    }
+    await AsyncStorage.setItem(key, value);
+};
+
+const getSecureItem = async (key) => {
+    if (await isSecureStoreAvailable()) {
+        return await SecureStore.getItemAsync(key);
+    }
+    return await AsyncStorage.getItem(key);
+};
+
+const deleteSecureItem = async (key) => {
+    if (await isSecureStoreAvailable()) {
+        await SecureStore.deleteItemAsync(key);
+        return;
+    }
+    await AsyncStorage.removeItem(key);
+};
+
 export const AuthProvider = ({ children }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [userToken, setUserToken] = useState(null);
     const [userInfo, setUserInfo] = useState(null);
     const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+    const [authEntryRole, setAuthEntryRole] = useState(null);
+    const [pendingPostAuthSetup, setPendingPostAuthSetup] = useState(null);
 
     const getOrCreateDeviceId = async () => {
         const existing = await AsyncStorage.getItem('@device_id');
@@ -93,17 +147,68 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const login = async (data) => {
+    const rememberAuthEntryRole = async (value) => {
+        const normalized = normalizeAuthEntryRole(value);
+        const persisted = await setRememberedAuthEntryRole(normalized);
+        setAuthEntryRole(persisted);
+        return persisted;
+    };
+
+    const queuePostAuthSetup = async (intent) => {
+        const normalized = normalizePendingPostAuthSetup(intent);
+        const persisted = await setPendingPostAuthSetupIntent(normalized);
+        setPendingPostAuthSetup(persisted);
+        return persisted;
+    };
+
+    const consumePendingPostAuthSetup = async () => {
+        await clearPendingPostAuthSetupIntent();
+        setPendingPostAuthSetup(null);
+    };
+
+    const login = async (data, options = {}) => {
         setIsLoading(true);
         try {
             const normalizedUser = normalizeUserInfo(data);
             const compactUser = toPersistedUserInfo(normalizedUser);
-            await SecureStore.setItemAsync('userInfo', JSON.stringify(compactUser));
-            await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+            const hasExplicitPendingPostAuthSetup = Object.prototype.hasOwnProperty.call(
+                options || {},
+                'pendingPostAuthSetup'
+            );
+            const nextAuthEntryRole = normalizeAuthEntryRole(
+                options?.authEntryRole || deriveAuthEntryRoleFromUser(normalizedUser)
+            );
+            const nextPendingPostAuthSetup = hasExplicitPendingPostAuthSetup
+                ? normalizePendingPostAuthSetup(options.pendingPostAuthSetup)
+                : null;
+
+            await setSecureItem('userInfo', JSON.stringify(compactUser));
+            await setSecureItem('hasCompletedOnboarding', 'true');
             await AsyncStorage.setItem('@onboarding_completed', 'true');
+            if (nextAuthEntryRole) {
+                await setRememberedAuthEntryRole(nextAuthEntryRole);
+            }
+            if (hasExplicitPendingPostAuthSetup) {
+                if (nextPendingPostAuthSetup) {
+                    await setPendingPostAuthSetupIntent(nextPendingPostAuthSetup);
+                } else {
+                    await clearPendingPostAuthSetupIntent();
+                }
+            } else {
+                await clearPendingPostAuthSetupIntent();
+            }
             setHasCompletedOnboarding(true);
+            if (nextAuthEntryRole) {
+                setAuthEntryRole(nextAuthEntryRole);
+            }
+            if (hasExplicitPendingPostAuthSetup) {
+                setPendingPostAuthSetup(nextPendingPostAuthSetup);
+            } else {
+                setPendingPostAuthSetup(null);
+            }
             setUserInfo(normalizedUser);
             setUserToken(normalizedUser.token);
+            useAppStore.getState().setUser(normalizedUser);
         } catch (e) {
             logger.error('Auth login failed', e);
         }
@@ -118,11 +223,12 @@ export const AuthProvider = ({ children }) => {
             });
 
             const compactUser = toPersistedUserInfo(merged);
-            await SecureStore.setItemAsync('userInfo', JSON.stringify(compactUser));
+            await setSecureItem('userInfo', JSON.stringify(compactUser));
             setUserInfo(merged);
             if (merged.token) {
                 setUserToken(merged.token);
             }
+            useAppStore.getState().setUser(merged);
             return merged;
         } catch (e) {
             logger.error('Auth updateUserInfo failed', e);
@@ -132,30 +238,47 @@ export const AuthProvider = ({ children }) => {
 
     const logout = async (options = {}) => {
         const { skipServerCall = false } = options;
-        setIsLoading(true);
         try {
-            const currentUser = userInfo || JSON.parse(await SecureStore.getItemAsync('userInfo') || 'null');
+            setUnauthorizedHandler(null);
+            const currentUser = userInfo || JSON.parse(await getSecureItem('userInfo') || 'null');
             const refreshToken = currentUser?.refreshToken || null;
             const deviceId = await getOrCreateDeviceId();
             const token = currentUser?.token || null;
+            const onboardingStr = await getSecureItem('hasCompletedOnboarding');
+            const localOnboardingStr = await AsyncStorage.getItem('@onboarding_completed');
+            const resolvedOnboarding = onboardingStr === 'true' || localOnboardingStr === 'true';
 
-            if (token && !skipServerCall) {
-                await client.post('/api/users/logout', { refreshToken, deviceId }, {
-                    __skipUnauthorizedHandler: true,
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'x-device-id': deviceId,
-                        'x-device-platform': 'mobile',
-                    },
-                }).catch(() => { });
-            }
-            await SecureStore.deleteItemAsync('userInfo');
-            await SecureStore.deleteItemAsync('hasCompletedOnboarding');
-            await wipeSensitiveCache();
-            SocketService.disconnect();
+            await deleteSecureItem('userInfo');
+            await clearPendingPostAuthSetupIntent();
+
             setUserInfo(null);
             setUserToken(null);
-            setHasCompletedOnboarding(false);
+            useAppStore.getState().setUser(null);
+            setPendingPostAuthSetup(null);
+            setHasCompletedOnboarding(resolvedOnboarding);
+
+            SocketService.disconnect();
+
+            const cleanupTasks = [
+                wipeSensitiveCache(),
+            ];
+
+            if (token && !skipServerCall) {
+                const logoutUrl = `${String(client.defaults.baseURL || '').replace(/\/+$/, '')}/users/logout`;
+                cleanupTasks.push(
+                    axios.post(logoutUrl, { refreshToken, deviceId }, {
+                        timeout: 5000,
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'x-device-id': deviceId,
+                            'x-device-platform': 'mobile',
+                        },
+                    }).catch(() => {})
+                );
+            }
+
+            await Promise.allSettled(cleanupTasks);
         } catch (e) {
             logger.error('Auth logout failed', e);
         }
@@ -165,31 +288,41 @@ export const AuthProvider = ({ children }) => {
     const isLoggedIn = async () => {
         try {
             setIsLoading(true);
-            const userInfoStr = await SecureStore.getItemAsync('userInfo');
-            const onboardingStr = await SecureStore.getItemAsync('hasCompletedOnboarding');
+            const userInfoStr = await getSecureItem('userInfo');
+            const onboardingStr = await getSecureItem('hasCompletedOnboarding');
             const localOnboardingStr = await AsyncStorage.getItem('@onboarding_completed');
+            const storedAuthEntryRole = await getRememberedAuthEntryRole();
+            const storedPendingPostAuthSetup = await getPendingPostAuthSetupIntent();
             let resolvedOnboarding = onboardingStr === 'true' || localOnboardingStr === 'true';
 
             if (userInfoStr) {
                 let user = JSON.parse(userInfoStr);
                 if (isTokenValid(user?.token)) {
                     user = normalizeUserInfo(user);
-                    await SecureStore.setItemAsync('userInfo', JSON.stringify(toPersistedUserInfo(user)));
+                    await setSecureItem('userInfo', JSON.stringify(toPersistedUserInfo(user)));
                     setUserInfo(user);
                     setUserToken(user.token);
+                    useAppStore.getState().setUser(user);
+                    setAuthEntryRole(storedAuthEntryRole || deriveAuthEntryRoleFromUser(user));
 
                     if (!resolvedOnboarding) {
-                        await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+                        await setSecureItem('hasCompletedOnboarding', 'true');
                         await AsyncStorage.setItem('@onboarding_completed', 'true');
                         resolvedOnboarding = true;
                     }
                 } else {
-                    await SecureStore.deleteItemAsync('userInfo');
+                    await deleteSecureItem('userInfo');
                     setUserInfo(null);
                     setUserToken(null);
+                    useAppStore.getState().setUser(null);
+                    setAuthEntryRole(storedAuthEntryRole);
                 }
+            } else {
+                setAuthEntryRole(storedAuthEntryRole);
+                useAppStore.getState().setUser(null);
             }
 
+            setPendingPostAuthSetup(storedPendingPostAuthSetup);
             setHasCompletedOnboarding(resolvedOnboarding);
         } catch (e) {
             logger.error('Auth session restore failed', e);
@@ -202,13 +335,27 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const completeOnboarding = async () => {
-        await SecureStore.setItemAsync('hasCompletedOnboarding', 'true');
+        await setSecureItem('hasCompletedOnboarding', 'true');
         await AsyncStorage.setItem('@onboarding_completed', 'true');
         setHasCompletedOnboarding(true);
     };
 
     return (
-        <AuthContext.Provider value={{ login, logout, updateUserInfo, isLoading, userToken, userInfo, hasCompletedOnboarding, completeOnboarding }}>
+        <AuthContext.Provider value={{
+            login,
+            logout,
+            updateUserInfo,
+            isLoading,
+            userToken,
+            userInfo,
+            hasCompletedOnboarding,
+            completeOnboarding,
+            authEntryRole,
+            rememberAuthEntryRole,
+            pendingPostAuthSetup,
+            queuePostAuthSetup,
+            consumePendingPostAuthSetup,
+        }}>
             {children}
         </AuthContext.Provider>
     );

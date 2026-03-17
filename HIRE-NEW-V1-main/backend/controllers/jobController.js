@@ -39,6 +39,7 @@ const { filterJobsByApplyIntent } = require('../services/matchIntentFilterServic
 const { resolveJobGeo, normalizeCountryCode } = require('../services/geoExpansionService');
 const { recordFeatureUsage } = require('../services/monetizationIntelligenceService');
 const { resolvePagination } = require('../utils/pagination');
+const { buildLocationLabel, resolveStructuredLocationFields } = require('../utils/locationFields');
 const { sanitizeText } = require('../utils/sanitizeText');
 const { normalizeApplicationStatus } = require('../workflow/applicationStateMachine');
 const { canTransitionJobStatus } = require('../workflow/jobStateMachine');
@@ -49,6 +50,7 @@ const { isCrossBorderAllowed, filterJobsByGeo } = require('../services/geoMatchS
 const { resolveRoutingContext } = require('../services/regionRoutingService');
 const { compute_match } = require('../services/computeMatchService');
 const { rejectPendingApplicationsForFilledJob } = require('../services/jobLifecycleService');
+const { enrichJobsWithEmployerBranding } = require('../services/employerBrandingService');
 
 const logRecommendedRun = async ({
     userId,
@@ -152,6 +154,42 @@ const parseSalaryValue = (value) => {
     return parsed;
 };
 
+const parseOpeningsValue = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return Number.NaN;
+    return Math.round(parsed);
+};
+
+const buildLocationQuery = ({ district = '', mandal = '' } = {}) => {
+    const safeDistrict = sanitizeText(district, { maxLength: 120 });
+    const safeMandal = sanitizeText(mandal, { maxLength: 120 });
+    const clauses = [];
+    if (safeDistrict) {
+        const districtRegex = new RegExp(`^${safeDistrict.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+        const districtContainsRegex = new RegExp(safeDistrict.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        clauses.push({
+            $or: [
+                { district: districtRegex },
+                { location: districtContainsRegex },
+                { locationLabel: districtContainsRegex },
+            ],
+        });
+    }
+    if (safeMandal) {
+        const mandalRegex = new RegExp(`^${safeMandal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+        const mandalContainsRegex = new RegExp(safeMandal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        clauses.push({
+            $or: [
+                { mandal: mandalRegex },
+                { location: mandalContainsRegex },
+                { locationLabel: mandalContainsRegex },
+            ],
+        });
+    }
+    return clauses;
+};
+
 const normalizeObjectIdHex = (value) => {
     if (!value) return null;
 
@@ -247,10 +285,14 @@ const createJob = async (req, res) => {
         companyName,
         salaryRange,
         location,
+        district,
+        mandal,
+        locationLabel,
         requirements,
         screeningQuestions,
         minSalary,
         maxSalary,
+        openings,
         shift,
         mandatoryLicenses,
         isPulse,
@@ -279,10 +321,12 @@ const createJob = async (req, res) => {
 
         const parsedMinSalary = parseSalaryValue(minSalary);
         const parsedMaxSalary = parseSalaryValue(maxSalary);
+        const parsedOpenings = parseOpeningsValue(openings);
 
         if (
             Number.isNaN(parsedMinSalary)
             || Number.isNaN(parsedMaxSalary)
+            || Number.isNaN(parsedOpenings)
             || (parsedMinSalary !== null && (parsedMinSalary < 0 || parsedMinSalary > MAX_SALARY_VALUE))
             || (parsedMaxSalary !== null && (parsedMaxSalary < 0 || parsedMaxSalary > MAX_SALARY_VALUE))
             || (parsedMinSalary !== null && parsedMaxSalary !== null && parsedMaxSalary < parsedMinSalary)
@@ -296,7 +340,13 @@ const createJob = async (req, res) => {
         const safeTitle = sanitizeText(title, { maxLength: 120 });
         const safeCompanyName = sanitizeText(companyName, { maxLength: 120 });
         const safeSalaryRange = sanitizeText(salaryRange, { maxLength: 120 });
-        const safeLocation = sanitizeText(location, { maxLength: 120 });
+        const structuredLocation = resolveStructuredLocationFields({
+            district: sanitizeText(district, { maxLength: 120 }),
+            mandal: sanitizeText(mandal, { maxLength: 120 }),
+            location: sanitizeText(location, { maxLength: 120 }),
+            locationLabel: sanitizeText(locationLabel, { maxLength: 160 }),
+        });
+        const safeLocation = structuredLocation.legacyLocation;
         const safeRequirements = Array.isArray(requirements)
             ? requirements.map((item) => sanitizeText(item, { maxLength: 120 })).filter(Boolean)
             : [];
@@ -317,6 +367,9 @@ const createJob = async (req, res) => {
         const employerProfilePatch = {
             companyName: safeCompanyName,
             location: safeLocation,
+            district: structuredLocation.district,
+            mandal: structuredLocation.mandal,
+            locationLabel: structuredLocation.locationLabel,
         };
         const safeContactPerson = sanitizeText(req.body?.contactPerson || employerUser?.name || '', { maxLength: 120 });
         if (safeContactPerson) {
@@ -355,6 +408,13 @@ const createJob = async (req, res) => {
             companyName: safeCompanyName,
             salaryRange: safeSalaryRange,
             location: safeLocation,
+            district: structuredLocation.district,
+            mandal: structuredLocation.mandal,
+            locationLabel: structuredLocation.locationLabel || buildLocationLabel({
+                district: structuredLocation.district,
+                mandal: structuredLocation.mandal,
+                fallback: safeLocation,
+            }),
             country: geo.countryCode,
             region: String(req.body?.region || req.body?.regionCode || geo.regionCode || '').toUpperCase(),
             countryCode: geo.countryCode,
@@ -365,6 +425,7 @@ const createJob = async (req, res) => {
             screeningQuestions: safeScreeningQuestions,
             minSalary: parsedMinSalary,
             maxSalary: parsedMaxSalary,
+            openings: parsedOpenings,
             shift: shift || 'Flexible',
             mandatoryLicenses: safeMandatoryLicenses,
             isPulse: Boolean(isPulse),
@@ -415,8 +476,12 @@ const createJob = async (req, res) => {
                 regionCode: job.regionCode,
             },
         }), { userId: String(employerObjectId), jobId: String(job._id) });
-        await delByPattern('cache:jobs:*');
-        await delByPattern('cache:analytics:employer-summary:*');
+        fireAndForget('invalidateJobCachesAfterCreate', async () => {
+            await Promise.allSettled([
+                delByPattern('cache:jobs:*'),
+                delByPattern('cache:analytics:employer-summary:*'),
+            ]);
+        }, { userId: String(employerObjectId), jobId: String(job._id) });
         void dispatchAsyncTask({
             type: TASK_TYPES.MATCH_RECALCULATION,
             payload: {
@@ -656,9 +721,11 @@ const getJobById = async (req, res) => {
             });
         }
 
+        const [enrichedJob] = await enrichJobsWithEmployerBranding([job]);
+
         return res.status(200).json({
             success: true,
-            data: job,
+            data: enrichedJob || job,
         });
     } catch (error) {
         return res.status(500).json({
@@ -674,6 +741,9 @@ const getJobById = async (req, res) => {
 const getJobs = async (req, res) => {
     try {
         const { companyId } = req.query;
+        const districtFilter = String(req.query.district || '').trim();
+        const mandalFilter = String(req.query.mandal || '').trim();
+        const hasExplicitLocationFilter = Boolean(districtFilter || mandalFilter);
         const countryFilter = normalizeCountryCode(req.query.country || req.user?.country || 'IN');
         const routing = resolveRoutingContext({
             user: req.user || null,
@@ -710,7 +780,9 @@ const getJobs = async (req, res) => {
                     { country: countryFilter },
                     { remoteAllowed: true },
                 ];
-                if (regionCandidates.length) {
+                // Manual location searches (district/mandal) should not be blocked by
+                // region routing. The location clauses are already restrictive.
+                if (regionCandidates.length && !hasExplicitLocationFilter) {
                     query.$and = [
                         { $or: [
                             { regionCode: { $in: regionCandidates } },
@@ -719,13 +791,24 @@ const getJobs = async (req, res) => {
                         ] },
                     ];
                 }
-            } else if (regionCandidates.length) {
+            } else if (regionCandidates.length && !hasExplicitLocationFilter) {
                 query.$or = [
                     { regionCode: { $in: regionCandidates } },
                     { region: { $in: regionCandidates } },
                     { remoteAllowed: true },
                 ];
             }
+        }
+
+        const structuredLocationClauses = buildLocationQuery({
+            district: districtFilter,
+            mandal: mandalFilter,
+        });
+        if (structuredLocationClauses.length > 0) {
+            query.$and = [
+                ...(Array.isArray(query.$and) ? query.$and : []),
+                ...structuredLocationClauses,
+            ];
         }
 
         const workerProfile = !companyId
@@ -759,13 +842,13 @@ const getJobs = async (req, res) => {
             Job.countDocuments(query),
         ]);
 
-        let responseJobs = jobs;
+        let responseJobs = await enrichJobsWithEmployerBranding(jobs);
         if (canComputeMatches && jobs.length > 0) {
             const workerUser = workerProfile.user || {};
             const intelligence = await buildMatchIntelligenceContext({
                 worker: workerProfile,
                 jobs,
-                cityHint: workerProfile.city || null,
+                cityHint: workerProfile.district || workerProfile.city || null,
             });
 
             const scoredJobs = [];
@@ -800,7 +883,7 @@ const getJobs = async (req, res) => {
                 return String(left._id || '').localeCompare(String(right._id || ''));
             });
 
-            responseJobs = scoredJobs;
+            responseJobs = await enrichJobsWithEmployerBranding(scoredJobs);
         }
 
         const responsePayload = {
@@ -1111,9 +1194,13 @@ const updateJob = async (req, res) => {
             companyName,
             salaryRange,
             location,
+            district,
+            mandal,
+            locationLabel,
             requirements,
             minSalary,
             maxSalary,
+            openings,
             remoteAllowed,
             status: requestedStatus,
             processingId,
@@ -1121,9 +1208,11 @@ const updateJob = async (req, res) => {
 
         const parsedMinSalary = parseSalaryValue(minSalary);
         const parsedMaxSalary = parseSalaryValue(maxSalary);
+        const parsedOpenings = parseOpeningsValue(openings);
         if (
             Number.isNaN(parsedMinSalary)
             || Number.isNaN(parsedMaxSalary)
+            || Number.isNaN(parsedOpenings)
             || (parsedMinSalary !== null && (parsedMinSalary < 0 || parsedMinSalary > MAX_SALARY_VALUE))
             || (parsedMaxSalary !== null && (parsedMaxSalary < 0 || parsedMaxSalary > MAX_SALARY_VALUE))
             || (parsedMinSalary !== null && parsedMaxSalary !== null && parsedMaxSalary < parsedMinSalary)
@@ -1135,13 +1224,30 @@ const updateJob = async (req, res) => {
         const safeCompanyName = companyName !== undefined ? sanitizeText(companyName, { maxLength: 120 }) : null;
         const safeSalaryRange = salaryRange !== undefined ? sanitizeText(salaryRange, { maxLength: 120 }) : null;
         const safeLocation = location !== undefined ? sanitizeText(location, { maxLength: 120 }) : null;
+        const structuredLocation = resolveStructuredLocationFields({
+            district: district !== undefined ? sanitizeText(district, { maxLength: 120 }) : job?.district,
+            mandal: mandal !== undefined ? sanitizeText(mandal, { maxLength: 120 }) : job?.mandal,
+            location: safeLocation !== null ? safeLocation : job?.location,
+            locationLabel: locationLabel !== undefined ? sanitizeText(locationLabel, { maxLength: 160 }) : job?.locationLabel,
+        });
 
         if (safeTitle !== null) job.title = safeTitle || job.title;
         if (safeCompanyName !== null) job.companyName = safeCompanyName || job.companyName;
         if (safeSalaryRange !== null) job.salaryRange = safeSalaryRange || job.salaryRange;
-        if (safeLocation !== null) job.location = safeLocation || job.location;
+        if (
+            safeLocation !== null
+            || district !== undefined
+            || mandal !== undefined
+            || locationLabel !== undefined
+        ) {
+            job.location = structuredLocation.legacyLocation || job.location;
+            job.district = structuredLocation.district || job.district;
+            job.mandal = structuredLocation.mandal || job.mandal;
+            job.locationLabel = structuredLocation.locationLabel || job.locationLabel;
+        }
         if (parsedMinSalary !== null) job.minSalary = parsedMinSalary;
         if (parsedMaxSalary !== null) job.maxSalary = parsedMaxSalary;
+        if (parsedOpenings !== null) job.openings = parsedOpenings;
         if (location || req.body?.countryCode) {
             const geo = resolveJobGeo({
                 location: job.location,
@@ -1326,6 +1432,8 @@ const updateJob = async (req, res) => {
 const getRecommendedJobs = async (req, res) => {
     try {
         const cityFilter = String(req.query.city || '').trim();
+        const districtFilter = String(req.query.district || '').trim();
+        const mandalFilter = String(req.query.mandal || '').trim();
         const countryFilter = normalizeCountryCode(req.query.country || req.user?.country || 'IN');
         const regionFilter = String(req.query.region || '').trim().toUpperCase();
         const roleClusterFilter = String(req.query.roleCluster || '').trim();
@@ -1392,7 +1500,17 @@ const getRecommendedJobs = async (req, res) => {
             ];
         }
 
-        if (cityFilter) {
+        const structuredLocationClauses = buildLocationQuery({
+            district: districtFilter || cityFilter,
+            mandal: mandalFilter,
+        });
+
+        if (structuredLocationClauses.length > 0) {
+            query.$and = [
+                ...(Array.isArray(query.$and) ? query.$and : []),
+                ...structuredLocationClauses,
+            ];
+        } else if (cityFilter) {
             query.location = new RegExp(`^${cityFilter}$`, 'i');
         }
 
@@ -1420,8 +1538,14 @@ const getRecommendedJobs = async (req, res) => {
             }
 
             const maxCommuteDistanceKm = Number(matchPreferences.maxCommuteDistanceKm || 0);
-            if (!cityFilter && maxCommuteDistanceKm > 0 && maxCommuteDistanceKm <= 15 && worker.city) {
-                query.location = new RegExp(`^${String(worker.city).trim()}$`, 'i');
+            if (
+                !cityFilter
+                && !districtFilter
+                && maxCommuteDistanceKm > 0
+                && maxCommuteDistanceKm <= 15
+                && (worker.district || worker.city)
+            ) {
+                query.district = new RegExp(`^${String(worker.district || worker.city).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
             }
         }
 
@@ -1489,7 +1613,7 @@ const getRecommendedJobs = async (req, res) => {
         const intelligence = await buildMatchIntelligenceContext({
             worker,
             jobs,
-            cityHint: cityFilter || worker.city || null,
+            cityHint: districtFilter || cityFilter || worker.district || worker.city || null,
         });
         const dynamicThresholds = intelligence.dynamicThresholds || tierThresholdMap;
 
@@ -1551,6 +1675,9 @@ const getRecommendedJobs = async (req, res) => {
         const responseRows = topRows.map((row) => {
             const probability = Number(row.matchProbability ?? row.finalScore ?? 0);
             const resolvedTier = matchEngineV2.mapTier(probability, dynamicThresholds);
+            const matchScoreSource = row.matchModelVersionUsed
+                ? 'probabilistic_model'
+                : (row.probabilisticFallbackUsed ? 'deterministic_fallback' : 'match_engine');
             return ({
             job: row.job,
             matchScore: row.matchScore,
@@ -1558,10 +1685,25 @@ const getRecommendedJobs = async (req, res) => {
             tier: resolvedTier,
             tierLabel: matchEngineV2.toLegacyTierLabel(resolvedTier),
             matchModelVersionUsed: row.matchModelVersionUsed || matchModelVersionUsed,
+            probabilisticFallbackUsed: Boolean(row.probabilisticFallbackUsed),
+            matchScoreSource,
             explainability: matchUiV1Enabled ? (row.explainability || {}) : {},
+            timelineTransparency: {
+                jobPostedAt: row?.job?.createdAt || null,
+                jobUpdatedAt: row?.job?.updatedAt || null,
+                scoredAt: new Date().toISOString(),
+            },
             workDnaVersionId,
             });
         });
+        const brandedJobs = await enrichJobsWithEmployerBranding(responseRows.map((row) => row.job));
+        const brandedJobMap = new Map(
+            brandedJobs.map((job) => [String(job?._id || ''), job])
+        );
+        const responseRowsWithBranding = responseRows.map((row) => ({
+            ...row,
+            job: brandedJobMap.get(String(row?.job?._id || '')) || row.job,
+        }));
 
         setImmediate(() => {
             logRecommendedRun({
@@ -1569,26 +1711,26 @@ const getRecommendedJobs = async (req, res) => {
                 workerId: worker._id,
                 stats: {
                     ...deterministic,
-                    totalReturned: responseRows.length,
-                    avgScore: responseRows.length
-                        ? responseRows.reduce((sum, item) => sum + Number(item.matchProbability || 0), 0) / responseRows.length
+                    totalReturned: responseRowsWithBranding.length,
+                    avgScore: responseRowsWithBranding.length
+                        ? responseRowsWithBranding.reduce((sum, item) => sum + Number(item.matchProbability || 0), 0) / responseRowsWithBranding.length
                         : 0,
                 },
-                rows: responseRows,
+                rows: responseRowsWithBranding,
                 modelVersionUsed: matchModelVersionUsed,
                 metadata: {
                     correlationId: `recommended-${req.user._id}-${worker._id}-${Date.now()}`,
-                    cityFilter: cityFilter || null,
+                    cityFilter: districtFilter || cityFilter || null,
                     roleClusterFilter: roleClusterFilter || null,
                     triggeredBy: 'recommended_jobs_refresh',
                     workDnaVersionId,
                 },
             });
-            Promise.all(responseRows.map((row) => recordMatchPerformanceMetric({
+            Promise.all(responseRowsWithBranding.map((row) => recordMatchPerformanceMetric({
                 eventName: 'MATCH_RECOMMENDATION_VIEWED',
                 jobId: row.job?._id,
                 workerId: worker._id,
-                city: row.job?.location || cityFilter || worker.city || 'unknown',
+                city: row.job?.district || row.job?.location || districtFilter || cityFilter || worker.district || worker.city || 'unknown',
                 roleCluster: row.job?.title || roleClusterFilter || 'general',
                 matchProbability: row.matchProbability,
                 matchTier: row.tier,
@@ -1607,14 +1749,14 @@ const getRecommendedJobs = async (req, res) => {
             userId: workerOwnerId || req.user._id,
             featureKey: 'recommended_jobs_viewed',
             metadata: {
-                totalReturned: responseRows.length,
+                totalReturned: responseRowsWithBranding.length,
                 countryCode: countryFilter,
                 regionCode: regionFilter || null,
             },
         }), { userId: String(workerOwnerId || req.user._id) });
 
         return res.json({
-            recommendedJobs: responseRows,
+            recommendedJobs: responseRowsWithBranding,
             matchModelVersionUsed,
             appliedPreferences: includePreferences ? matchPreferences : null,
         });

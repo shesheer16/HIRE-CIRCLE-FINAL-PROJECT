@@ -82,6 +82,7 @@ const evaluateWorkerProfileCompletion = ({ user = {}, workerProfile = {} } = {})
     const skillCount = Array.isArray(roleProfile.skills) ? roleProfile.skills.filter(Boolean).length : 0;
     const expectedSalary = toSafeNumber(roleProfile.expectedSalary);
     const experienceInRole = toSafeNumber(roleProfile.experienceInRole);
+    const hasExplicitRoleExperience = roleProfile && roleProfile.experienceInRole !== undefined && roleProfile.experienceInRole !== null;
     const availabilityWindowDays = toSafeNumber(safeProfile.availabilityWindowDays);
     const hasAvailabilitySignal = typeof safeProfile.isAvailable === 'boolean'
         || [0, 15, 30].includes(availabilityWindowDays);
@@ -120,7 +121,7 @@ const evaluateWorkerProfileCompletion = ({ user = {}, workerProfile = {} } = {})
             id: 'experience_level',
             label: 'Experience level',
             weight: 10,
-            complete: Number(experienceInRole || safeProfile.totalExperience || 0) > 0,
+            complete: Boolean(hasExplicitRoleExperience) || Number(safeProfile.totalExperience || 0) > 0,
             hint: 'Select your experience so ranking is accurate.',
         }),
         buildStep({
@@ -185,7 +186,7 @@ const evaluateWorkerProfileCompletion = ({ user = {}, workerProfile = {} } = {})
         actions,
         missingForAccess,
         missingForApply,
-        meetsProfileCompleteThreshold: summary.percent >= thresholds.profileComplete && missingForApply.length === 0,
+        meetsProfileCompleteThreshold: actions.canApply,
     };
 };
 
@@ -205,6 +206,7 @@ const evaluateEmployerProfileCompletion = ({ user = {}, employerProfile = {} } =
             label: 'Company logo',
             weight: 15,
             complete: Boolean(normalizeText(safeProfile.logoUrl)),
+            required: false,
             hint: 'Upload company logo to improve application confidence.',
         }),
         buildStep({
@@ -248,14 +250,12 @@ const evaluateEmployerProfileCompletion = ({ user = {}, employerProfile = {} } =
     const thresholds = resolveThresholds();
     const requiredForAccess = new Set([
         'company_name',
-        'company_logo',
         'location',
         'contact_person',
         'verified_contact',
     ]);
     const requiredForPostJob = new Set([
         'company_name',
-        'company_logo',
         'company_description',
         'location',
         'industry',
@@ -281,7 +281,7 @@ const evaluateEmployerProfileCompletion = ({ user = {}, employerProfile = {} } =
         actions,
         missingForAccess,
         missingForPostJob,
-        meetsProfileCompleteThreshold: summary.percent >= thresholds.profileComplete && missingForPostJob.length === 0,
+        meetsProfileCompleteThreshold: actions.canPostJob,
     };
 };
 
@@ -291,6 +291,10 @@ const resolveProfileRole = ({ user = {}, roleOverride = '' } = {}) => {
     if (explicit === 'employer' || explicit === 'recruiter') return 'employer';
     return hasEmployerPrimaryRole(user) ? 'employer' : 'worker';
 };
+
+const isUserProfileMarkedComplete = (user = null) => Boolean(
+    user && (user.profileComplete || user.hasCompletedProfile)
+);
 
 const evaluateProfileCompletion = ({
     user = {},
@@ -360,20 +364,34 @@ const isActionAllowedByProfileCompletion = ({ action = '', completion = null } =
 const syncUserProfileCompletionFlag = async ({ userDoc = null, completion = null } = {}) => {
     const meetsThreshold = Boolean(completion?.meetsProfileCompleteThreshold);
     if (!userDoc || typeof userDoc !== 'object') {
-        return { changed: false, hasCompletedProfile: meetsThreshold };
+        return {
+            changed: false,
+            hasCompletedProfile: meetsThreshold,
+            profileComplete: meetsThreshold,
+        };
     }
 
-    const current = Boolean(userDoc.hasCompletedProfile);
-    if (current === meetsThreshold) {
-        return { changed: false, hasCompletedProfile: current };
+    const currentHasCompletedProfile = Boolean(userDoc.hasCompletedProfile);
+    const currentProfileComplete = Boolean(userDoc.profileComplete);
+    if (currentHasCompletedProfile === meetsThreshold && currentProfileComplete === meetsThreshold) {
+        return {
+            changed: false,
+            hasCompletedProfile: currentHasCompletedProfile,
+            profileComplete: currentProfileComplete,
+        };
     }
 
     userDoc.hasCompletedProfile = meetsThreshold;
+    userDoc.profileComplete = meetsThreshold;
     if (typeof userDoc.save === 'function') {
         await userDoc.save({ validateBeforeSave: false });
     }
 
-    return { changed: true, hasCompletedProfile: meetsThreshold };
+    return {
+        changed: true,
+        hasCompletedProfile: meetsThreshold,
+        profileComplete: meetsThreshold,
+    };
 };
 
 module.exports = {
@@ -381,6 +399,7 @@ module.exports = {
     evaluateEmployerProfileCompletion,
     evaluateProfileCompletion,
     isActionAllowedByProfileCompletion,
+    isUserProfileMarkedComplete,
     syncUserProfileCompletionFlag,
     resolveThresholds,
 };

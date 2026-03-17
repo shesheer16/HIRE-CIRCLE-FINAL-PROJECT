@@ -16,6 +16,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { trackEvent } from '../services/analytics';
 import { FEATURE_MATCH_UI_V1 } from '../config';
 import { useAppStore } from '../store/AppStore';
+import {
+    buildFreshnessSignals,
+    buildMatchGaps,
+    buildMatchReasons,
+    formatRelativeTimeLabel,
+    getMatchScoreSourceMeta,
+} from '../utils/matchUi';
+import { resolveStructuredLocation } from '../utils/locationPresentation';
+import { PALETTE } from '../theme/theme';
 
 const { width } = Dimensions.get('window');
 
@@ -30,16 +39,7 @@ const buildSimilarJobs = (job) => {
             salary: String(item?.salaryRange || 'Salary not listed'),
         }));
     }
-
-    const baseTitle = String(job?.title || 'Role');
-    const baseLocation = String(job?.location || 'Location not listed');
-    const baseSalary = String(job?.salaryRange || 'Salary not listed');
-    const baseCompany = String(job?.companyName || 'Hiring company');
-
-    return [
-        { id: 'alt-1', title: `${baseTitle} - Day Shift`, company: baseCompany, location: baseLocation, salary: baseSalary },
-        { id: 'alt-2', title: `${baseTitle} - Immediate Joiner`, company: baseCompany, location: baseLocation, salary: baseSalary },
-    ];
+    return [];
 };
 
 const FUNNEL_DATA = [
@@ -108,6 +108,54 @@ const resolveJobId = (job = {}) => {
     return '';
 };
 
+const resolveCompanyImage = (job = {}) => String(
+    job?.companyLogoUrl
+    || job?.logoUrl
+    || job?.companyBrandPhoto
+    || job?.employerProfile?.logoUrl
+    || job?.bannerImage
+    || job?.bannerUrl
+    || ''
+).trim();
+
+const resolveOpenings = (job = {}) => {
+    const directValue = Number(job?.openings);
+    if (Number.isFinite(directValue) && directValue > 0) {
+        return Math.max(1, Math.round(directValue));
+    }
+
+    const requirements = Array.isArray(job?.requirements) ? job.requirements : [];
+    for (const requirement of requirements) {
+        const match = String(requirement || '').match(/openings?\s*:\s*(\d+)/i);
+        if (match) {
+            const parsed = Number(match[1]);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                return Math.max(1, Math.round(parsed));
+            }
+        }
+    }
+
+    return null;
+};
+
+const resolveSecondaryStat = (job = {}) => {
+    const explicitType = String(job?.type || job?.employmentType || job?.jobType || '').trim();
+    if (explicitType) {
+        return { label: 'TYPE', value: explicitType };
+    }
+
+    const shift = String(job?.shift || '').trim();
+    if (shift) {
+        return { label: 'SHIFT', value: `${shift} Shift` };
+    }
+
+    if (typeof job?.remoteAllowed === 'boolean') {
+        return { label: 'MODE', value: job.remoteAllowed ? 'Remote' : 'On-site' };
+    }
+
+    return { label: 'STATUS', value: job?.activelyHiring === false ? 'Paused' : 'Hiring now' };
+};
+
 export default function JobDetailsScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
     const {
@@ -120,8 +168,10 @@ export default function JobDetailsScreen({ navigation, route }) {
         explainability: routeExplainability,
         entrySource,
     } = route.params || {};
+    const routeJobId = resolveJobId(job || {});
     const [applying, setApplying] = useState(false);
     const [applied, setApplied] = useState(false);
+    const [liveJob, setLiveJob] = useState(job || null);
 
     const [isSaved, setIsSaved] = useState(false);
     const [loadingAI, setLoadingAI] = useState(false);
@@ -133,37 +183,101 @@ export default function JobDetailsScreen({ navigation, route }) {
     const [matchTier, setMatchTier] = useState(String(routeTier || '').toUpperCase() || null);
     const [probabilityExplainability, setProbabilityExplainability] = useState(routeExplainability || {});
     const [matchModelVersionUsed, setMatchModelVersionUsed] = useState(null);
+    const [matchScoreSource, setMatchScoreSource] = useState(String(job?.matchScoreSource || '').trim());
+    const [probabilisticFallbackUsed, setProbabilisticFallbackUsed] = useState(Boolean(job?.probabilisticFallbackUsed || job?.fallbackUsed));
+    const [scoreTimeline, setScoreTimeline] = useState(job?.timelineTransparency || null);
     const [subscriptionPlan, setSubscriptionPlan] = useState('free');
     const applyScale = useRef(new Animated.Value(1)).current;
     const successBurstOpacity = useRef(new Animated.Value(0)).current;
     const { dispatch } = useAppState();
-    const { featureFlags, role: appRole } = useAppStore();
+    const featureFlags = useAppStore(state => state.featureFlags);
+    const appRole = useAppStore(state => state.role);
     const isMatchUiEnabled = featureFlags?.FEATURE_MATCH_UI_V1 ?? FEATURE_MATCH_UI_V1;
     const isEmployer = viewerRole === 'employer';
+    const resolveWorkerApplicationIdentity = async (seedUserInfo = null) => {
+        const safeUserInfo = (seedUserInfo && typeof seedUserInfo === 'object') ? seedUserInfo : {};
+        let workerId = String(
+            workerIdForMatch
+            || safeUserInfo?.workerProfileId
+            || resolvedWorkerId
+            || ''
+        ).trim();
+
+        if (!workerId) {
+            workerId = String(await AsyncStorage.getItem('@worker_profile_id') || '').trim();
+        }
+
+        if (!workerId) {
+            try {
+                const { data } = await client.get('/api/users/profile', {
+                    __skipApiErrorHandler: true,
+                    __allowWhenCircuitOpen: true,
+                    timeout: 4500,
+                    params: { role: 'worker' },
+                });
+                workerId = String(data?.profile?._id || '').trim();
+                if (workerId) {
+                    await AsyncStorage.setItem('@worker_profile_id', workerId);
+                }
+            } catch (profileError) {
+                logger.warn('Worker profile lookup failed in JobDetails apply flow', profileError?.message || profileError);
+            }
+        }
+
+        return workerId || String(safeUserInfo?._id || '').trim();
+    };
+
+    useEffect(() => {
+        setLiveJob(job || null);
+    }, [job]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const hydrateLatestJob = async () => {
+            if (!routeJobId) return;
+            try {
+                const { data } = await client.get(`/api/jobs/${routeJobId}`, {
+                    __skipApiErrorHandler: true,
+                    __disableBaseFallback: true,
+                    __maxRetries: 0,
+                    timeout: 6000,
+                });
+                const latestJob = data?.data || null;
+                if (!isMounted || !latestJob || typeof latestJob !== 'object') return;
+                setLiveJob((prev) => ({ ...(prev || {}), ...latestJob }));
+            } catch (_error) {
+                // Keep route data when a refresh is unavailable.
+            }
+        };
+
+        hydrateLatestJob();
+        return () => {
+            isMounted = false;
+        };
+    }, [routeJobId]);
 
     // Safely handle missing params
-    const safeJob = job || {
+    const safeJob = liveJob || job || {
         title: 'Open Position',
         companyName: 'Hiring Company',
         location: 'Location to be shared',
         salaryRange: 'Salary to be discussed',
-        type: 'Full-time',
+        type: '',
         requirements: ['Role requirements shared after apply'],
         description: 'The employer will share complete role details once your application is shortlisted.',
     };
+    const structuredLocation = resolveStructuredLocation(safeJob);
+    const resolvedLocationLabel = structuredLocation.locationLabel || safeJob.location || 'Location to be shared';
     const safeJobId = resolveJobId(safeJob);
     const routeMatchProbability = toProbabilityRatio(routeFinalScore)
         ?? toProbabilityRatio(matchScore)
         ?? toProbabilityRatio(job?.matchProbability)
         ?? toProbabilityRatio(job?.finalScore)
         ?? toProbabilityRatio(job?.matchScore)
-        ?? (String(routeTier || '').toUpperCase() === 'STRONG'
-            ? 0.9
-            : (String(routeTier || '').toUpperCase() === 'GOOD'
-                ? 0.78
-                : (String(routeTier || '').toUpperCase() === 'POSSIBLE' ? 0.65 : null)));
+        ?? null;
     const safeMatchScore = Number.isFinite(Number(matchScore)) ? Number(matchScore) : Math.round((routeMatchProbability || 0) * 100);
-    const safeFitReason = fitReason || `Your profile is a strong match for this ${safeJob.title} role based on your 8 years of experience.`;
+    const safeFitReason = fitReason || `This role overlaps with the core signals in your profile.`;
     const fallbackProbability = routeMatchProbability ?? 0;
 
     useEffect(() => {
@@ -189,23 +303,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                     return;
                 }
 
-                let workerId = String(workerIdForMatch || userInfo?.workerProfileId || '');
-                if (!workerId) {
-                    workerId = String(await AsyncStorage.getItem('@worker_profile_id') || '');
-                }
-                if (!workerId) {
-                    try {
-                        const { data } = await client.get('/api/users/profile', {
-                            params: { role: 'worker' },
-                        });
-                        workerId = String(data?.profile?._id || '');
-                        if (workerId) {
-                            await AsyncStorage.setItem('@worker_profile_id', workerId);
-                        }
-                    } catch (profileError) {
-                        logger.warn('Worker profile lookup failed in JobDetails', profileError?.message || profileError);
-                    }
-                }
+                const workerId = await resolveWorkerApplicationIdentity(userInfo);
 
                 if (isMounted) {
                     setResolvedWorkerId(workerId);
@@ -217,7 +315,7 @@ export default function JobDetailsScreen({ navigation, route }) {
 
         hydrateContext();
         return () => { isMounted = false; };
-    }, [appRole, entrySource, isMatchUiEnabled, workerIdForMatch]);
+    }, [appRole, entrySource, isMatchUiEnabled, resolvedWorkerId, workerIdForMatch]);
 
     useEffect(() => {
         let active = true;
@@ -275,6 +373,9 @@ export default function JobDetailsScreen({ navigation, route }) {
                 setMatchTier(resolvedTier);
                 setProbabilityExplainability(data?.explainability || {});
                 setMatchModelVersionUsed(data?.matchModelVersionUsed || null);
+                setMatchScoreSource(String(data?.matchScoreSource || '').trim());
+                setProbabilisticFallbackUsed(Boolean(data?.probabilisticFallbackUsed || data?.fallbackUsed));
+                setScoreTimeline(data?.timelineTransparency || null);
 
                 trackEvent('MATCH_DETAIL_VIEWED', {
                     workerId: resolvedWorkerId,
@@ -290,6 +391,9 @@ export default function JobDetailsScreen({ navigation, route }) {
                 setMatchProbability(fallbackProbability);
                 setMatchTier(resolvedTier);
                 setProbabilityExplainability(routeExplainability || {});
+                setMatchScoreSource(String(job?.matchScoreSource || '').trim());
+                setProbabilisticFallbackUsed(Boolean(job?.probabilisticFallbackUsed || job?.fallbackUsed));
+                setScoreTimeline(job?.timelineTransparency || null);
 
                 trackEvent('MATCH_DETAIL_VIEWED', {
                     workerId: resolvedWorkerId,
@@ -347,7 +451,7 @@ export default function JobDetailsScreen({ navigation, route }) {
         try {
             const userInfoStr = await SecureStore.getItemAsync('userInfo');
             const userInfo = JSON.parse(userInfoStr || '{}');
-            const workerId = String(userInfo?._id || resolvedWorkerId || userInfo?.workerProfileId || '').trim();
+            const workerId = await resolveWorkerApplicationIdentity(userInfo);
             const jobId = safeJobId;
 
             if (!jobId || !workerId) {
@@ -479,6 +583,7 @@ export default function JobDetailsScreen({ navigation, route }) {
     const effectiveTier = isMatchUiEnabled
         ? (matchTier || tierFromProbability(displayProbability))
         : (String(routeTier || '').toUpperCase() || tierFromProbability(displayProbability));
+    const hasRealMatchScore = displayProbability > 0;
 
     const resolvedExplainability = isMatchUiEnabled
         ? (probabilityExplainability || {})
@@ -501,6 +606,10 @@ export default function JobDetailsScreen({ navigation, route }) {
         { label: 'Distance', value: distanceFitPercent },
     ];
     const similarJobs = buildSimilarJobs(safeJob);
+    const secondaryStat = resolveSecondaryStat(safeJob);
+    const openingsCount = resolveOpenings(safeJob);
+    const companyImageUri = resolveCompanyImage(safeJob)
+        || `https://ui-avatars.com/api/?name=${encodeURIComponent(String(safeJob?.companyName || 'Company'))}&background=7c3aed&color=fff&size=512`;
     const employerTrust = {
         verified: Boolean(safeJob?.verifiedCompany || safeJob?.trustedCompany || safeJob?.trustBadge),
         responseTime: String(safeJob?.responseTimeLabel || safeJob?.employer?.responseTimeLabel || 'Responds fast'),
@@ -508,15 +617,47 @@ export default function JobDetailsScreen({ navigation, route }) {
         rating: Number(safeJob?.employerRating || safeJob?.rating || safeJob?.employer?.rating || 0),
     };
     const matchedSkills = Array.isArray(safeJob?.requirements) ? safeJob.requirements.slice(0, 8) : [];
+    const distanceContextKm = Number.isFinite(Number(safeJob?.distanceKm))
+        ? Number(safeJob.distanceKm)
+        : Number(resolvedExplainability?.apRegional?.distanceKm || safeJob?.job?.distanceKm || 0);
+    const fallbackMatchReasons = buildMatchReasons({
+        explainability: resolvedExplainability,
+        distanceKm: distanceContextKm,
+        max: 3,
+    }).map((item) => item.label);
+    const matchGapBullets = buildMatchGaps({
+        explainability: resolvedExplainability,
+        distanceKm: distanceContextKm,
+        max: 3,
+    }).map((item) => item.label);
     const whyMatchBullets = Array.isArray(explanation) && explanation.length
         ? explanation.slice(0, 3)
-        : [safeFitReason];
+        : (Array.isArray(resolvedExplainability?.topReasons) && resolvedExplainability.topReasons.length
+            ? resolvedExplainability.topReasons.slice(0, 3)
+            : (fallbackMatchReasons.length ? fallbackMatchReasons : [safeFitReason]));
+    const scoreSourceMeta = getMatchScoreSourceMeta({
+        matchScoreSource,
+        matchModelVersionUsed,
+        probabilisticFallbackUsed,
+    });
+    const confidencePercent = Math.round(clamp01(resolvedExplainability?.confidenceScore || 0) * 100);
+    const freshnessSignals = buildFreshnessSignals({
+        ...safeJob,
+        openings: openingsCount ?? safeJob?.openings,
+        responseTimeLabel: employerTrust.responseTime,
+        activelyHiring: safeJob?.activelyHiring !== false,
+        timelineTransparency: scoreTimeline || safeJob?.timelineTransparency || null,
+    });
+    const lastActiveLabel = formatRelativeTimeLabel(
+        scoreTimeline?.workerLastActiveAt,
+        { prefix: 'Active', fallback: '' }
+    );
 
     const handleShareJob = async () => {
         try {
             await Share.share({
                 title: safeJob?.title || 'Job Opportunity',
-                message: `${safeJob?.title || 'Job'} at ${safeJob?.companyName || 'Company'}\n${safeJob?.location || 'Location'}\nSalary: ${safeJob?.salaryRange || 'Not listed'}`,
+                message: `${safeJob?.title || 'Job'} at ${safeJob?.companyName || 'Company'}\n${resolvedLocationLabel}\nSalary: ${safeJob?.salaryRange || 'Not listed'}`,
             });
         } catch (_error) {
             Alert.alert('Share failed', 'Could not open share sheet right now.');
@@ -526,116 +667,73 @@ export default function JobDetailsScreen({ navigation, route }) {
     return (
         <View style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} bounces={false}>
-                {/* Banner Header */}
-                <View style={styles.bannerContainer}>
-                    <Image
-                        source={{
-                            uri: String(safeJob?.bannerImage || safeJob?.bannerUrl || '').trim()
-                                || `https://ui-avatars.com/api/?name=${encodeURIComponent(String(safeJob?.companyName || 'Company'))}&background=7c3aed&color=fff&size=512`,
-                        }}
-                        style={styles.bannerImage}
-                    />
-                    <View style={styles.bannerOverlay} />
-                    <View style={[styles.bannerHeader, { paddingTop: insets.top + 16 }]}>
-                        <TouchableOpacity
-                            style={styles.iconBtnBlur}
-                            onPress={() => {
-                                if (navigation.canGoBack()) {
-                                    navigation.goBack();
-                                    return;
-                                }
-                                navigation.navigate('MainTab', { screen: 'Jobs' });
-                            }}
-                        >
-                            <Text style={styles.iconBtnText}>‹</Text>
+                    <View style={styles.topHeader}>
+                        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainTab', { screen: 'Jobs' })}>
+                            <Text style={styles.backBtnIcon}>‹</Text>
                         </TouchableOpacity>
-                    </View>
-                </View>
-
-                {/* Main Content Card */}
-                <View style={[styles.contentCard, { borderLeftColor: tierAccentColor }]}>
-                    {/* Header Info */}
-                    <View style={styles.heroHeader}>
-                        <View style={styles.heroFlex}>
-                            <Text style={styles.jobTitle}>{safeJob.title}</Text>
-                            <Text style={styles.companyName}>{safeJob.companyName}</Text>
-                            <View style={styles.heroBadgeRow}>
-                                {safeJob?.urgentHiring ? (
-                                    <View style={[styles.heroBadge, styles.heroBadgeUrgent]}>
-                                        <Text style={[styles.heroBadgeText, styles.heroBadgeTextUrgent]}>Urgent Hiring</Text>
-                                    </View>
-                                ) : null}
-                                {safeJob?.activelyHiring !== false ? (
-                                    <View style={[styles.heroBadge, styles.heroBadgeActive]}>
-                                        <Text style={[styles.heroBadgeText, styles.heroBadgeTextActive]}>Actively Hiring</Text>
-                                    </View>
-                                ) : null}
-                            </View>
-                        </View>
-                        {!isEmployer && (
-                            <View style={styles.matchScoreBadge}>
-                                <Text style={styles.matchScoreText}>{displayMatchPercent}%</Text>
-                            </View>
-                        )}
-                    </View>
-
-                    {/* Quick Stats: Salary & Type */}
-                    <View style={styles.quickStatsRow}>
-                        <View style={styles.quickStatCard}>
-                            <Text style={styles.quickStatLabel}>SALARY</Text>
-                            <Text style={styles.quickStatValue}>{safeJob.salaryRange}</Text>
-                        </View>
-                        <View style={[styles.quickStatCard, { marginLeft: 16 }]}>
-                            <Text style={styles.quickStatLabel}>TYPE</Text>
-                            <Text style={styles.quickStatValue}>{safeJob.type}</Text>
+                        <View style={styles.headerRightActions}>
+                            <TouchableOpacity style={styles.actionIconBtn} onPress={handleShareJob}>
+                                <Text style={styles.actionIconText}>↑</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.actionIconBtn} onPress={() => setIsSaved(s => !s)}>
+                                <Text style={styles.actionIconText}>{isSaved ? '★' : '☆'}</Text>
+                            </TouchableOpacity>
                         </View>
                     </View>
 
-                    {!isEmployer ? (
-                        <View style={styles.trustStrip}>
-                            <View style={styles.trustPill}>
-                                <Text style={styles.trustPillText}>{employerTrust.verified ? 'Verified Employer' : 'Employer Profile'}</Text>
-                            </View>
-                            <Text style={styles.trustInlineText}>{employerTrust.responseTime}</Text>
-                            <Text style={styles.trustInlineDot}>•</Text>
-                            <Text style={styles.trustInlineText}>
-                                {employerTrust.totalHires > 0 ? `${employerTrust.totalHires}+ hires` : 'New hiring team'}
-                            </Text>
-                            {employerTrust.rating > 0 ? (
-                                <>
-                                    <Text style={styles.trustInlineDot}>•</Text>
-                                    <Text style={styles.trustInlineText}>Rating {employerTrust.rating.toFixed(1)}</Text>
-                                </>
+                    {/* Profile Header */}
+                    <View style={styles.profileHeader}>
+                        <View style={styles.logoContainer}>
+                            <Image source={{ uri: companyImageUri }} style={styles.logoImage} />
+                            {!isEmployer && hasRealMatchScore && (
+                                <View style={styles.matchBadgeFloating}>
+                                    <Text style={styles.matchBadgeText}>{displayMatchPercent}% FIT</Text>
+                                </View>
+                            )}
+                        </View>
+                        
+                        <Text style={styles.companyTitle}>{safeJob.companyName}</Text>
+                        <Text style={styles.jobTitleMain}>{safeJob.title}</Text>
+                        
+                        <View style={styles.metaRowCentered}>
+                            <Text style={styles.metaText}>{resolvedLocationLabel}</Text>
+                            <Text style={styles.metaDot}>•</Text>
+                            <Text style={styles.metaTextAccent}>{safeJob.salaryRange}</Text>
+                        </View>
+
+                        <View style={styles.heroBadgeRow}>
+                            {safeJob?.urgentHiring && (
+                                <View style={[styles.heroBadge, styles.heroBadgeUrgent]}>
+                                    <Text style={styles.heroBadgeTextUrgent}>Urgent</Text>
+                                </View>
+                            )}
+                            {safeJob?.activelyHiring !== false && (
+                                <View style={[styles.heroBadge, styles.heroBadgeActive]}>
+                                    <Text style={styles.heroBadgeTextActive}>Actively Hiring</Text>
+                                </View>
+                            )}
+                            {openingsCount ? (
+                                <View style={styles.heroBadge}>
+                                    <Text style={styles.heroBadgeText}>{openingsCount} Openings</Text>
+                                </View>
                             ) : null}
                         </View>
-                    ) : null}
+                    </View>
 
-                    {!isEmployer ? (
-                        <View style={styles.detailsActionRow}>
-                            <TouchableOpacity style={styles.detailsActionPill} onPress={handleShareJob} activeOpacity={0.85}>
-                                <Text style={styles.detailsActionPillText}>Share</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.detailsActionPill, isSaved && styles.detailsActionPillSaved]}
-                                onPress={() => setIsSaved((prev) => !prev)}
-                                activeOpacity={0.85}
-                            >
-                                <Text style={[styles.detailsActionPillText, isSaved && styles.detailsActionPillSavedText]}>
-                                    {isSaved ? 'Saved' : 'Save'}
-                                </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.detailsQuickApplyBtn, (applying || applied) && styles.detailsQuickApplyBtnDisabled]}
-                                onPress={handleApply}
-                                disabled={applying || applied}
-                                activeOpacity={0.9}
-                            >
-                                <Text style={styles.detailsQuickApplyText}>
-                                    {applying ? 'Applying...' : (applied ? 'Applied' : 'Quick Apply')}
-                                </Text>
-                            </TouchableOpacity>
+                    <View style={styles.divider} />
+                    {/* Stats Grip */}
+                    <View style={styles.statsGrid}>
+                        <View style={styles.statBox}>
+                            <Text style={styles.statBoxLabel}>Experience</Text>
+                            <Text style={styles.statBoxValue}>{secondaryStat.value}</Text>
                         </View>
-                    ) : null}
+                        {!isEmployer ? (
+                            <View style={styles.statBox}>
+                                <Text style={styles.statBoxLabel}>Response</Text>
+                                <Text style={styles.statBoxValue}>{employerTrust.responseTime}</Text>
+                            </View>
+                        ) : null}
+                    </View>
 
                     {!isEmployer && matchedSkills.length > 0 ? (
                         <View style={styles.section}>
@@ -650,7 +748,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                         </View>
                     ) : null}
 
-                    {!isEmployer ? (
+                    {!isEmployer && hasRealMatchScore ? (
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Why This Match</Text>
                             {whyMatchBullets.map((bullet, index) => (
@@ -659,11 +757,17 @@ export default function JobDetailsScreen({ navigation, route }) {
                         </View>
                     ) : null}
 
-                    {/* Location */}
-                    <View style={styles.locationBox}>
-                        <IconMapPin size={16} color="#64748b" />
-                        <Text style={styles.locationText}>{safeJob.location}</Text>
-                    </View>
+                    {!isEmployer && matchGapBullets.length > 0 ? (
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>What To Improve</Text>
+                            {matchGapBullets.map((gap, index) => (
+                                <Text key={`gap-${index}`} style={styles.matchGapText}>• {String(gap || '').trim()}</Text>
+                            ))}
+                            {lastActiveLabel ? (
+                                <Text style={styles.matchGapHint}>{lastActiveLabel}</Text>
+                            ) : null}
+                        </View>
+                    ) : null}
 
                     {/* Description */}
                     <View style={styles.section}>
@@ -711,7 +815,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 ))}
                             </View>
                         </View>
-                    ) : (
+                    ) : hasRealMatchScore ? (
                         <View style={styles.smartMatchWrap}>
                             <LinearGradient
                                 colors={['#eef2ff', '#f5f3ff']}
@@ -745,6 +849,12 @@ export default function JobDetailsScreen({ navigation, route }) {
                                     ) : null}
 
                                     <Text style={styles.explainabilityHeading}>Match breakdown</Text>
+                                    <View style={styles.matchSourceRow}>
+                                        <Text style={styles.matchSourceLabel}>Score source</Text>
+                                        <Text style={styles.matchSourceValue}>
+                                            {scoreSourceMeta.label}{scoreSourceMeta.detail ? ` • ${scoreSourceMeta.detail}` : ''}
+                                        </Text>
+                                    </View>
                                     <View style={styles.explainabilityGrid}>
                                         {breakdownRows.map((row) => (
                                             <View key={row.label} style={styles.explainabilityRow}>
@@ -770,10 +880,6 @@ export default function JobDetailsScreen({ navigation, route }) {
                                             High likelihood of success — this role aligns strongly with your profile.
                                         </Text>
                                     ) : null}
-
-                                    {matchModelVersionUsed ? (
-                                        <Text style={styles.modelVersionText}>Model: {matchModelVersionUsed}</Text>
-                                    ) : null}
                                 </View>
                             )}
                             <View style={styles.smartMatchTextContainer}>
@@ -794,7 +900,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 onUnlock={() => navigation.navigate('Subscription')}
                             />
                         </View>
-                    )}
+                    ) : null}
 
                     {/* Company Info Section */}
                     {!isEmployer && safeJob?.companyName && (
@@ -806,7 +912,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 </View>
                             </View>
                             <View style={styles.companyCard}>
-                                <Image source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(safeJob.companyName)}&background=7c3aed&color=fff` }} style={styles.companyLogo} />
+                                <Image source={{ uri: companyImageUri }} style={styles.companyLogo} />
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.companyDesc} numberOfLines={3}>
                                         {safeJob?.companyDescription || 'Company overview will be shared by the employer as part of the hiring conversation.'}
@@ -823,7 +929,7 @@ export default function JobDetailsScreen({ navigation, route }) {
                     )}
 
                     {/* Similar Jobs Carousel */}
-                    {!isEmployer && (
+                    {!isEmployer && similarJobs.length > 0 ? (
                         <View style={styles.similarSection}>
                             <Text style={styles.sectionTitle}>Similar Jobs</Text>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.similarScroll}>
@@ -839,10 +945,10 @@ export default function JobDetailsScreen({ navigation, route }) {
                                 ))}
                             </ScrollView>
                         </View>
-                    )}
+                    ) : null}
 
-                    <View style={{ height: 100 }} />
-                </View>
+                    <View style={{ height: 140 }} />
+
             </ScrollView>
 
             {/* Sticky Apply Button */}
@@ -877,52 +983,96 @@ export default function JobDetailsScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f5f7fa' },
-    scrollContent: { flexGrow: 1 },
+    container: { flex: 1, backgroundColor: PALETTE.surface },
+    scrollContent: { paddingHorizontal: 16, paddingTop: 60 },
 
-    // Banner
-    bannerContainer: { height: 160, position: 'relative' },
-    bannerImage: { width: '100%', height: '100%', position: 'absolute' },
-    bannerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.4)' },
-    bannerHeader: { flexDirection: 'row', justifyContent: 'flex-start', paddingHorizontal: 16, position: 'absolute', top: 0, left: 0, right: 0 },
-    iconBtnBlur: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' },
-    iconBtnText: { color: '#fff', fontSize: 32, lineHeight: 36, fontWeight: '300', marginLeft: -2 },
-
-    // Content
-    contentCard: {
-        backgroundColor: '#ffffff',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        marginTop: -24,
-        paddingHorizontal: 20,
-        paddingTop: 24,
-        flex: 1,
-        borderLeftWidth: 4,
+    topHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20,
     },
-    heroHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-    heroFlex: { flex: 1, paddingRight: 16 },
-    jobTitle: { fontSize: 30, fontWeight: '700', color: '#0f172a', marginBottom: 4, lineHeight: 36 },
-    companyName: { fontSize: 15, fontWeight: '500', color: '#2563eb' },
-    heroBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-    heroBadge: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 4 },
-    heroBadgeUrgent: { backgroundColor: '#fef3c7', borderColor: '#fcd34d' },
-    heroBadgeActive: { backgroundColor: '#dbeafe', borderColor: '#bfdbfe' },
-    heroBadgeText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.2 },
-    heroBadgeTextUrgent: { color: '#92400e' },
-    heroBadgeTextActive: { color: '#1e3a8a' },
-    matchScoreBadge: { backgroundColor: '#e8f0ff', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, borderWidth: 1, borderColor: '#bfd5ff' },
-    matchScoreText: { fontSize: 16, fontWeight: '600', color: '#1d4ed8' },
+    backBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: PALETTE.backgroundSoft,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    backBtnIcon: { fontSize: 28, color: PALETTE.textPrimary, lineHeight: 32, marginLeft: -2 },
+    headerRightActions: { flexDirection: 'row', gap: 12 },
+    actionIconBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: PALETTE.backgroundSoft,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    actionIconText: { fontSize: 18, color: PALETTE.textPrimary },
 
-    quickStatsRow: { flexDirection: 'row', marginBottom: 16 },
-    quickStatCard: { flex: 1, backgroundColor: '#f8fbff', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#dbe3ec', alignItems: 'center' },
-    quickStatLabel: { fontSize: 11, fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.4 },
-    quickStatValue: { fontSize: 15, fontWeight: '600', color: '#1e293b' },
+    profileHeader: {
+        alignItems: 'center',
+        marginBottom: 28,
+    },
+    logoContainer: {
+        position: 'relative',
+        marginBottom: 16,
+    },
+    logoImage: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: PALETTE.backgroundSoft,
+    },
+    matchBadgeFloating: {
+        position: 'absolute',
+        bottom: -6,
+        alignSelf: 'center',
+        backgroundColor: PALETTE.accent,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 2,
+        borderColor: PALETTE.surface,
+    },
+    matchBadgeText: { color: PALETTE.surface, fontSize: 10, fontWeight: '800' },
+    
+    companyTitle: { fontSize: 15, fontWeight: '600', color: PALETTE.accent, marginBottom: 8 },
+    jobTitleMain: { fontSize: 26, fontWeight: '800', color: PALETTE.textPrimary, textAlign: 'center', letterSpacing: -0.5, marginBottom: 16 },
+    
+    metaRowCentered: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
+    metaText: { fontSize: 14, color: PALETTE.textSecondary, fontWeight: '500' },
+    metaTextAccent: { fontSize: 14, color: PALETTE.textPrimary, fontWeight: '700' },
+    metaDot: { fontSize: 14, color: PALETTE.textTertiary },
+
+    heroBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+    heroBadge: { borderRadius: 8, backgroundColor: PALETTE.backgroundSoft, paddingHorizontal: 10, paddingVertical: 6 },
+    heroBadgeUrgent: { backgroundColor: PALETTE.errorSoft },
+    heroBadgeActive: { backgroundColor: PALETTE.accentSoft },
+    heroBadgeText: { fontSize: 12, fontWeight: '600', color: PALETTE.textSecondary },
+    heroBadgeTextUrgent: { fontSize: 12, fontWeight: '700', color: PALETTE.error },
+    heroBadgeTextActive: { fontSize: 12, fontWeight: '700', color: PALETTE.accent },
+
+    divider: { height: 1, backgroundColor: PALETTE.separator, marginHorizontal: -16, marginBottom: 24 },
+
+    statsGrid: { flexDirection: 'row', gap: 12, marginBottom: 24 },
+    statBox: { flex: 1, backgroundColor: PALETTE.backgroundSoft, borderRadius: 12, padding: 14, alignItems: 'center' },
+    statBoxLabel: { fontSize: 11, fontWeight: '600', color: PALETTE.textTertiary, textTransform: 'uppercase', marginBottom: 6 },
+    statBoxValue: { fontSize: 15, fontWeight: '700', color: PALETTE.textPrimary },
+
+    quickStatsRow: { flexDirection: 'row', marginBottom: 16, gap: 8 },
+    quickStatCard: { flex: 1, backgroundColor: PALETTE.backgroundSoft, padding: 12, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: PALETTE.separator, alignItems: 'center' },
+    quickStatCardSpaced: { marginLeft: 0 },
+    quickStatLabel: { fontSize: 10, fontWeight: '500', color: PALETTE.textTertiary, textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.3 },
+    quickStatValue: { fontSize: 14, fontWeight: '600', color: PALETTE.textPrimary },
     trustStrip: {
         marginBottom: 16,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#dbe7ff',
-        backgroundColor: '#f8fbff',
+        borderColor: PALETTE.separator,
+        backgroundColor: PALETTE.backgroundSoft,
         paddingHorizontal: 12,
         paddingVertical: 10,
         flexDirection: 'row',
@@ -933,25 +1083,55 @@ const styles = StyleSheet.create({
     trustPill: {
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#bfd5ff',
-        backgroundColor: '#e8f0ff',
+        borderColor: PALETTE.accentBorder,
+        backgroundColor: PALETTE.accentSoft,
         paddingHorizontal: 8,
         paddingVertical: 4,
     },
     trustPillText: {
-        color: '#1e3a8a',
+        color: PALETTE.accentDeep,
         fontSize: 10,
         fontWeight: '800',
     },
     trustInlineText: {
-        color: '#334155',
+        color: PALETTE.textPrimary,
         fontSize: 11,
         fontWeight: '700',
     },
     trustInlineDot: {
-        color: '#94a3b8',
+        color: PALETTE.textTertiary,
         fontSize: 10,
         fontWeight: '700',
+    },
+    matchMetaRail: {
+        marginTop: -4,
+        marginBottom: 16,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    matchMetaPill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: PALETTE.separator,
+        backgroundColor: PALETTE.surface,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    matchMetaPillAccent: {
+        borderColor: PALETTE.accentBorder,
+        backgroundColor: PALETTE.accentSoft,
+    },
+    matchMetaPillText: {
+        color: PALETTE.textSecondary,
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    matchMetaPillTextAccent: {
+        color: PALETTE.accentDeep,
     },
     detailsActionRow: {
         marginBottom: 16,
@@ -962,74 +1142,76 @@ const styles = StyleSheet.create({
     detailsActionPill: {
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#d9cdfc',
-        backgroundColor: '#faf5ff',
+        borderColor: PALETTE.accentBorder,
+        backgroundColor: PALETTE.accentTint,
         paddingHorizontal: 12,
         paddingVertical: 8,
     },
     detailsActionPillText: {
         fontSize: 12,
         fontWeight: '700',
-        color: '#5b21b6',
+        color: PALETTE.accentDeep,
     },
     detailsActionPillSaved: {
-        backgroundColor: '#ede9fe',
-        borderColor: '#c4b5fd',
+        backgroundColor: PALETTE.accentSoft,
+        borderColor: PALETTE.accentBorder,
     },
     detailsActionPillSavedText: {
-        color: '#6d28d9',
+        color: PALETTE.accentDeep,
     },
     detailsQuickApplyBtn: {
         marginLeft: 'auto',
         borderRadius: 999,
         paddingHorizontal: 14,
         paddingVertical: 9,
-        backgroundColor: '#7c3aed',
+        backgroundColor: PALETTE.accentDeep,
     },
     detailsQuickApplyBtnDisabled: {
         opacity: 0.65,
     },
     detailsQuickApplyText: {
-        color: '#fff',
+        color: PALETTE.textInverted,
         fontSize: 12,
         fontWeight: '800',
         letterSpacing: 0.2,
     },
 
-    locationBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f8fbff', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#dbe3ec', marginBottom: 24 },
-    locationText: { fontSize: 14, fontWeight: '500', color: '#475569' },
+    locationBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: PALETTE.backgroundSoft, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: PALETTE.separator, marginBottom: 24 },
+    locationText: { fontSize: 14, fontWeight: '500', color: PALETTE.textSecondary },
 
     section: { marginBottom: 24 },
-    sectionTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a', marginBottom: 12 },
-    descriptionText: { fontSize: 15, lineHeight: 22, color: '#475569', fontWeight: '400' },
-    whyMatchText: { fontSize: 14, color: '#475569', lineHeight: 22, marginBottom: 6 },
+    sectionTitle: { fontSize: 18, fontWeight: '600', color: PALETTE.textPrimary, marginBottom: 12 },
+    descriptionText: { fontSize: 15, lineHeight: 22, color: PALETTE.textSecondary, fontWeight: '400' },
+    whyMatchText: { fontSize: 14, color: PALETTE.textSecondary, lineHeight: 22, marginBottom: 6 },
+    matchGapText: { fontSize: 14, color: PALETTE.error, lineHeight: 22, marginBottom: 6 },
+    matchGapHint: { marginTop: 4, fontSize: 11.5, fontWeight: '700', color: PALETTE.textSecondary },
 
     tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    skillTag: { backgroundColor: '#f8fbff', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: '#dbe3ec' },
-    skillTagText: { fontSize: 12, color: '#334155', fontWeight: '500' },
+    skillTag: { backgroundColor: PALETTE.backgroundSoft, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: PALETTE.separator },
+    skillTagText: { fontSize: 12, color: PALETTE.textPrimary, fontWeight: '500' },
 
     // Employer
-    funnelSection: { backgroundColor: '#f8fafc', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#f1f5f9', marginBottom: 24 },
+    funnelSection: { backgroundColor: PALETTE.backgroundSoft, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: PALETTE.borderLight, marginBottom: 24 },
     funnelChartWrapNative: { height: 220, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 10 },
     funnelCol: { flex: 1, alignItems: 'center' },
-    funnelValue: { fontSize: 11, fontWeight: '600', color: '#0f172a', marginBottom: 4 },
-    funnelTrack: { height: 140, width: 32, borderRadius: 8, backgroundColor: '#e2e8f0', justifyContent: 'flex-end', overflow: 'hidden' },
+    funnelValue: { fontSize: 11, fontWeight: '600', color: PALETTE.textPrimary, marginBottom: 4 },
+    funnelTrack: { height: 140, width: 32, borderRadius: 8, backgroundColor: PALETTE.surface2, justifyContent: 'flex-end', overflow: 'hidden' },
     funnelBar: { width: '100%', borderRadius: 8 },
-    funnelLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', marginTop: 8, textAlign: 'center' },
+    funnelLabel: { fontSize: 10, fontWeight: '700', color: PALETTE.textSecondary, marginTop: 8, textAlign: 'center' },
 
     // Employee 
     smartMatchWrap: { position: 'relative', marginBottom: 24, borderRadius: 14, overflow: 'hidden' },
-    smartMatchCard: { padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#d7e2f0' },
+    smartMatchCard: { padding: 16, borderRadius: 14, borderWidth: 1, borderColor: PALETTE.separator },
     smartMatchHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
     smartMatchTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    smartMatchTitle: { fontSize: 14, fontWeight: '600', color: '#1e3a8a' },
-    explainBtn: { backgroundColor: '#1d4ed8', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
-    explainBtnText: { fontSize: 11, fontWeight: '600', color: '#ffffff' },
+    smartMatchTitle: { fontSize: 14, fontWeight: '600', color: PALETTE.accentDeep },
+    explainBtn: { backgroundColor: PALETTE.accentDeep, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
+    explainBtnText: { fontSize: 11, fontWeight: '600', color: PALETTE.textInverted },
     probabilityCard: {
-        backgroundColor: '#ffffff',
+        backgroundColor: PALETTE.surface,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#dbe3ec',
+        borderColor: PALETTE.separator,
         padding: 12,
         marginBottom: 10,
     },
@@ -1041,13 +1223,13 @@ const styles = StyleSheet.create({
     probabilityValue: {
         fontSize: 22,
         fontWeight: '700',
-        color: '#1e3a8a',
+        color: PALETTE.accentDeep,
     },
     probabilityTier: {
         fontSize: 11,
         fontWeight: '600',
-        color: '#1d4ed8',
-        backgroundColor: '#e8f0ff',
+        color: PALETTE.accentDeep,
+        backgroundColor: PALETTE.accentSoft,
         borderRadius: 999,
         paddingHorizontal: 8,
         paddingVertical: 4,
@@ -1060,9 +1242,31 @@ const styles = StyleSheet.create({
     explainabilityHeading: {
         marginTop: 8,
         marginBottom: 8,
-        color: '#0f172a',
+        color: PALETTE.textPrimary,
         fontSize: 13,
         fontWeight: '600',
+    },
+    matchSourceRow: {
+        marginBottom: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 9,
+        borderRadius: 10,
+        backgroundColor: PALETTE.backgroundSoft,
+        borderWidth: 1,
+        borderColor: PALETTE.separator,
+    },
+    matchSourceLabel: {
+        color: PALETTE.textTertiary,
+        fontSize: 10.5,
+        fontWeight: '800',
+        letterSpacing: 0.2,
+        textTransform: 'uppercase',
+    },
+    matchSourceValue: {
+        marginTop: 3,
+        color: PALETTE.textPrimary,
+        fontSize: 12,
+        fontWeight: '700',
     },
     explainabilityGrid: {
         gap: 10,
@@ -1076,25 +1280,25 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     explainabilityMetricLabel: {
-        color: '#475569',
+        color: PALETTE.textSecondary,
         fontSize: 12,
         fontWeight: '500',
     },
     explainabilityMetricValue: {
-        color: '#1d4ed8',
+        color: PALETTE.accentDeep,
         fontSize: 12,
         fontWeight: '600',
     },
     explainabilityTrack: {
         height: 5,
         borderRadius: 99,
-        backgroundColor: '#e2e8f0',
+        backgroundColor: PALETTE.surface3,
         overflow: 'hidden',
     },
     explainabilityFill: {
         height: '100%',
         borderRadius: 99,
-        backgroundColor: '#1d4ed8',
+        backgroundColor: PALETTE.accentDeep,
     },
     lowMatchNudge: {
         marginTop: 10,
@@ -1118,40 +1322,34 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         padding: 8,
     },
-    modelVersionText: {
-        marginTop: 8,
-        fontSize: 10,
-        color: '#64748b',
-        fontWeight: '500',
-    },
     smartMatchTextContainer: {
         marginTop: 4,
     },
-    smartMatchText: { fontSize: 13, lineHeight: 20, color: '#334155' },
+    smartMatchText: { fontSize: 13, lineHeight: 20, color: PALETTE.textPrimary },
 
     companySection: { marginBottom: 24 },
     sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 },
-    viewProfileText: { fontSize: 12, fontWeight: '600', color: '#1d4ed8', marginBottom: 2 },
-    companyCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', flexDirection: 'row', gap: 16 },
+    viewProfileText: { fontSize: 12, fontWeight: '600', color: PALETTE.accentDeep, marginBottom: 2 },
+    companyCard: { backgroundColor: PALETTE.surface, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: PALETTE.separator, flexDirection: 'row', gap: 16 },
     companyLogo: { width: 48, height: 48, borderRadius: 12 },
-    companyDesc: { fontSize: 12, color: '#64748b', lineHeight: 18, marginBottom: 8 },
+    companyDesc: { fontSize: 12, color: PALETTE.textSecondary, lineHeight: 18, marginBottom: 8 },
     companyMetaRow: { flexDirection: 'row', gap: 12 },
-    companyMetaLabel: { fontSize: 10, fontWeight: '500', color: '#94a3b8' },
+    companyMetaLabel: { fontSize: 10, fontWeight: '500', color: PALETTE.textTertiary },
 
     similarSection: { marginBottom: 24 },
     similarScroll: { paddingRight: 20 },
-    similarCard: { backgroundColor: '#fff', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', width: 220, marginRight: 16, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
-    similarCardTitle: { fontSize: 14, fontWeight: '600', color: '#0f172a', marginBottom: 2 },
-    similarCardCompany: { fontSize: 12, color: '#64748b', marginBottom: 12 },
-    similarCardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f8fafc', paddingTop: 8 },
-    similarCardLoc: { fontSize: 11, color: '#94a3b8' },
-    similarCardSal: { fontSize: 12, fontWeight: '600', color: '#1d4ed8' },
+    similarCard: { backgroundColor: PALETTE.surface, padding: 16, borderRadius: 14, borderWidth: 1, borderColor: PALETTE.separator, width: 220, marginRight: 16, shadowColor: PALETTE.textPrimary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
+    similarCardTitle: { fontSize: 14, fontWeight: '600', color: PALETTE.textPrimary, marginBottom: 2 },
+    similarCardCompany: { fontSize: 12, color: PALETTE.textSecondary, marginBottom: 12 },
+    similarCardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: PALETTE.surface2, paddingTop: 8 },
+    similarCardLoc: { fontSize: 11, color: PALETTE.textTertiary },
+    similarCardSal: { fontSize: 12, fontWeight: '600', color: PALETTE.accentDeep },
 
     // Footer
-    footer: { backgroundColor: '#fff', paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0', shadowColor: '#0f172a', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 8 },
-    applyBtn: { backgroundColor: '#1d4ed8', paddingVertical: 16, borderRadius: 12, alignItems: 'center', shadowColor: '#1d4ed8', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
-    applyBtnApplied: { backgroundColor: '#22c55e', shadowColor: '#22c55e' },
-    applyBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '600' },
+    footer: { backgroundColor: PALETTE.surface, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: PALETTE.separator },
+    applyBtn: { backgroundColor: PALETTE.accent, paddingVertical: 15, borderRadius: 12, alignItems: 'center' },
+    applyBtnApplied: { backgroundColor: PALETTE.success },
+    applyBtnText: { color: PALETTE.textInverted, fontSize: 15, fontWeight: '600' },
     successBurst: {
         marginTop: 8,
         borderRadius: 999,
@@ -1167,6 +1365,6 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#166534',
     },
-    editJobBtn: { backgroundColor: '#0f172a', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
-    editJobBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '600' },
+    editJobBtn: { backgroundColor: PALETTE.accent, paddingVertical: 15, borderRadius: 12, alignItems: 'center' },
+    editJobBtnText: { color: PALETTE.textInverted, fontSize: 15, fontWeight: '600' },
 });

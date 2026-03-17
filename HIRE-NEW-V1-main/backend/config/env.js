@@ -100,9 +100,11 @@ const validateEnvironment = () => {
 
     const runtime = runtimeResult.data;
     const isProduction = runtime === 'production';
+    const isStaging = runtime === 'staging';
     const isTest = runtime === 'test';
 
-    getGeminiApiKey({ required: true });
+    // Gemini is optional in local/test, but required for prod-like runtimes.
+    getGeminiApiKey({ required: isProduction || isStaging });
 
     // Keep local runtime minimal: derive optional secrets from JWT_SECRET when absent.
     const jwtSecret = String(process.env.JWT_SECRET || '').trim();

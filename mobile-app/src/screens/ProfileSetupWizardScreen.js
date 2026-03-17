@@ -18,10 +18,83 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Localization from 'expo-localization';
+import { LinearGradient } from 'expo-linear-gradient';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
+import { PALETTE, SHADOWS } from '../theme/theme';
+import {
+    getNormalizedProfileReadiness,
+    getProfileStudioCompletion,
+    formatProfileCompletionStepLabel,
+} from '../utils/profileReadiness';
+import {
+    getApEmployerLocationOptions,
+    getApLanguageOptions,
+    getApLocalityHints,
+    getApLocationOptions,
+    getApPriorityLocations,
+    getDefaultApLanguage,
+} from '../config/apProfileCatalog';
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+const GLASS_PALETTE = {
+    bgTop: PALETTE.background,
+    bgMid: PALETTE.backgroundSoft,
+    bgBottom: PALETTE.surface2,
+    glowLavender: PALETTE.accentTint,
+    glowBlue: PALETTE.accentSoft,
+    glowRose: PALETTE.accentSoft,
+    surface: PALETTE.background,
+    surfaceStrong: PALETTE.background,
+    surfaceMuted: PALETTE.surface2,
+    surfaceLine: PALETTE.borderLight,
+    border: PALETTE.border,
+    borderStrong: PALETTE.border,
+    accent: PALETTE.accent,
+    accentStrong: PALETTE.accentDeep,
+    accentText: PALETTE.accentDeep,
+    accentSoft: PALETTE.accentSoft,
+    accentTint: PALETTE.accentTint,
+    text: PALETTE.textPrimary,
+    textStrong: PALETTE.textPrimary,
+    textMuted: PALETTE.textSecondary,
+    textSoft: PALETTE.textTertiary,
+    success: PALETTE.success,
+    danger: PALETTE.error,
+};
+const GLASS_GRADIENTS = {
+    screen: [PALETTE.background, PALETTE.backgroundSoft, PALETTE.surface2],
+    accent: ['#C084FC', PALETTE.accent, PALETTE.accentDeep],
+    subtlePanel: [PALETTE.background, PALETTE.backgroundSoft],
+    cardSurface: [PALETTE.background, PALETTE.surface2],
+};
+const GLASS_SHADOWS = {
+    card: SHADOWS.md,
+    soft: SHADOWS.sm,
+    accent: SHADOWS.accent,
+};
+const GLASS_SURFACES = {
+    panel: {
+        backgroundColor: PALETTE.background,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+    },
+    softPanel: {
+        backgroundColor: PALETTE.backgroundSoft,
+        borderWidth: 1,
+        borderColor: PALETTE.borderLight,
+    },
+    input: {
+        backgroundColor: PALETTE.surface2,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+    },
+    pill: {
+        backgroundColor: PALETTE.background,
+        borderWidth: 1,
+        borderColor: PALETTE.borderLight,
+    },
+};
 const WORKER_SKILL_SUGGESTIONS = [
     'Customer support',
     'Warehouse safety',
@@ -117,11 +190,17 @@ const WORKER_ROLE_TEMPLATES = {
     },
 };
 const EXPERIENCE_OPTIONS = [0, 1, 2, 3, 5, 8, 10];
-const WORKER_CITY_OPTIONS = ['Hyderabad', 'Bengaluru', 'Mumbai', 'Delhi NCR', 'Chennai', 'Pune'];
-const WORKER_LANGUAGE_OPTIONS = ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada'];
+const WORKER_CITY_OPTIONS = getApLocationOptions();
+const WORKER_LANGUAGE_OPTIONS = getApLanguageOptions();
 const WORKER_SALARY_OPTIONS = [15000, 20000, 25000, 30000, 40000, 50000, 65000];
-const PRIORITY_WORKER_CITIES = ['Hyderabad', 'Bengaluru', 'Mumbai', 'Delhi NCR'];
-const PRIORITY_WORKER_LANGUAGES = ['English', 'Hindi', 'Telugu'];
+const WORKER_COMMUTE_DISTANCE_OPTIONS = [5, 10, 25, 40];
+const WORKER_MATCH_TIER_OPTIONS = [
+    { label: 'Explore more', value: 'POSSIBLE' },
+    { label: 'Balanced', value: 'GOOD' },
+    { label: 'Top only', value: 'STRONG' },
+];
+const PRIORITY_WORKER_CITIES = getApPriorityLocations();
+const PRIORITY_WORKER_LANGUAGES = ['Telugu', 'English', 'Hindi'];
 const PRIORITY_WORKER_SALARY_OPTIONS = [20000, 25000, 30000, 40000];
 const EMPLOYER_INDUSTRY_OPTIONS = [
     'Logistics',
@@ -135,7 +214,7 @@ const EMPLOYER_INDUSTRY_OPTIONS = [
     'Finance',
     'Staffing',
 ];
-const EMPLOYER_LOCATION_OPTIONS = ['Hyderabad', 'Bengaluru', 'Mumbai', 'Delhi NCR', 'Chennai', 'Pune', 'Remote / Pan India'];
+const EMPLOYER_LOCATION_OPTIONS = getApEmployerLocationOptions();
 const AVAILABILITY_OPTIONS = [
     { label: 'Immediate', value: 0 },
     { label: '15 days', value: 15 },
@@ -207,11 +286,11 @@ const toggleSkillToken = (currentSkillsText = '', skill = '') => {
 const mapLanguageToLabel = (value = '') => {
     const normalized = normalizeToken(value);
     if (!normalized) return 'English';
-    if (normalized === 'en') return 'English';
-    if (normalized === 'hi') return 'Hindi';
-    if (normalized === 'te') return 'Telugu';
-    if (normalized === 'ta') return 'Tamil';
-    if (normalized === 'kn') return 'Kannada';
+    if (normalized === 'en' || normalized.startsWith('en-')) return 'English';
+    if (normalized === 'hi' || normalized.startsWith('hi-')) return 'Hindi';
+    if (normalized === 'te' || normalized.startsWith('te-')) return 'Telugu';
+    if (normalized === 'ta' || normalized.startsWith('ta-')) return 'Tamil';
+    if (normalized === 'kn' || normalized.startsWith('kn-')) return 'Kannada';
     return String(value || '').trim();
 };
 
@@ -253,7 +332,7 @@ const TypeaheadInput = ({
                     onChangeText={onChangeText}
                     style={styles.inputField}
                     placeholder={placeholder}
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor={GLASS_PALETTE.textMuted}
                     keyboardType={keyboardType}
                     autoCapitalize={autoCapitalize}
                     autoCorrect={false}
@@ -265,7 +344,7 @@ const TypeaheadInput = ({
                 <Ionicons
                     name={showSuggestions ? 'chevron-up' : 'chevron-down'}
                     size={15}
-                    color="#6b7280"
+                    color={GLASS_PALETTE.textMuted}
                     style={styles.inputChevron}
                 />
             </View>
@@ -282,7 +361,7 @@ const TypeaheadInput = ({
                                 setIsFocused(false);
                             }}
                         >
-                            <Ionicons name="sparkles-outline" size={13} color="#7c3aed" />
+                            <Ionicons name="sparkles-outline" size={13} color={GLASS_PALETTE.accentText} />
                             <Text style={styles.typeaheadOptionText}>{item}</Text>
                         </TouchableOpacity>
                     ))}
@@ -380,11 +459,15 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
         avatarUrl: '',
         fullName: '',
         city: '',
-        language: 'English',
+        panchayat: '',
+        language: getDefaultApLanguage(),
         skillsText: '',
         experienceInRole: 0,
         expectedSalary: '',
+        maxCommuteDistanceKm: 25,
+        minimumMatchTier: 'GOOD',
         preferredShift: 'Flexible',
+        isAvailable: true,
         availabilityWindowDays: 0,
         openToRelocation: false,
         openToNightShift: false,
@@ -442,6 +525,10 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
     const visibleWorkerSalaryOptions = useMemo(
         () => (showAllSalaryBands ? WORKER_SALARY_OPTIONS : focusChoices([...PRIORITY_WORKER_SALARY_OPTIONS, ...WORKER_SALARY_OPTIONS], [Number(form.expectedSalary || 0)], 4)),
         [form.expectedSalary, showAllSalaryBands]
+    );
+    const workerLocalityHints = useMemo(
+        () => getApLocalityHints(form.city),
+        [form.city]
     );
     const workerCityTypeaheadOptions = useMemo(
         () => buildTypeaheadSuggestions(form.city, WORKER_CITY_OPTIONS, 8),
@@ -503,6 +590,9 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
     );
 
     const verificationComplete = Boolean(readCompletionStep(completion, 'verified_contact')?.complete);
+    const signupSetupDraft = userInfo?.signupSetupDraft && typeof userInfo.signupSetupDraft === 'object'
+        ? userInfo.signupSetupDraft
+        : null;
 
     const steps = useMemo(() => {
         if (isEmployer) {
@@ -517,10 +607,9 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
         }
 
         return [
-            { id: 'profile_picture', title: 'Profile picture' },
-            { id: 'basic_info', title: 'Basic info' },
-            { id: 'work_info', title: 'Work info' },
-            { id: 'availability', title: 'Availability' },
+            { id: 'basic_info', title: 'Identity' },
+            { id: 'work_info', title: 'Work fit' },
+            { id: 'availability', title: 'Job fit' },
         ];
     }, [isEmployer]);
 
@@ -571,32 +660,45 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
             const localeRegion = String(Localization.region || '').trim();
 
             setForm({
-                avatarUrl: String(profile?.avatar || profile?.logoUrl || '').trim(),
+                avatarUrl: String(profile?.avatar || profile?.logoUrl || signupSetupDraft?.avatarUrl || '').trim(),
                 fullName: String(
                     [profile?.firstName, profile?.lastName].filter(Boolean).join(' ')
                     || userInfo?.name
+                    || signupSetupDraft?.fullName
                     || ''
                 ).trim(),
-                city: String(profile?.city || userInfo?.city || '').trim(),
-                language: mapLanguageToLabel(String(profile?.language || userInfo?.languageCode || 'English').trim()),
+                city: String(profile?.city || userInfo?.city || signupSetupDraft?.city || '').trim(),
+                panchayat: String(profile?.panchayat || signupSetupDraft?.panchayat || '').trim(),
+                language: mapLanguageToLabel(
+                    getDefaultApLanguage(String(profile?.language || userInfo?.languageCode || signupSetupDraft?.language || ''))
+                ),
                 skillsText: Array.isArray(roleProfile?.skills) ? roleProfile.skills.join(', ') : '',
                 experienceInRole: Number(roleProfile?.experienceInRole || profile?.totalExperience || 0) || 0,
-                expectedSalary: String(roleProfile?.expectedSalary || ''),
+                expectedSalary: String(roleProfile?.expectedSalary || signupSetupDraft?.expectedSalary || ''),
+                maxCommuteDistanceKm: Number(profile?.settings?.matchPreferences?.maxCommuteDistanceKm || 25) || 25,
+                minimumMatchTier: ['STRONG', 'GOOD', 'POSSIBLE'].includes(String(profile?.settings?.matchPreferences?.minimumMatchTier || '').toUpperCase())
+                    ? String(profile.settings.matchPreferences.minimumMatchTier).toUpperCase()
+                    : 'GOOD',
                 preferredShift: SHIFT_OPTIONS.includes(String(profile?.preferredShift || ''))
                     ? String(profile.preferredShift)
                     : 'Flexible',
+                isAvailable: profile?.isAvailable !== false,
                 availabilityWindowDays: [0, 15, 30].includes(Number(profile?.availabilityWindowDays))
                     ? Number(profile.availabilityWindowDays)
                     : 0,
                 openToRelocation: Boolean(profile?.openToRelocation),
                 openToNightShift: Boolean(profile?.openToNightShift),
-                roleName: String(roleProfile?.roleName || '').trim(),
-                roleCategory: inferRoleCategory(String(roleProfile?.roleName || '').trim()),
-                companyName: String(profile?.companyName || '').trim(),
-                companyDescription: String(profile?.description || '').trim(),
-                industry: String(profile?.industry || '').trim(),
-                contactPerson: employerName,
-                companyLocation: String(profile?.location || userInfo?.city || localeRegion || '').trim(),
+                roleName: String(roleProfile?.roleName || signupSetupDraft?.roleName || '').trim(),
+                roleCategory: String(
+                    inferRoleCategory(String(roleProfile?.roleName || signupSetupDraft?.roleName || '').trim())
+                    || signupSetupDraft?.roleCategory
+                    || ''
+                ).trim(),
+                companyName: String(profile?.companyName || signupSetupDraft?.companyName || '').trim(),
+                companyDescription: String(profile?.description || signupSetupDraft?.description || '').trim(),
+                industry: String(profile?.industry || signupSetupDraft?.industry || '').trim(),
+                contactPerson: String(profile?.contactPerson || employerName || signupSetupDraft?.contactPerson || '').trim(),
+                companyLocation: String(profile?.location || userInfo?.city || signupSetupDraft?.location || localeRegion || '').trim(),
             });
 
             const incomingCompletion = completionRes?.data?.completion || profileRes?.data?.profileCompletion || null;
@@ -742,7 +844,6 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
         if (!currentStep) return 'Invalid step.';
         if (isEmployer) {
             if (currentStep.id === 'company_name' && !String(form.companyName || '').trim()) return 'Company name is required.';
-            if (currentStep.id === 'company_logo' && !String(form.avatarUrl || '').trim()) return 'Company logo is required.';
             if (currentStep.id === 'company_description' && !String(form.companyDescription || '').trim()) return 'Company description is required.';
             if (currentStep.id === 'industry' && !String(form.industry || '').trim()) return 'Industry is required.';
             if (currentStep.id === 'contact_person' && !String(form.contactPerson || '').trim()) return 'Contact person is required.';
@@ -750,7 +851,6 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
             return '';
         }
 
-        if (currentStep.id === 'profile_picture' && !String(form.avatarUrl || '').trim()) return 'Profile picture is required.';
         if (currentStep.id === 'basic_info') {
             if (!String(form.fullName || '').trim()) return 'Full name is required.';
             if (!String(form.city || '').trim()) return 'City is required.';
@@ -797,7 +897,8 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                 firstName: names.firstName,
                 lastName: names.lastName,
                 city: String(form.city || '').trim(),
-                language: String(form.language || 'English').trim(),
+                panchayat: String(form.panchayat || '').trim(),
+                language: getDefaultApLanguage(String(form.language || '')),
             });
         }
 
@@ -820,10 +921,14 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
 
         if (currentStep.id === 'availability') {
             return persistProfile({
-                isAvailable: true,
+                isAvailable: Boolean(form.isAvailable),
                 availabilityWindowDays: Number(form.availabilityWindowDays || 0),
                 openToRelocation: Boolean(form.openToRelocation),
                 openToNightShift: Boolean(form.openToNightShift),
+                matchPreferences: {
+                    maxCommuteDistanceKm: Number(form.maxCommuteDistanceKm || 25),
+                    minimumMatchTier: String(form.minimumMatchTier || 'GOOD').trim().toUpperCase(),
+                },
             });
         }
 
@@ -832,19 +937,28 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
 
     const finishIfReady = useCallback(async () => {
         const nextCompletion = await refreshCompletion();
-        const canAccessApp = Boolean(nextCompletion?.actions?.canAccessApp);
-        if (!canAccessApp) {
-            const missing = Array.isArray(nextCompletion?.missingForAccess) ? nextCompletion.missingForAccess.join(', ') : '';
-            setErrorText(missing ? `Complete required fields: ${missing.replace(/_/g, ' ')}` : 'Profile setup is incomplete.');
+        const studioCompletion = getProfileStudioCompletion({
+            role: isEmployer ? 'employer' : 'worker',
+            completion: nextCompletion,
+        });
+        if (!studioCompletion.isStudioReady) {
+            const missing = studioCompletion.missingCoreSteps.map((stepId) => formatProfileCompletionStepLabel(stepId)).join(', ');
+            setErrorText(missing ? `Complete these details first: ${missing}.` : 'Profile setup is incomplete.');
             return false;
         }
-        await updateUserInfo?.({
+        const readiness = getNormalizedProfileReadiness({
             hasCompletedProfile: Boolean(nextCompletion?.meetsProfileCompleteThreshold),
+            profileComplete: Boolean(nextCompletion?.meetsProfileCompleteThreshold),
+        });
+        await updateUserInfo?.({
+            hasCompletedProfile: readiness.hasCompletedProfile,
+            profileComplete: readiness.profileComplete,
             profileCompletion: nextCompletion,
+            signupSetupDraft: null,
         });
         onCompleted?.(nextCompletion);
         return true;
-    }, [onCompleted, refreshCompletion, updateUserInfo]);
+    }, [isEmployer, onCompleted, refreshCompletion, updateUserInfo]);
 
     const onNext = useCallback(async () => {
         if (saving || uploadingAvatar || aiAssistLoading) return;
@@ -921,6 +1035,8 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
             return {
                 ...prev,
                 roleName: String(prev.roleName || suggestedRole).trim(),
+                city: String(prev.city || PRIORITY_WORKER_CITIES[0] || '').trim(),
+                language: getDefaultApLanguage(String(prev.language || '')),
                 skillsText: mergedSkills.join(', '),
                 expectedSalary: String(Number(prev.expectedSalary || 0) > 0 ? prev.expectedSalary : suggestedSalary),
             };
@@ -928,46 +1044,43 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
     }, [form.roleCategory]);
 
     const renderWorkerStep = () => {
-        if (currentStep.id === 'profile_picture') {
-            return (
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Add your profile picture</Text>
-                    <Text style={styles.sectionHint}>Required. Cropped square and compressed before upload.</Text>
-                    <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} activeOpacity={0.85}>
-                        {form.avatarUrl ? (
-                            <Image source={{ uri: form.avatarUrl }} style={styles.avatarImage} />
-                        ) : (
-                            <Text style={styles.avatarPlaceholder}>Upload</Text>
-                        )}
-                    </TouchableOpacity>
-                    {uploadingAvatar ? (
-                        <View style={styles.uploadState}>
-                            <ActivityIndicator color="#4f46e5" />
-                            <Text style={styles.uploadStateText}>Uploading {uploadProgress}%</Text>
-                        </View>
-                    ) : null}
-                </View>
-            );
-        }
-
         if (currentStep.id === 'basic_info') {
             return (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Basic information</Text>
+                    <Text style={styles.sectionTitle}>Identity & area</Text>
                     <View style={styles.hintCard}>
-                        <Text style={styles.hintText}>Use quick choices. Type only if your city or language is not listed.</Text>
+                        <Text style={styles.hintText}>Three steps only. Start with your role area in Andhra Pradesh, then we use it across matching and profile quality.</Text>
+                    </View>
+                    <View style={styles.inlineHeroCard}>
+                        <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} activeOpacity={0.85}>
+                            {form.avatarUrl ? (
+                                <Image source={{ uri: form.avatarUrl }} style={styles.avatarImage} />
+                            ) : (
+                                <Text style={styles.avatarPlaceholder}>Photo</Text>
+                            )}
+                        </TouchableOpacity>
+                        <View style={styles.inlineHeroCopy}>
+                            <Text style={styles.inlineHeroTitle}>Profile photo</Text>
+                            <Text style={styles.inlineHeroHint}>Optional, but it improves trust. You can add it now or later.</Text>
+                            {uploadingAvatar ? (
+                                <View style={styles.uploadStateInline}>
+                                    <ActivityIndicator color="#4f46e5" />
+                                    <Text style={styles.uploadStateText}>Uploading {uploadProgress}%</Text>
+                                </View>
+                            ) : null}
+                        </View>
                     </View>
                     <TextInput
                         value={form.fullName}
                         onChangeText={(value) => setForm((prev) => ({ ...prev, fullName: value }))}
                         style={styles.input}
                         placeholder="Full name"
-                        placeholderTextColor="#64748b"
+                        placeholderTextColor={GLASS_PALETTE.textMuted}
                         textContentType="name"
                         autoCapitalize="words"
                         autoCorrect={false}
                     />
-                    <Text style={styles.fieldLabel}>City</Text>
+                    <Text style={styles.fieldLabel}>District / city</Text>
                     <View style={styles.rowWrap}>
                         {visibleWorkerCities.map((city) => (
                             <Pill
@@ -1005,14 +1118,14 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                         activeOpacity={0.82}
                     >
                         <Text style={styles.helperActionText}>
-                            {showCustomCityInput ? 'Hide custom city' : 'City not listed? Add custom'}
+                            {showCustomCityInput ? 'Hide custom location' : 'Location not listed? Add custom'}
                         </Text>
                     </TouchableOpacity>
                     {showCustomCityInput ? (
                         <TypeaheadInput
                             value={form.city}
                             onChangeText={(value) => setForm((prev) => ({ ...prev, city: value }))}
-                            placeholder="Type city"
+                            placeholder="Type district, city, or mandal"
                             suggestions={workerCityTypeaheadOptions}
                             onSelectSuggestion={(value) => {
                                 setForm((prev) => ({ ...prev, city: value }));
@@ -1020,6 +1133,32 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                             }}
                             textContentType="addressCity"
                         />
+                    ) : null}
+
+                    <Text style={styles.fieldLabel}>Local area / panchayat</Text>
+                    <TextInput
+                        value={form.panchayat}
+                        onChangeText={(value) => setForm((prev) => ({ ...prev, panchayat: value }))}
+                        style={styles.input}
+                        placeholder="Village, area, mandal, or panchayat"
+                        placeholderTextColor={GLASS_PALETTE.textMuted}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                    />
+                    {workerLocalityHints.length ? (
+                        <>
+                            <Text style={styles.dropdownHelperText}>Andhra Pradesh quick picks</Text>
+                            <View style={styles.rowWrap}>
+                                {workerLocalityHints.map((item) => (
+                                    <Pill
+                                        key={`panchayat-${item}`}
+                                        label={item}
+                                        active={normalizeToken(form.panchayat) === normalizeToken(item)}
+                                        onPress={() => setForm((prev) => ({ ...prev, panchayat: item }))}
+                                    />
+                                ))}
+                            </View>
+                        </>
                     ) : null}
 
                     <Text style={styles.fieldLabel}>Language</Text>
@@ -1383,7 +1522,39 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
         if (currentStep.id === 'availability') {
             return (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Availability</Text>
+                    <Text style={styles.sectionTitle}>Availability & matching</Text>
+                    <View style={styles.hintCard}>
+                        <Text style={styles.hintText}>These settings shape commute filtering, feed strictness, and when jobs should show up.</Text>
+                    </View>
+                    <View style={styles.switchRow}>
+                        <Text style={styles.switchLabel}>Open to opportunities</Text>
+                        <Switch
+                            value={Boolean(form.isAvailable)}
+                            onValueChange={(value) => setForm((prev) => ({ ...prev, isAvailable: value }))}
+                        />
+                    </View>
+                    <Text style={styles.fieldLabel}>Max travel distance</Text>
+                    <View style={styles.rowWrap}>
+                        {WORKER_COMMUTE_DISTANCE_OPTIONS.map((distance) => (
+                            <Pill
+                                key={`commute-${distance}`}
+                                label={`${distance} km`}
+                                active={Number(form.maxCommuteDistanceKm || 25) === distance}
+                                onPress={() => setForm((prev) => ({ ...prev, maxCommuteDistanceKm: distance }))}
+                            />
+                        ))}
+                    </View>
+                    <Text style={styles.fieldLabel}>Match strictness</Text>
+                    <View style={styles.rowWrap}>
+                        {WORKER_MATCH_TIER_OPTIONS.map((option) => (
+                            <Pill
+                                key={`tier-${option.value}`}
+                                label={option.label}
+                                active={String(form.minimumMatchTier || 'GOOD') === option.value}
+                                onPress={() => setForm((prev) => ({ ...prev, minimumMatchTier: option.value }))}
+                            />
+                        ))}
+                    </View>
                     <Text style={styles.fieldLabel}>Joining window</Text>
                     <View style={styles.rowWrap}>
                         {AVAILABILITY_OPTIONS.map((option) => (
@@ -1641,10 +1812,12 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
 
     if (bootLoading) {
         return (
-            <View style={[styles.loaderContainer, { paddingTop: insets.top + 20 }]}>
-                <ActivityIndicator color="#4f46e5" />
+            <LinearGradient colors={GLASS_GRADIENTS.screen} style={[styles.loaderContainer, { paddingTop: insets.top + 20 }]}>
+                <View style={styles.bgGlowTop} />
+                <View style={styles.bgGlowBottom} />
+                <ActivityIndicator color={GLASS_PALETTE.accent} />
                 <Text style={styles.loaderText}>Loading profile setup...</Text>
-            </View>
+            </LinearGradient>
         );
     }
 
@@ -1652,78 +1825,120 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
     const stepLabel = `${currentStepIndex + 1} / ${steps.length}`;
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
-        >
-            <ScrollView
-                contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 20) + 24 }]}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        <LinearGradient colors={GLASS_GRADIENTS.screen} style={styles.container}>
+            <View style={styles.bgGlowTop} />
+            <View style={styles.bgGlowMid} />
+            <View style={styles.bgGlowBottom} />
+            <KeyboardAvoidingView
+                style={styles.keyboardShell}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
             >
-                <Text style={styles.headerTitle}>Complete your profile</Text>
-                <Text style={styles.headerSubtitle}>
-                    {isEmployer ? 'Complete details to start posting jobs faster.' : 'Complete profile to get 2x more interviews.'}
-                </Text>
-                <Text style={styles.progressMeta}>Step {stepLabel} • {percent}% complete</Text>
-                <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(100, percent))}%` }]} />
-                </View>
+                <ScrollView
+                    contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 20) + 24 }]}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                >
+                    <View style={styles.headerCard}>
+                        <LinearGradient
+                            colors={[PALETTE.accent, PALETTE.accentDeep]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.headerAccent}
+                        />
+                        <Text style={styles.headerTitle}>Complete your profile</Text>
+                        <Text style={styles.headerSubtitle}>
+                            {isEmployer ? 'Keep this simple: company, hiring base, and contact details.' : 'Three steps only: your identity, your work fit, and your job fit for Andhra Pradesh.'}
+                        </Text>
+                        <Text style={styles.progressMeta}>Step {stepLabel} • {percent}% complete</Text>
+                        <View style={styles.progressTrack}>
+                            <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(100, percent))}%` }]} />
+                        </View>
 
-                <View style={styles.stepPillRow}>
-                    {steps.map((step, index) => (
+                        <View style={styles.stepPillRow}>
+                            {steps.map((step, index) => (
+                                <TouchableOpacity
+                                    key={step.id}
+                                    activeOpacity={0.82}
+                                    onPress={() => {
+                                        if (index <= currentStepIndex) {
+                                            setCurrentStepIndex(index);
+                                        }
+                                    }}
+                                    style={styles.stepDotTap}
+                                >
+                                    <View style={[
+                                        styles.stepDot,
+                                        index <= currentStepIndex && styles.stepDotActive,
+                                        Boolean(readCompletionStep(completion, step.id)?.complete) && styles.stepDotDone,
+                                    ]}
+                                    />
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    <Text style={styles.stepTitle}>{currentStep?.title}</Text>
+                    {isEmployer ? renderEmployerStep() : renderWorkerStep()}
+
+                    {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
+
+                    <View style={styles.footerRow}>
                         <TouchableOpacity
-                            key={step.id}
-                            activeOpacity={0.82}
-                            onPress={() => {
-                                if (index <= currentStepIndex) {
-                                    setCurrentStepIndex(index);
-                                }
-                            }}
-                            style={styles.stepDotTap}
+                            style={[styles.backBtn, currentStepIndex <= 0 && styles.backBtnDisabled]}
+                            disabled={currentStepIndex <= 0 || saving}
+                            onPress={onBack}
                         >
-                            <View style={[
-                                styles.stepDot,
-                                index <= currentStepIndex && styles.stepDotActive,
-                                Boolean(readCompletionStep(completion, step.id)?.complete) && styles.stepDotDone,
-                            ]}
-                            />
+                            <Text style={styles.backBtnText}>Back</Text>
                         </TouchableOpacity>
-                    ))}
-                </View>
 
-                <Text style={styles.stepTitle}>{currentStep?.title}</Text>
-                {isEmployer ? renderEmployerStep() : renderWorkerStep()}
-
-                {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
-
-                <View style={styles.footerRow}>
-                    <TouchableOpacity
-                        style={[styles.backBtn, currentStepIndex <= 0 && styles.backBtnDisabled]}
-                        disabled={currentStepIndex <= 0 || saving}
-                        onPress={onBack}
-                    >
-                        <Text style={styles.backBtnText}>Back</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.nextBtn, (saving || uploadingAvatar || aiAssistLoading) && styles.nextBtnDisabled]}
-                        disabled={saving || uploadingAvatar || aiAssistLoading}
-                        onPress={onNext}
-                    >
-                        {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.nextBtnText}>{currentStepIndex >= steps.length - 1 ? 'Finish' : 'Next'}</Text>}
-                    </TouchableOpacity>
-                </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+                        <TouchableOpacity
+                            style={[styles.nextBtn, (saving || uploadingAvatar || aiAssistLoading) && styles.nextBtnDisabled]}
+                            disabled={saving || uploadingAvatar || aiAssistLoading}
+                            onPress={onNext}
+                        >
+                            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.nextBtnText}>{currentStepIndex >= steps.length - 1 ? 'Finish' : 'Next'}</Text>}
+                        </TouchableOpacity>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#eef2f8',
+    },
+    keyboardShell: {
+        flex: 1,
+    },
+    bgGlowTop: {
+        position: 'absolute',
+        top: -120,
+        right: -80,
+        width: 240,
+        height: 240,
+        borderRadius: 120,
+        backgroundColor: GLASS_PALETTE.glowLavender,
+    },
+    bgGlowMid: {
+        position: 'absolute',
+        top: '40%',
+        left: -56,
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        backgroundColor: GLASS_PALETTE.glowBlue,
+    },
+    bgGlowBottom: {
+        position: 'absolute',
+        left: -84,
+        bottom: -100,
+        width: 220,
+        height: 220,
+        borderRadius: 110,
+        backgroundColor: GLASS_PALETTE.glowRose,
     },
     content: {
         paddingHorizontal: 18,
@@ -1732,30 +1947,45 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
+        backgroundColor: GLASS_PALETTE.bgTop,
     },
     loaderText: {
         marginTop: 10,
-        color: '#475569',
+        color: GLASS_PALETTE.textMuted,
         fontWeight: '600',
+    },
+    headerCard: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
+        borderRadius: 24,
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+        overflow: 'hidden',
+    },
+    headerAccent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 6,
     },
     headerTitle: {
         fontSize: 27,
         lineHeight: 33,
         fontWeight: '800',
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
         letterSpacing: 0.2,
     },
     headerSubtitle: {
         marginTop: 7,
-        color: '#475569',
+        color: GLASS_PALETTE.textMuted,
         fontWeight: '600',
         lineHeight: 19,
     },
     progressMeta: {
         marginTop: 20,
         fontSize: 11,
-        color: '#64748b',
+        color: GLASS_PALETTE.textSoft,
         fontWeight: '700',
         letterSpacing: 0.8,
         textTransform: 'uppercase',
@@ -1764,13 +1994,13 @@ const styles = StyleSheet.create({
         marginTop: 8,
         height: 9,
         borderRadius: 999,
-        backgroundColor: '#e2e8f0',
+        backgroundColor: PALETTE.surface3,
         overflow: 'hidden',
     },
     progressFill: {
         height: 9,
         borderRadius: 999,
-        backgroundColor: '#7c3aed',
+        backgroundColor: GLASS_PALETTE.accent,
     },
     stepPillRow: {
         marginTop: 18,
@@ -1782,15 +2012,15 @@ const styles = StyleSheet.create({
         width: 9,
         height: 9,
         borderRadius: 9,
-        backgroundColor: '#cbd5e1',
+        backgroundColor: PALETTE.surface3,
     },
     stepDotActive: {
-        backgroundColor: '#7c3aed',
+        backgroundColor: GLASS_PALETTE.accent,
         width: 20,
         borderRadius: 999,
     },
     stepDotDone: {
-        backgroundColor: '#6d28d9',
+        backgroundColor: GLASS_PALETTE.accentStrong,
     },
     stepDotTap: {
         paddingVertical: 2,
@@ -1801,27 +2031,21 @@ const styles = StyleSheet.create({
         fontSize: 22,
         lineHeight: 28,
         fontWeight: '800',
-        color: '#111827',
+        color: GLASS_PALETTE.textStrong,
     },
     section: {
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.card,
         marginTop: 18,
-        backgroundColor: '#ffffff',
         borderRadius: 18,
         paddingHorizontal: 15,
         paddingVertical: 14,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#334155',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.07,
-        shadowRadius: 12,
-        elevation: 2,
     },
     sectionTitle: {
         fontSize: 18,
         lineHeight: 23,
         fontWeight: '800',
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
     },
     sectionTitleRow: {
         flexDirection: 'row',
@@ -1837,21 +2061,19 @@ const styles = StyleSheet.create({
     aiAssistButton: {
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f5f3ff',
+        borderColor: GLASS_PALETTE.surfaceLine,
+        backgroundColor: GLASS_PALETTE.accentSoft,
         paddingHorizontal: 11,
         paddingVertical: 6,
     },
     aiAssistButtonText: {
         fontSize: 11,
         fontWeight: '800',
-        color: '#6d28d9',
+        color: GLASS_PALETTE.accentText,
     },
     autoFillButton: {
         borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#7c3aed',
-        backgroundColor: '#7c3aed',
+        backgroundColor: GLASS_PALETTE.accent,
         paddingHorizontal: 11,
         paddingVertical: 6,
     },
@@ -1862,57 +2084,51 @@ const styles = StyleSheet.create({
     },
     sectionHint: {
         marginTop: 5,
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
         fontWeight: '600',
         fontSize: 12,
         lineHeight: 17,
     },
     hintCard: {
+        ...GLASS_SURFACES.softPanel,
         marginTop: 11,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e9d5ff',
-        backgroundColor: '#faf5ff',
         paddingHorizontal: 11,
         paddingVertical: 9,
     },
     hintText: {
-        color: '#6b21a8',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '700',
         fontSize: 12,
         lineHeight: 17,
     },
     input: {
         marginTop: 11,
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#d6dfec',
+        ...GLASS_SURFACES.input,
         borderRadius: 14,
         paddingHorizontal: 12,
         paddingVertical: 11,
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
         fontWeight: '600',
     },
     typeaheadWrap: {
         marginTop: 11,
     },
     inputShell: {
+        ...GLASS_SURFACES.input,
         minHeight: 46,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d6dfec',
-        backgroundColor: '#f8fafc',
         paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
     },
     inputShellFocused: {
-        borderColor: '#a78bfa',
-        backgroundColor: '#f5f3ff',
+        borderColor: GLASS_PALETTE.accent,
+        backgroundColor: 'rgba(255,255,255,0.86)',
     },
     inputField: {
         flex: 1,
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
         fontWeight: '600',
         paddingVertical: 11,
     },
@@ -1922,9 +2138,7 @@ const styles = StyleSheet.create({
     typeaheadMenu: {
         marginTop: 6,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e9d5ff',
-        backgroundColor: '#ffffff',
+        ...GLASS_SURFACES.panel,
         overflow: 'hidden',
     },
     typeaheadOption: {
@@ -1934,10 +2148,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: 11,
         paddingVertical: 9,
         borderBottomWidth: 1,
-        borderBottomColor: '#f3e8ff',
+        borderBottomColor: 'rgba(111, 78, 246, 0.08)',
     },
     typeaheadOptionText: {
-        color: '#111827',
+        color: GLASS_PALETTE.textStrong,
         fontWeight: '600',
         fontSize: 13,
     },
@@ -1947,7 +2161,7 @@ const styles = StyleSheet.create({
     },
     fieldLabel: {
         marginTop: 12,
-        color: '#334155',
+        color: GLASS_PALETTE.text,
         fontWeight: '700',
         fontSize: 12,
         letterSpacing: 0.2,
@@ -1956,65 +2170,61 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     dropdownTrigger: {
+        ...GLASS_SURFACES.input,
         minHeight: 46,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d6dfec',
-        backgroundColor: '#f8fafc',
         paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     dropdownTriggerOpen: {
-        borderColor: '#818cf8',
-        backgroundColor: '#eef2ff',
+        borderColor: GLASS_PALETTE.accent,
+        backgroundColor: 'rgba(255,255,255,0.86)',
     },
     dropdownTriggerText: {
         flex: 1,
-        color: '#0f172a',
+        color: GLASS_PALETTE.textStrong,
         fontWeight: '700',
         fontSize: 13,
         paddingRight: 8,
     },
     dropdownPlaceholderText: {
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
         fontWeight: '600',
     },
     dropdownChevron: {
-        color: '#475569',
+        color: GLASS_PALETTE.textMuted,
         fontSize: 12,
         fontWeight: '900',
     },
     dropdownMenu: {
+        ...GLASS_SURFACES.panel,
         marginTop: 8,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d6dfec',
-        backgroundColor: '#ffffff',
         overflow: 'hidden',
     },
     dropdownOption: {
         paddingHorizontal: 12,
         paddingVertical: 11,
         borderBottomWidth: 1,
-        borderBottomColor: '#edf2f7',
+        borderBottomColor: 'rgba(122, 136, 180, 0.12)',
     },
     dropdownOptionActive: {
-        backgroundColor: '#eef2ff',
+        backgroundColor: GLASS_PALETTE.accentSoft,
     },
     dropdownOptionText: {
-        color: '#1e293b',
+        color: GLASS_PALETTE.text,
         fontWeight: '600',
         fontSize: 13,
     },
     dropdownOptionTextActive: {
-        color: '#3730a3',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '800',
     },
     dropdownHelperText: {
         marginTop: 8,
-        color: '#64748b',
+        color: GLASS_PALETTE.textMuted,
         fontWeight: '700',
         fontSize: 11,
         letterSpacing: 0.2,
@@ -2031,7 +2241,7 @@ const styles = StyleSheet.create({
         marginBottom: 3,
     },
     helperActionText: {
-        color: '#4338ca',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '800',
         fontSize: 12,
     },
@@ -2049,44 +2259,30 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     inlineAddBtn: {
+        ...GLASS_SURFACES.softPanel,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#7c3aed',
-        backgroundColor: '#f5f3ff',
         paddingHorizontal: 13,
         paddingVertical: 11,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
-        elevation: 1,
     },
     inlineAddBtnText: {
-        color: '#6d28d9',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '800',
         fontSize: 12,
     },
     pill: {
+        ...GLASS_SURFACES.pill,
         paddingHorizontal: 13,
         paddingVertical: 9,
         borderRadius: 999,
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#dbe4f0',
     },
     pillActive: {
-        backgroundColor: '#7c3aed',
-        borderColor: '#7c3aed',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 6,
-        elevation: 1,
+        backgroundColor: GLASS_PALETTE.accent,
+        borderColor: 'rgba(111, 78, 246, 0.18)',
     },
     pillLabel: {
-        color: '#334155',
+        color: GLASS_PALETTE.text,
         fontWeight: '700',
         fontSize: 12,
     },
@@ -2094,23 +2290,18 @@ const styles = StyleSheet.create({
         color: '#ffffff',
     },
     avatarWrap: {
-        marginTop: 14,
+        ...GLASS_SURFACES.panel,
+        ...GLASS_SHADOWS.soft,
         width: 116,
         height: 116,
         borderRadius: 58,
         borderWidth: 2,
-        borderColor: '#7c3aed',
+        borderColor: 'rgba(111, 78, 246, 0.18)',
         borderStyle: 'dashed',
         justifyContent: 'center',
         alignItems: 'center',
         overflow: 'hidden',
-        backgroundColor: '#f5f3ff',
         alignSelf: 'center',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.14,
-        shadowRadius: 8,
-        elevation: 2,
     },
     avatarImage: {
         width: 116,
@@ -2118,8 +2309,32 @@ const styles = StyleSheet.create({
         borderRadius: 58,
     },
     avatarPlaceholder: {
-        color: '#6d28d9',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '800',
+    },
+    inlineHeroCard: {
+        ...GLASS_SURFACES.softPanel,
+        borderRadius: 18,
+        padding: 14,
+        marginBottom: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+    },
+    inlineHeroCopy: {
+        flex: 1,
+    },
+    inlineHeroTitle: {
+        color: GLASS_PALETTE.textStrong,
+        fontWeight: '800',
+        fontSize: 14,
+        marginBottom: 4,
+    },
+    inlineHeroHint: {
+        color: GLASS_PALETTE.textMuted,
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: '600',
     },
     uploadState: {
         marginTop: 10,
@@ -2128,8 +2343,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 8,
     },
+    uploadStateInline: {
+        marginTop: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
     uploadStateText: {
-        color: '#334155',
+        color: GLASS_PALETTE.text,
         fontWeight: '600',
     },
     switchRow: {
@@ -2141,7 +2362,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     switchLabel: {
-        color: '#1e293b',
+        color: GLASS_PALETTE.text,
         fontWeight: '700',
     },
     interviewStatusBox: {
@@ -2149,27 +2370,26 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         paddingVertical: 11,
         paddingHorizontal: 13,
-        backgroundColor: '#f5f3ff',
+        backgroundColor: GLASS_PALETTE.accentSoft,
     },
     interviewStatusText: {
-        color: '#6d28d9',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '700',
     },
     secondaryBtn: {
+        ...GLASS_SURFACES.softPanel,
         marginTop: 12,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#7c3aed',
         paddingVertical: 11,
         alignItems: 'center',
     },
     secondaryBtnText: {
-        color: '#6d28d9',
+        color: GLASS_PALETTE.accentText,
         fontWeight: '800',
     },
     errorText: {
         marginTop: 12,
-        color: '#dc2626',
+        color: GLASS_PALETTE.danger,
         fontWeight: '700',
         lineHeight: 18,
     },
@@ -2180,33 +2400,27 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     backBtn: {
+        ...GLASS_SURFACES.softPanel,
         flex: 1,
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: '#d3dbe8',
         paddingVertical: 13,
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
     },
     backBtnDisabled: {
         opacity: 0.45,
     },
     backBtnText: {
-        color: '#334155',
+        color: GLASS_PALETTE.text,
         fontWeight: '700',
         fontSize: 14,
     },
     nextBtn: {
+        ...GLASS_SHADOWS.accent,
         flex: 1.3,
         borderRadius: 14,
         paddingVertical: 13,
         alignItems: 'center',
-        backgroundColor: '#7c3aed',
-        shadowColor: '#7c3aed',
-        shadowOffset: { width: 0, height: 7 },
-        shadowOpacity: 0.25,
-        shadowRadius: 10,
-        elevation: 5,
+        backgroundColor: GLASS_PALETTE.accent,
     },
     nextBtnDisabled: {
         opacity: 0.65,

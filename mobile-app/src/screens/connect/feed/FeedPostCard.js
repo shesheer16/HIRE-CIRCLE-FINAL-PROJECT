@@ -1,12 +1,13 @@
 import React, { memo, useCallback, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { IconCheck } from '../../../components/Icons';
 import FeedActionsBar from './FeedActionsBar';
 import VoicePost from './VoicePost';
 import GalleryPost from './GalleryPost';
 import VideoPost from './VideoPost';
 import BountyPost from './BountyPost';
-import { RADIUS, SPACING } from '../../../theme/theme';
+import { RADIUS, SCREEN_CHROME, SPACING } from '../../../theme/theme';
 
 function FeedPostCardComponent({
     post,
@@ -35,8 +36,11 @@ function FeedPostCardComponent({
         ?? (totalEngagement * 12 + 64)
     );
     const viewCount = Number.isFinite(calculatedViews) ? Math.max(0, Math.round(calculatedViews)) : 0;
+    const authorName = String(safePost?.author || 'Member').trim() || 'Member';
+    const roleLabel = String(safePost?.role || 'Member').trim();
+    const timeLabel = String(safePost?.time || '').trim();
     const avatarUri = String(safePost?.avatar || '').trim()
-        || `https://ui-avatars.com/api/?name=${encodeURIComponent(String(safePost?.author || 'Member'))}&background=d1d5db&color=111111&rounded=true`;
+        || `https://ui-avatars.com/api/?name=${encodeURIComponent(authorName)}&background=d1d5db&color=111111&rounded=true`;
 
     const handleOpenAuthorProfile = useCallback(() => {
         onOpenAuthorProfile?.(safePost);
@@ -82,9 +86,11 @@ function FeedPostCardComponent({
                     <Image source={{ uri: avatarUri }} style={styles.avatar} />
                     <View style={styles.headerTextBlock}>
                         <View style={styles.authorRow}>
-                            <Text style={styles.author}>{safePost.author}</Text>
+                            <Text style={styles.author}>{authorName}</Text>
                             {safePost.karma > 1000 ? (
-                                <IconCheck size={13} color="#111111" />
+                                <View style={styles.verifiedWrap}>
+                                    <IconCheck size={11} color="#6a41d8" />
+                                </View>
                             ) : null}
                             {isBounty ? (
                                 <View style={styles.postTypeBadge}>
@@ -92,7 +98,18 @@ function FeedPostCardComponent({
                                 </View>
                             ) : null}
                         </View>
-                        <Text style={styles.meta}>{String(safePost.role || 'Member')}</Text>
+                        <View style={styles.metaRail}>
+                            {roleLabel ? (
+                                <View style={styles.metaChip}>
+                                    <Text style={styles.metaChipText} numberOfLines={1}>{roleLabel}</Text>
+                                </View>
+                            ) : null}
+                            {timeLabel ? (
+                                <View style={styles.metaChipMuted}>
+                                    <Text style={styles.metaChipTextMuted}>{timeLabel}</Text>
+                                </View>
+                            ) : null}
+                        </View>
                     </View>
                 </TouchableOpacity>
 
@@ -101,7 +118,7 @@ function FeedPostCardComponent({
                     activeOpacity={0.8}
                     onPress={() => onReport?.(safePost)}
                 >
-                    <Text style={styles.moreButtonText}>•••</Text>
+                    <Ionicons name="ellipsis-horizontal" size={16} color="#5f6274" />
                 </TouchableOpacity>
             </View>
 
@@ -112,7 +129,7 @@ function FeedPostCardComponent({
                     disabled={!safePostId}
                 >
                     <Text style={styles.captionText}>
-                        <Text style={styles.captionAuthor}>{safePost.author}</Text>
+                        <Text style={styles.captionAuthor}>{authorName}</Text>
                         {' '}
                         {safePost.text}
                     </Text>
@@ -130,6 +147,7 @@ function FeedPostCardComponent({
                 </TouchableOpacity>
             ) : null}
 
+            <View style={styles.actionsDivider} />
             <FeedActionsBar
                 postId={safePostId}
                 likeCount={likeCount}
@@ -155,18 +173,12 @@ function FeedPostCardComponent({
                     disabled={!safePostId}
                 >
                     <Text style={[styles.captionText, styles.captionAfterMedia]}>
-                        <Text style={styles.captionAuthor}>{safePost.author}</Text>
+                        <Text style={styles.captionAuthor}>{authorName}</Text>
                         {' '}
                         {safePost.text}
                     </Text>
                 </TouchableOpacity>
             ) : null}
-
-            <TouchableOpacity activeOpacity={0.82} onPress={() => onToggleComment?.(safePostId)}>
-                <Text style={styles.timestampText}>
-                    {String(safePost.time || 'Just now').toUpperCase()}
-                </Text>
-            </TouchableOpacity>
         </View>
     );
 }
@@ -175,17 +187,18 @@ export default memo(FeedPostCardComponent);
 
 const styles = StyleSheet.create({
     card: {
-        borderWidth: 1,
-        borderColor: '#ede9fe',
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
+        ...SCREEN_CHROME.contentCard,
+        borderRadius: 20,
         paddingHorizontal: SPACING.md,
-        paddingTop: 12,
-        paddingBottom: 10,
+        paddingTop: 16,
+        paddingBottom: 14,
         marginHorizontal: 10,
-        marginBottom: 12,
-        shadowColor: 'transparent',
-        elevation: 0,
+        marginBottom: 16,
+        shadowColor: '#475569',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.05,
+        shadowRadius: 16,
+        elevation: 3,
     },
     headerRow: {
         flexDirection: 'row',
@@ -198,13 +211,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     avatar: {
-        width: 36,
-        height: 36,
+        width: 42,
+        height: 42,
         borderRadius: RADIUS.full,
         borderWidth: 1,
-        borderColor: '#ddd6fe',
-        marginRight: 10,
-        backgroundColor: '#ede9fe',
+        borderColor: '#e7def8',
+        marginRight: 12,
+        backgroundColor: '#f2ecff',
     },
     headerTextBlock: {
         flex: 1,
@@ -212,30 +225,69 @@ const styles = StyleSheet.create({
     authorRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 5,
+        gap: 6,
     },
     author: {
-        color: '#111111',
-        fontSize: 13.5,
-        fontWeight: '700',
+        color: '#0f172a',
+        fontSize: 15,
+        fontWeight: '800',
+        letterSpacing: -0.1,
+    },
+    verifiedWrap: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        backgroundColor: '#f3ecff',
+        borderWidth: 1,
+        borderColor: '#e6dafd',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     meta: {
-        color: '#6b7280',
-        fontSize: 11,
-        fontWeight: '500',
+        marginTop: 2,
+        color: '#64748b',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    metaRail: {
+        marginTop: 6,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+    },
+    metaChip: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    metaChipMuted: {
+        ...SCREEN_CHROME.signalChip,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        backgroundColor: '#fbfcfe',
+    },
+    metaChipText: {
+        color: '#6a41d8',
+        fontSize: 10.5,
+        fontWeight: '800',
+    },
+    metaChipTextMuted: {
+        color: '#8b92a6',
+        fontSize: 10.5,
+        fontWeight: '700',
     },
     postTypeBadge: {
+        ...SCREEN_CHROME.signalChip,
+        ...SCREEN_CHROME.signalChipAccent,
         borderRadius: RADIUS.full,
-        borderWidth: 0,
-        borderColor: 'transparent',
-        backgroundColor: '#f3e8ff',
-        paddingHorizontal: 6,
-        paddingVertical: 1,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
     },
     postTypeBadgeText: {
-        color: '#111111',
+        color: '#6a41d8',
         fontSize: 10,
-        fontWeight: '700',
+        fontWeight: '800',
     },
     moreButton: {
         width: 32,
@@ -243,34 +295,35 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginLeft: 8,
-    },
-    moreButtonText: {
-        color: '#111111',
-        fontSize: 15,
-        fontWeight: '900',
+        borderRadius: 17,
+        borderWidth: 1,
+        borderColor: '#efe8f9',
+        backgroundColor: '#fcfbff',
     },
     captionText: {
-        marginTop: 6,
-        color: '#111111',
-        fontSize: 12.5,
-        lineHeight: 19.5,
-        fontWeight: '500',
+        marginTop: 14,
+        color: '#1e293b',
+        fontSize: 14,
+        lineHeight: 22,
+        fontWeight: '400',
     },
     captionAfterMedia: {
-        marginTop: 4,
+        marginTop: 12,
     },
     mediaWrapper: {
-        marginTop: 8,
+        marginTop: 14,
+        borderRadius: 18,
+        overflow: 'hidden',
+        backgroundColor: '#f6f3fb',
     },
     captionAuthor: {
-        fontWeight: '700',
-        color: '#111111',
+        fontWeight: '800',
+        color: '#0f172a',
     },
-    timestampText: {
-        marginTop: 4,
-        color: '#9ca3af',
-        fontSize: 9.5,
-        fontWeight: '700',
-        letterSpacing: 0.2,
+    actionsDivider: {
+        height: 1,
+        backgroundColor: '#f1f5f9',
+        marginTop: 16,
+        marginBottom: 8,
     },
 });

@@ -21,6 +21,22 @@ const TIER_TO_LEGACY_PLAN = {
     enterprise: 'enterprise',
 };
 
+const API_KEY_TRANSPORT = Object.freeze({
+    none: 'none',
+    header: 'header',
+    query: 'query',
+    body: 'body',
+});
+
+const isProductionRuntime = () => String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const allowLegacyApiKeyTransports = () => {
+    const configured = String(process.env.ALLOW_LEGACY_API_KEY_TRANSPORTS || '').trim().toLowerCase();
+    if (configured) {
+        return configured === 'true';
+    }
+    return !isProductionRuntime();
+};
+
 const isLikelyHashed = (value = '') => /^[a-f0-9]{64}$/i.test(String(value || '').trim());
 
 const normalizeScope = (scope = DEFAULT_SCOPE) => {
@@ -74,15 +90,61 @@ const generateRawApiKey = () => {
     return `hire_${envLabel}_${random}`;
 };
 
-const extractApiKeyFromRequest = (req = {}) => (
-    req.headers?.['x-api-key']
-    || req.headers?.['x-integration-key']
-    || req.query?.api_key
-    || req.query?.apiKey
-    || req.body?.api_key
-    || req.body?.apiKey
-    || null
-);
+const readLegacyApiKeyTransport = (req = {}) => {
+    const queryKey = req.query?.api_key || req.query?.apiKey || null;
+    if (queryKey) {
+        return {
+            apiKey: queryKey,
+            transport: API_KEY_TRANSPORT.query,
+        };
+    }
+
+    const bodyKey = req.body?.api_key || req.body?.apiKey || null;
+    if (bodyKey) {
+        return {
+            apiKey: bodyKey,
+            transport: API_KEY_TRANSPORT.body,
+        };
+    }
+
+    return {
+        apiKey: null,
+        transport: API_KEY_TRANSPORT.none,
+    };
+};
+
+const resolveApiKeyFromRequest = (req = {}) => {
+    const headerKey = req.headers?.['x-api-key'] || req.headers?.['x-integration-key'] || null;
+    if (headerKey) {
+        return {
+            apiKey: headerKey,
+            transport: API_KEY_TRANSPORT.header,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        };
+    }
+
+    const legacy = readLegacyApiKeyTransport(req);
+    if (!legacy.apiKey) {
+        return {
+            apiKey: null,
+            transport: API_KEY_TRANSPORT.none,
+            isLegacyTransport: false,
+            legacyTransportBlocked: false,
+        };
+    }
+
+    const legacyAllowed = allowLegacyApiKeyTransports();
+
+    return {
+        apiKey: legacyAllowed ? legacy.apiKey : null,
+        transport: legacy.transport,
+        isLegacyTransport: true,
+        legacyTransportBlocked: !legacyAllowed,
+    };
+};
+
+const extractApiKeyFromRequest = (req = {}) => resolveApiKeyFromRequest(req).apiKey;
 
 const createApiKey = async ({
     ownerId,
@@ -193,7 +255,10 @@ const revokeApiKey = async ({ apiKeyId, ownerId }) => {
 };
 
 module.exports = {
+    API_KEY_TRANSPORT,
     BASE_RATE_LIMITS_PER_HOUR,
+    allowLegacyApiKeyTransports,
+    resolveApiKeyFromRequest,
     extractApiKeyFromRequest,
     normalizeScope,
     normalizeRateLimitTier,

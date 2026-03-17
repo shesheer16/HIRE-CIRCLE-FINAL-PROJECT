@@ -42,7 +42,7 @@ export default function VideoCallScreen({ route, navigation }) {
     const {
         roomId,
         applicationId: appIdFromRoute,
-        otherPartyName = 'Candidate',
+        otherPartyName = 'Job Seeker',
         isCaller: isCallerParam,
         callType = 'video',
     } = route.params || {};

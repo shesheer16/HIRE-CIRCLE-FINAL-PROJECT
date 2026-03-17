@@ -202,3 +202,13 @@ body {
   margin-bottom: 20px;
   text-align: center;
 }
+
+.success-message {
+  background-color: #dcfce7;
+  color: #166534;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 20px;
+  text-align: center;
+}

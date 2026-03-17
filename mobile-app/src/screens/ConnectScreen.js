@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, Alert, Modal, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import FeedTab from './connect/feed/FeedTab';
 import PulseTab from './connect/pulse/PulseTab';
 import CirclesTab from './connect/circles/CirclesTab';
@@ -14,17 +15,39 @@ import ReferModal from './connect/ReferModal';
 import MyProfileModal from './connect/MyProfileModal';
 import ContactInfoView from '../components/contact/ContactInfoView';
 import { CONNECT_TABS, useConnectData } from './connect/useConnectData';
-import { theme, RADIUS, SHADOWS, SPACING } from '../theme/theme';
+import { theme, PALETTE, RADIUS, SHADOWS, SPACING } from '../theme/theme';
 import { connectPalette } from './connect/connectPalette';
 import { trackEvent } from '../services/analytics';
 import { MOTION } from '../theme/motion';
 import { useAppStore } from '../store/AppStore';
+import { getProfileTitleForRole } from '../utils/profileReadiness';
+
+const COMPOSE_ENTRY_OPTIONS = [
+    {
+        key: 'PHOTOS',
+        label: 'Photo',
+        helper: 'Share one or more images',
+        icon: 'image-outline',
+    },
+    {
+        key: 'VIDEO',
+        label: 'Video',
+        helper: 'Post a short video update',
+        icon: 'videocam-outline',
+    },
+    {
+        key: 'VOICE',
+        label: 'Voice',
+        helper: 'Record a quick voice note',
+        icon: 'mic-outline',
+    },
+];
 
 export default function ConnectScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute();
-    const { notificationsCount = 0 } = useAppStore();
+    const notificationsCount = useAppStore(state => state.notificationsCount) || 0;
 
     const {
         userInfo = null,
@@ -51,7 +74,21 @@ export default function ConnectScreen() {
 
     const tabFade = useRef(new Animated.Value(1)).current;
     const tabSlide = useRef(new Animated.Value(0)).current;
+    const [composeMenuVisible, setComposeMenuVisible] = useState(false);
     const isFeedTab = String(activeTab || '').toLowerCase() === 'feed';
+    const connectBottomPadding = useMemo(() => Math.max(insets.bottom, 16) + 88, [insets.bottom]);
+    const feedContentContainerStyle = useMemo(
+        () => ({ paddingBottom: connectBottomPadding }),
+        [connectBottomPadding]
+    );
+    const defaultTabContentContainerStyle = useMemo(
+        () => ({
+            paddingHorizontal: 10,
+            paddingTop: 10,
+            paddingBottom: connectBottomPadding,
+        }),
+        [connectBottomPadding]
+    );
     const containerStyle = useMemo(
         () => [styles.container, { paddingTop: insets.top }, isFeedTab ? styles.containerFeed : null],
         [insets.top, isFeedTab]
@@ -130,26 +167,62 @@ export default function ConnectScreen() {
         navigation.navigate('PostJob');
     }, [navigation]);
 
+    const openComposeMenu = useCallback(() => {
+        setComposeMenuVisible(true);
+    }, []);
+
+    const closeComposeMenu = useCallback(() => {
+        setComposeMenuVisible(false);
+    }, []);
+
+    const handleComposeOptionPress = useCallback((mediaType) => {
+        closeComposeMenu();
+        if (String(activeTab || '').toLowerCase() !== 'feed') {
+            setActiveTab('Feed');
+        }
+        setTimeout(() => {
+            if (typeof feedTabProps?.onMediaButtonClick === 'function') {
+                feedTabProps.onMediaButtonClick(mediaType);
+                return;
+            }
+            if (typeof feedTabProps?.onInputAreaClick === 'function') {
+                feedTabProps.onInputAreaClick();
+            }
+        }, 0);
+    }, [activeTab, closeComposeMenu, feedTabProps, setActiveTab]);
+
     const tabContent = useMemo(() => {
         switch (String(activeTab || 'Feed').toLowerCase()) {
         case 'feed':
-            return <FeedTab {...feedTabProps} contentContainerStyle={styles.tabContent} onOpenPostJobForm={handleOpenPostJobForm} />;
+            return (
+                <FeedTab
+                    {...feedTabProps}
+                    contentContainerStyle={feedContentContainerStyle}
+                    onOpenPostJobForm={handleOpenPostJobForm}
+                />
+            );
         case 'pulse':
-            return <PulseTab {...pulseTabProps} contentContainerStyle={styles.tabContent} />;
+            return <PulseTab {...pulseTabProps} contentContainerStyle={defaultTabContentContainerStyle} />;
         case 'circles':
             return (
                 <CirclesTab
                     {...circlesTabProps}
                     communityFabTrigger={route.params?.communityFabTrigger}
-                    contentContainerStyle={styles.tabContent}
+                    contentContainerStyle={defaultTabContentContainerStyle}
                 />
             );
         case 'academy':
-            return <AcademyTab {...academyTabProps} contentContainerStyle={styles.tabContent} />;
+            return <AcademyTab {...academyTabProps} contentContainerStyle={defaultTabContentContainerStyle} />;
         case 'bounties':
-            return <BountiesTab {...bountiesTabProps} contentContainerStyle={styles.tabContent} />;
+            return <BountiesTab {...bountiesTabProps} contentContainerStyle={defaultTabContentContainerStyle} />;
         default:
-            return <FeedTab {...feedTabProps} contentContainerStyle={styles.tabContent} onOpenPostJobForm={handleOpenPostJobForm} />;
+            return (
+                <FeedTab
+                    {...feedTabProps}
+                    contentContainerStyle={feedContentContainerStyle}
+                    onOpenPostJobForm={handleOpenPostJobForm}
+                />
+            );
         }
     }, [
         activeTab,
@@ -159,6 +232,8 @@ export default function ConnectScreen() {
         academyTabProps,
         bountiesTabProps,
         route.params?.communityFabTrigger,
+        defaultTabContentContainerStyle,
+        feedContentContainerStyle,
         handleOpenPostJobForm,
     ]);
 
@@ -167,6 +242,12 @@ export default function ConnectScreen() {
             connectActiveTab: activeTab,
         });
     }, [activeTab, navigation]);
+
+    // Clear communityFabTrigger once consumed to prevent repeated re-triggers on re-render
+    useEffect(() => {
+        if (!route.params?.communityFabTrigger) return;
+        navigation.setParams({ communityFabTrigger: undefined });
+    }, [route.params?.communityFabTrigger, navigation]);
 
     useEffect(() => {
         tabFade.setValue(0.72);
@@ -193,26 +274,60 @@ export default function ConnectScreen() {
             {!isFeedTab ? <View pointerEvents="none" style={styles.backdropOrbBottom} /> : null}
 
             <ConnectHeader
-                avatar={currentUserAvatar}
                 onNotificationsPress={openNotifications}
-                onProfilePress={openProfile}
+                onComposePress={openComposeMenu}
                 onResetPress={handleClearConnectHistory}
                 resetBusy={resettingConnectData}
                 notificationsCount={notificationsCount}
                 activeTab={activeTab}
             />
 
-            <ConnectTabBar tabs={CONNECT_TABS} activeTab={activeTab} onTabPress={handleTabPress} />
+            <View style={styles.tabBarWrap}>
+                <ConnectTabBar tabs={CONNECT_TABS} activeTab={activeTab} onTabPress={handleTabPress} />
+            </View>
 
-            <Animated.View style={[styles.mainContent, { opacity: tabFade, transform: [{ translateY: tabSlide }] }]}>
-                <View style={[styles.contentSheet, isFeedTab && styles.contentSheetFeed]}>
-                    {tabContent}
-                </View>
+            <Animated.View style={styles.mainContent}>
+                <Animated.View style={[styles.contentWrap, { opacity: tabFade, transform: [{ translateY: tabSlide }] }]}>
+                    <View style={[styles.contentSheet, isFeedTab && styles.contentSheetFeed]}>
+                        {tabContent}
+                    </View>
+                </Animated.View>
             </Animated.View>
 
             <CircleDetailView {...circleDetailProps} insetsTop={insets.top} />
 
             <ReferModal {...referralModalProps} />
+
+            <Modal
+                visible={composeMenuVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={closeComposeMenu}
+            >
+                <TouchableOpacity style={styles.composeMenuOverlay} activeOpacity={1} onPress={closeComposeMenu}>
+                    <TouchableOpacity activeOpacity={1} onPress={() => {}} style={[styles.composeMenuSheet, { marginTop: insets.top + 54 }]}>
+                        <Text style={styles.composeMenuTitle}>Create post</Text>
+                        <Text style={styles.composeMenuSubtitle}>Choose how you want to share on Connect.</Text>
+                        {COMPOSE_ENTRY_OPTIONS.map((option) => (
+                            <TouchableOpacity
+                                key={option.key}
+                                style={styles.composeMenuItem}
+                                activeOpacity={0.86}
+                                onPress={() => handleComposeOptionPress(option.key)}
+                            >
+                                <View style={styles.composeMenuIconWrap}>
+                                    <Ionicons name={option.icon} size={18} color="#7c3aed" />
+                                </View>
+                                <View style={styles.composeMenuTextWrap}>
+                                    <Text style={styles.composeMenuItemLabel}>{option.label}</Text>
+                                    <Text style={styles.composeMenuItemHelper}>{option.helper}</Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={16} color="#9aa1b5" />
+                            </TouchableOpacity>
+                        ))}
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
 
             <MyProfileModal
                 visible={showMyProfile}
@@ -236,7 +351,7 @@ export default function ConnectScreen() {
                             <Text style={styles.profileOverlayBackIcon}>‹</Text>
                         </TouchableOpacity>
                         <Text style={styles.profileOverlayTitle}>
-                            {String(feedProfileData?.mode || '').toLowerCase() === 'employer' ? 'Employer Profile' : 'Candidate Profile'}
+                            {getProfileTitleForRole(String(feedProfileData?.mode || '').toLowerCase() === 'employer' ? 'employer' : 'worker')}
                         </Text>
                     </View>
 
@@ -250,7 +365,7 @@ export default function ConnectScreen() {
                             hideHeader
                             presentation="modal"
                             mode={String(feedProfileData?.mode || '').toLowerCase() === 'employer' ? 'employer' : 'candidate'}
-                            title={String(feedProfileData?.mode || '').toLowerCase() === 'employer' ? 'Employer Profile' : 'Candidate Profile'}
+                            title={getProfileTitleForRole(String(feedProfileData?.mode || '').toLowerCase() === 'employer' ? 'employer' : 'worker')}
                             data={feedProfileData || {}}
                             onBack={closeFeedProfile}
                         />
@@ -276,47 +391,41 @@ export default function ConnectScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: connectPalette.page,
+        backgroundColor: '#ffffff',
     },
     containerFeed: {
-        backgroundColor: '#f4edff',
+        backgroundColor: '#ffffff',
     },
     backdropOrbTop: {
         position: 'absolute',
         top: 24,
         right: -58,
-        width: 180,
-        height: 180,
-        borderRadius: 999,
-        backgroundColor: '#ede9fe',
-        opacity: 0.45,
-        zIndex: 0,
+        width: 0,
+        height: 0,
     },
     backdropOrbBottom: {
         position: 'absolute',
         bottom: 50,
         left: -72,
-        width: 210,
-        height: 210,
-        borderRadius: 999,
-        backgroundColor: '#dbeafe',
-        opacity: 0.3,
-        zIndex: 0,
+        width: 0,
+        height: 0,
     },
     mainContent: {
         flex: 1,
         zIndex: 1,
     },
+    contentWrap: {
+        flex: 1,
+    },
     contentSheet: {
         flex: 1,
-        marginHorizontal: 8,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        backgroundColor: connectPalette.surfaceSoft,
+        marginHorizontal: 0,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        borderWidth: 0,
+        borderColor: 'transparent',
+        backgroundColor: '#ffffff',
         overflow: 'hidden',
-        ...SHADOWS.sm,
     },
     contentSheetFeed: {
         backgroundColor: '#ffffff',
@@ -329,21 +438,85 @@ const styles = StyleSheet.create({
         shadowRadius: 0,
         elevation: 0,
     },
-    tabContent: {
-        paddingHorizontal: 10,
-        paddingTop: 10,
-        paddingBottom: 26,
+    tabBarWrap: {
+        overflow: 'hidden',
+        zIndex: 2,
+    },
+    composeMenuOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.12)',
+        alignItems: 'flex-end',
+        paddingHorizontal: 14,
+    },
+    composeMenuSheet: {
+        width: 244,
+        borderRadius: 24,
+        paddingHorizontal: 14,
+        paddingTop: 14,
+        paddingBottom: 12,
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        borderWidth: 1,
+        borderColor: PALETTE.accentBorder,
+        shadowColor: '#24113f',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.1,
+        shadowRadius: 24,
+        elevation: 8,
+    },
+    composeMenuTitle: {
+        color: PALETTE.textPrimary,
+        fontSize: 15,
+        fontWeight: '800',
+    },
+    composeMenuSubtitle: {
+        marginTop: 4,
+        marginBottom: 10,
+        color: PALETTE.textSecondary,
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 17,
+    },
+    composeMenuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        gap: 10,
+    },
+    composeMenuIconWrap: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: PALETTE.accentTint,
+        borderWidth: 1,
+        borderColor: PALETTE.accentBorder,
+    },
+    composeMenuTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    composeMenuItemLabel: {
+        color: PALETTE.textPrimary,
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    composeMenuItemHelper: {
+        marginTop: 2,
+        color: PALETTE.textSecondary,
+        fontSize: 11.5,
+        fontWeight: '600',
     },
     profileOverlayShell: {
         flex: 1,
-        backgroundColor: '#ffffff',
+        backgroundColor: PALETTE.surface,
     },
     profileOverlayHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
+        backgroundColor: PALETTE.surface,
         borderBottomWidth: 1,
-        borderBottomColor: '#e5e5e5',
+        borderBottomColor: PALETTE.separator,
         paddingHorizontal: 14,
         paddingBottom: 10,
     },
@@ -356,13 +529,13 @@ const styles = StyleSheet.create({
         marginRight: 8,
     },
     profileOverlayBackIcon: {
-        color: '#111111',
+        color: PALETTE.textPrimary,
         fontSize: 28,
         lineHeight: 28,
         fontWeight: '700',
     },
     profileOverlayTitle: {
-        color: '#111111',
+        color: PALETTE.textPrimary,
         fontSize: 18,
         fontWeight: '800',
     },
@@ -373,7 +546,7 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     profileLoadingText: {
-        color: '#6b6b6b',
+        color: PALETTE.textSecondary,
         fontSize: 13,
         fontWeight: '600',
     },

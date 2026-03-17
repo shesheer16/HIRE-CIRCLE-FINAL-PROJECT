@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import '../Login/LoginPage.css'; // Reusing your existing CSS
 import { buildApiUrl } from '../../config/api';
+import { clearWebAuthSession, completeWebLogin } from '../../utils/webAuthSession';
 
 const SignupPage = () => {
   const navigate = useNavigate();
@@ -42,11 +43,22 @@ const SignupPage = () => {
         config
       );
 
-      localStorage.setItem('userInfo', JSON.stringify(data));
-      if (data.role === 'recruiter') {
-        navigate('/recruiter/jobs');
+      if (data?.token) {
+        completeWebLogin(data);
+        if (data.role === 'recruiter') {
+          navigate('/recruiter/jobs');
+        } else {
+          navigate('/candidate/jobs');
+        }
       } else {
-        navigate('/candidate/jobs');
+        clearWebAuthSession();
+        navigate('/login', {
+          replace: true,
+          state: {
+            prefillEmail: formData.email,
+            message: data?.message || 'Account created. Verify OTP to continue.',
+          },
+        });
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');

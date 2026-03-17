@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, ScrollView, TextInput } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconCheck, IconMessageSquare, IconSend, IconShare, IconSparkles } from '../../../components/Icons';
@@ -48,6 +48,18 @@ function CircleDetailViewComponent({
         () => ([...(selectedCircle?.rates || []), ...safeCircleCustomRates]),
         [selectedCircle?.rates, safeCircleCustomRates]
     );
+
+    // Auto-scroll to the latest message when the chat first loads
+    const prevLoadingRef = useRef(false);
+    useEffect(() => {
+        const wasLoading = prevLoadingRef.current;
+        prevLoadingRef.current = circleDetailLoading;
+        if (wasLoading && !circleDetailLoading && safeCircleMessages.length > 0 && circleChatRef?.current) {
+            setTimeout(() => {
+                circleChatRef.current?.scrollToEnd({ animated: true });
+            }, 100);
+        }
+    }, [circleDetailLoading, safeCircleMessages.length, circleChatRef]);
 
     const renderTabButton = useCallback((tabKey) => {
         const isActive = circleDetailTab === tabKey;
@@ -135,7 +147,7 @@ function CircleDetailViewComponent({
 
                         <View style={styles.headerTextWrap}>
                             <Text style={styles.headerTitle}>{safeSelectedCircle?.name || 'Community'}</Text>
-                            <Text style={styles.headerSub}>{safeSelectedCircle?.members || '0'} Members • {safeSelectedCircle?.online || '0'} Online</Text>
+                            <Text style={styles.headerSub}>{safeSelectedCircle?.members || '0'} Members</Text>
                         </View>
 
                         <TouchableOpacity style={styles.headerActionBtn} onPress={onShareCommunity} activeOpacity={0.85}>
@@ -271,8 +283,8 @@ function CircleDetailViewComponent({
                     {circleDetailTab === 'MEMBERS' ? (
                         <ScrollView contentContainerStyle={styles.sectionContent} showsVerticalScrollIndicator={false}>
                             <View style={styles.membersHeader}>
-                                <Text style={styles.membersTitle}>Community Leaders</Text>
-                                <Text style={styles.membersSortBadge}>Sorted by Karma</Text>
+                                <Text style={styles.membersTitle}>Members</Text>
+                                <Text style={styles.membersSortBadge}>Active in this community</Text>
                             </View>
 
                             {memberRows.length > 0 ? memberRows : (

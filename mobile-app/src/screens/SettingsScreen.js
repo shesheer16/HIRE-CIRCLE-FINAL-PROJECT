@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthContext } from '../context/AuthContext';
@@ -8,13 +10,15 @@ import client from '../api/client';
 import { logger } from '../utils/logger';
 import { getPrimaryRoleFromUser } from '../utils/roleMode';
 import { useAppStore } from '../store/AppStore';
+import { deriveAuthEntryRoleFromUser } from '../utils/authEntryState';
 import FeedbackModal from '../components/FeedbackModal';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useTheme } from '../theme/ThemeProvider';
-import { RADIUS, SHADOWS, SPACING } from '../theme/theme';
+import { PALETTE, RADIUS, SCREEN_CHROME, SHADOWS, SPACING } from '../theme/theme';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import Constants from 'expo-constants';
+import { getAccountRoleLabel } from '../utils/profileReadiness';
 
 const withTimeout = (promise, timeoutMs, timeoutMessage) => {
     let timeoutId;
@@ -66,10 +70,20 @@ const resolveAllowedRoles = (user = {}, fallbackPrimaryRole = 'worker') => {
     return [inferredPrimaryRole];
 };
 
+const SETTINGS_SECTION_META = Object.freeze({
+    Account: { icon: 'person-circle-outline', tint: '#ede9fe', iconColor: '#6d28d9' },
+    Privacy: { icon: 'shield-checkmark-outline', tint: '#e0f2fe', iconColor: '#0284c7' },
+    'Saved Posts': { icon: 'bookmark-outline', tint: '#fae8ff', iconColor: '#a21caf' },
+    Notifications: { icon: 'notifications-outline', tint: '#dcfce7', iconColor: '#15803d' },
+    'Role & Preferences': { icon: 'options-outline', tint: '#fee2e2', iconColor: '#c2410c' },
+    Support: { icon: 'sparkles-outline', tint: '#fef3c7', iconColor: '#b45309' },
+});
+
 export default function SettingsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
-    const { logout, userInfo, updateUserInfo } = React.useContext(AuthContext);
-    const { role: appRole, setRole } = useAppStore();
+    const { logout, userInfo, updateUserInfo, rememberAuthEntryRole } = React.useContext(AuthContext);
+    const appRole = useAppStore(state => state.role);
+    const setRole = useAppStore(state => state.setRole);
     const { mode, toggleTheme, palette } = useTheme();
     const { t } = useTranslation();
     const isExpoGo = (
@@ -147,7 +161,7 @@ export default function SettingsScreen({ navigation }) {
                 const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
                 setProfileHeader({
                     name: fullName || user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
+                    role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
                     avatar: profile.avatar || profile.logoUrl || null,
                 });
@@ -158,7 +172,7 @@ export default function SettingsScreen({ navigation }) {
                 setAccountPhoneNumber(String(user?.phoneNumber || 'Not set'));
                 setProfileHeader({
                     name: user.name || 'User',
-                    role: resolvedPrimaryRole === 'employer' ? 'Recruiter' : 'Candidate',
+                    role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
                     avatar: null,
                 });
@@ -185,9 +199,8 @@ export default function SettingsScreen({ navigation }) {
                 setSubscriptionPlan(planEntry[1]);
             }
             const languageEntry = pairs.find(([key]) => key === '@language_pref');
-            const safeLanguage = languageEntry?.[1] === 'hi' ? 'hi' : 'en';
-            setLanguagePref(safeLanguage);
-            i18n.changeLanguage(safeLanguage).catch(() => { });
+        }).catch((error) => {
+            logger.warn('Failed to load notification/language preferences', error?.message || error);
         });
 
         const loadNotificationPermission = async () => {
@@ -250,6 +263,12 @@ export default function SettingsScreen({ navigation }) {
 
     const performLocalSignOut = async () => {
         try {
+            const rememberedRole = deriveAuthEntryRoleFromUser({
+                ...(userInfo || {}),
+                activeRole: primaryRole || userInfo?.activeRole,
+                primaryRole: primaryRole || userInfo?.primaryRole,
+            });
+            await rememberAuthEntryRole?.(rememberedRole);
             await SecureStore.deleteItemAsync('selectedRole');
             await logout();
         } catch (error) {
@@ -278,7 +297,7 @@ export default function SettingsScreen({ navigation }) {
         SecureStore.setItemAsync('selectedRole', normalizedResolvedRole).catch(() => { });
         setProfileHeader((prev) => ({
             ...prev,
-            role: normalizedResolvedRole === 'employer' ? 'Recruiter' : 'Candidate',
+            role: getAccountRoleLabel(normalizedResolvedRole),
         }));
 
         const fallbackRoleContract = {
@@ -299,7 +318,14 @@ export default function SettingsScreen({ navigation }) {
             capabilities: roleContract?.capabilities || fallbackRoleContract.capabilities,
             hasSelectedRole: true,
         });
-    }, [primaryRole, setRole, updateUserInfo, userInfo]);
+        await rememberAuthEntryRole?.(deriveAuthEntryRoleFromUser({
+            ...(userInfo || {}),
+            ...(bootstrapPayload || {}),
+            accountMode: userInfo?.accountMode,
+            activeRole: roleContract?.activeRole || fallbackRoleContract.activeRole,
+            primaryRole: roleContract?.primaryRole || fallbackRoleContract.primaryRole,
+        }));
+    }, [primaryRole, rememberAuthEntryRole, setRole, updateUserInfo, userInfo]);
 
     const attemptRoleSwitchServerSide = React.useCallback(async (nextRole) => {
         try {
@@ -316,27 +342,6 @@ export default function SettingsScreen({ navigation }) {
         }
     }, []);
 
-    const attemptRoleBootstrap = React.useCallback(async (resolvedRole) => {
-        try {
-            const { data } = await client.post('/api/auth/dev-bootstrap', {
-                role: resolvedRole,
-            }, {
-                __skipUnauthorizedHandler: true,
-                __skipApiErrorHandler: true,
-                __allowWhenCircuitOpen: true,
-                __maxRetries: 1,
-                timeout: 7000,
-            });
-
-            if (!data || typeof data !== 'object') {
-                return null;
-            }
-            return data;
-        } catch (_error) {
-            return null;
-        }
-    }, []);
-
     const handleRoleToggle = async () => {
         if (isSwitchingRole) return;
 
@@ -347,7 +352,7 @@ export default function SettingsScreen({ navigation }) {
         if (!canToggleRoles) {
             Alert.alert(
                 'Role switching not available',
-                'Your account is set up for a single role. If you need both roles, please create a new Hybrid account.',
+                'Your account is set up for a single role. If you need both roles, please create a dual-role account.',
                 [{ text: 'OK' }]
             );
             return;
@@ -363,7 +368,7 @@ export default function SettingsScreen({ navigation }) {
             setRole(nextRole);
             setProfileHeader((prev) => ({
                 ...prev,
-                role: nextRole === 'employer' ? 'Recruiter' : 'Candidate',
+                role: getAccountRoleLabel(nextRole),
             }));
             SecureStore.setItemAsync('selectedRole', nextRole).catch(() => { });
 
@@ -381,16 +386,22 @@ export default function SettingsScreen({ navigation }) {
             ).catch((error) => {
                 logger.warn('Local role persistence delayed:', error?.message || error);
             });
+            await rememberAuthEntryRole?.(deriveAuthEntryRoleFromUser({
+                ...(userInfo || {}),
+                accountMode: userInfo?.accountMode,
+                activeRole: nextRole,
+                primaryRole: nextRole,
+            }));
 
             animateRoleSwitchToast(
                 nextRole === 'employer'
-                    ? 'Recruiter mode enabled'
-                    : 'Candidate mode enabled'
+                    ? 'Employer mode enabled'
+                    : 'Job Seeker mode enabled'
             );
             if (nextRole === 'worker') {
                 Alert.alert(
                     'Role switched',
-                    'Your seeker profile is active. View matching jobs now?',
+                    'Your Job Seeker profile is active. View matching jobs now?',
                     [
                         { text: 'Later', style: 'cancel' },
                         {
@@ -419,7 +430,7 @@ export default function SettingsScreen({ navigation }) {
             setRole(previousRole);
             setProfileHeader((prev) => ({
                 ...prev,
-                role: previousRole === 'employer' ? 'Recruiter' : 'Candidate',
+                role: getAccountRoleLabel(previousRole),
             }));
             Alert.alert('Role switch failed', 'Please try again.');
         } finally {
@@ -439,7 +450,7 @@ export default function SettingsScreen({ navigation }) {
     };
 
     const executeDeleteAccount = async () => {
-        if (deleteInput !== 'DELETE' || !String(deletePassword || '').trim()) return;
+        if (String(deleteInput || '').trim().toUpperCase() !== 'DELETE' || !String(deletePassword || '').trim()) return;
         setIsDeleting(true);
         try {
             await client.delete('/api/users/delete', {
@@ -453,7 +464,8 @@ export default function SettingsScreen({ navigation }) {
             await performLocalSignOut();
         } catch (error) {
             logger.error('Delete account error:', error);
-            Alert.alert('Error', 'Could not delete your account. Please try again or contact support.');
+            const errorMessage = error?.response?.data?.message || 'Could not delete your account. Please try again or contact support.';
+            Alert.alert('Error', errorMessage);
         } finally {
             setIsDeleting(false);
         }
@@ -482,6 +494,21 @@ export default function SettingsScreen({ navigation }) {
         : (pushPermissionStatus === 'expo_go'
             ? 'Use development build'
             : (pushPermissionStatus === 'denied' ? 'Denied' : 'Not set'));
+    const safeFirstName = String(profileHeader.name || 'You').trim().split(/\s+/)[0] || 'You';
+    const enabledNotificationCount = [
+        notifNewMatches,
+        notifMessages,
+        notifJobAlerts,
+        notifAppUpdates,
+    ].filter(Boolean).length;
+    const heroStats = [
+        {
+            label: 'Plan',
+            value: subscriptionPlan === 'free' ? 'Free' : String(subscriptionPlan || 'free').toUpperCase(),
+        },
+        { label: 'Saved', value: String(savedPostsCount) },
+        { label: 'Alerts', value: String(enabledNotificationCount) },
+    ];
 
     const handleRequestPushPermission = async () => {
         if (isExpoGo) {
@@ -558,31 +585,52 @@ export default function SettingsScreen({ navigation }) {
     }, [clearSavedPosts, savedPostsCount]);
 
     const renderHeader = () => (
-        <View style={[styles.profileHeader, { paddingTop: insets.top + 16 }]}>
-            <Image
-                source={{
-                    uri: profileHeader.avatar ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=7c3aed&color=fff`
-                }}
-                style={styles.avatar}
-            />
-            <View>
-                <Text style={styles.userName}>{profileHeader.name}</Text>
-                <Text style={styles.userRole}>{profileHeader.role}{profileHeader.email ? ` • ${profileHeader.email}` : ''}</Text>
-                {subscriptionPlan !== 'free' ? (
-                    <View style={styles.premiumBadge}>
-                        <Text style={styles.premiumBadgeText}>PREMIUM</Text>
-                    </View>
-                ) : null}
+        <View style={styles.headerWrapPremium}>
+            <View style={[styles.topBarPremium, { paddingTop: insets.top + 16 }]}>
+                <Text style={styles.topBarTitlePremium}>Settings</Text>
+                <TouchableOpacity
+                    style={styles.topBarActionPremium}
+                    activeOpacity={0.7}
+                    onPress={() => setFeedbackModalVisible(true)}
+                >
+                    <Ionicons name="chatbubble-ellipses-outline" size={22} color="#0f172a" />
+                </TouchableOpacity>
+            </View>
+
+            <View style={styles.profileHeaderCardPremium}>
+                <Image
+                    source={{
+                        uri: profileHeader.avatar ||
+                            `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=f1f5f9&color=0f172a`
+                    }}
+                    style={styles.avatarPremium}
+                />
+                <View style={styles.profileHeaderCopyPremium}>
+                    <Text style={styles.userNamePremium}>{profileHeader.name}</Text>
+                    <Text style={styles.userRolePremium} numberOfLines={1}>
+                        {profileHeader.email || 'Your account details'}
+                    </Text>
+                </View>
+                
+                <View style={styles.heroStatsPillRowPremium}>
+                    {heroStats.map((stat, i) => (
+                        <View key={stat.label} style={[styles.heroStatBlockPremium, i !== heroStats.length - 1 && styles.heroStatBorderRightPremium]}>
+                            <Text style={styles.heroStatValuePremium}>{stat.value}</Text>
+                            <Text style={styles.heroStatLabelPremium}>{stat.label}</Text>
+                        </View>
+                    ))}
+                </View>
             </View>
         </View>
     );
 
-    const renderSectionTextHeader = (title) => (
-        <View style={styles.sectionHeaderBg}>
-            <Text style={styles.sectionTitle}>{title}</Text>
-        </View>
-    );
+    const renderSectionTextHeader = (title) => {
+        return (
+            <View style={styles.sectionHeaderBgPremium}>
+                <Text style={styles.sectionTitlePremium}>{title}</Text>
+            </View>
+        );
+    };
 
     const renderRow = (
         label,
@@ -593,37 +641,53 @@ export default function SettingsScreen({ navigation }) {
         onSwitchChange,
         isLast = false,
         onRowPress = null,
-        switchDisabled = false
-    ) => (
-        <TouchableOpacity
-            style={[styles.row, !isLast && styles.rowBorder]}
-            activeOpacity={0.7}
-            disabled={isSwitch || (!hasArrow && !value && !onRowPress)}
-            onPress={onRowPress}
-        >
-            <Text style={styles.rowLabel}>{label}</Text>
-            <View style={styles.rowRight}>
-                {value && <Text style={styles.rowValue}>{value}</Text>}
-                {isSwitch && (
-                    <Switch
-                        value={switchValue}
-                        onValueChange={onSwitchChange}
-                        disabled={switchDisabled}
-                        trackColor={{ false: '#e2e8f0', true: '#10b981' }}
-                        thumbColor="#ffffff"
-                        style={{ transform: [{ scaleX: 0.9 }, { scaleY: 0.9 }] }}
-                    />
-                )}
-                {hasArrow && <Text style={styles.arrowIcon}>›</Text>}
-            </View>
-        </TouchableOpacity>
-    );
+        switchDisabled = false,
+        sectionTitle = 'Account'
+    ) => {
+        const meta = SETTINGS_SECTION_META[sectionTitle] || SETTINGS_SECTION_META['Account'];
+
+        return (
+            <TouchableOpacity
+                style={[styles.rowPremium, !isLast && styles.rowBorderPremium]}
+                activeOpacity={0.65}
+                disabled={isSwitch || (!hasArrow && !value && !onRowPress)}
+                onPress={onRowPress}
+            >
+                <View style={styles.rowLeftPremium}>
+                    <View style={[styles.rowIconSquirclePremium, { backgroundColor: meta.tint }]}>
+                        <Ionicons name={meta.icon} size={18} color={meta.iconColor} />
+                    </View>
+                    <Text style={styles.rowLabelPremium}>{label}</Text>
+                </View>
+                <View style={styles.rowRightPremium}>
+                    {value ? (
+                        <Text style={styles.rowValuePremium} numberOfLines={1}>{value}</Text>
+                    ) : null}
+                    {isSwitch && (
+                        <Switch
+                            value={switchValue}
+                            onValueChange={onSwitchChange}
+                            disabled={switchDisabled}
+                            trackColor={{ false: '#e2e8f0', true: '#6d28d9' }}
+                            thumbColor={'#ffffff'}
+                            style={{ transform: [{ scaleX: 0.9 }, { scaleY: 0.9 }] }}
+                        />
+                    )}
+                    {hasArrow && <Ionicons name="chevron-forward" size={18} color="#94a3b8" marginLeft={4} />}
+                </View>
+            </TouchableOpacity>
+        );
+    };
 
     const canSwitchRole = String(userInfo?.accountMode || '').toLowerCase() === 'hybrid';
 
     return (
-        <View style={[styles.container, { backgroundColor: palette.background }]}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.containerPremium}>
+            {/* Ambient Background Glow */}
+            <LinearGradient colors={['rgba(241,245,249,1)', 'rgba(248,250,252,1)']} style={StyleSheet.absoluteFillObject} />
+            <View style={styles.screenGlowTop} />
+            
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContentPremium}>
                 {renderHeader()}
 
                 {roleSwitchMessage ? (
@@ -645,96 +709,70 @@ export default function SettingsScreen({ navigation }) {
                     </Animated.View>
                 ) : null}
 
-                <View style={styles.sectionsContainer}>
-                    <View style={styles.sectionCard}>
+                <View style={styles.sectionsContainerPremium}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Account')}
-                        {canSwitchRole && renderRow(
-                            'Recruiter Mode',
-                            isSwitchingRole ? 'Switching…' : (primaryRole === 'employer' ? 'On' : 'Off'),
-                            false,
-                            true,
-                            primaryRole === 'employer',
-                            handleRoleToggle,
-                            false,
-                            null,
-                            isSwitchingRole
-                        )}
-                        {renderRow('Current Role', primaryRole === 'employer' ? 'Recruiter' : 'Candidate')}
-                        {renderRow(
-                            'HireCircle Plans',
-                            subscriptionPlan === 'free' ? 'Free' : String(subscriptionPlan || 'free').toUpperCase(),
-                            true,
-                            false,
-                            null,
-                            null,
-                            false,
-                            () => navigation.navigate('Subscription')
-                        )}
-                        {renderRow('Change Password', null, true, false, null, null, !isAdmin, () => navigation.navigate('ForgotPassword'))}
-                        {renderRow(
-                            t('settings.language', 'Language'),
-                            languagePref === 'hi'
-                                ? t('settings.hindi', 'Hindi')
-                                : t('settings.english', 'English'),
-                            true,
-                            false,
-                            null,
-                            null,
-                            !isAdmin,
-                            toggleLanguagePreference
-                        )}
-                        {isAdmin && renderRow('Admin Dashboard', null, true, false, null, null, true, () => navigation.navigate('AdminDashboard'))}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {canSwitchRole && renderRow('Employer Mode', isSwitchingRole ? 'Switching…' : (primaryRole === 'employer' ? 'On' : 'Off'), false, true, primaryRole === 'employer', handleRoleToggle, false, null, isSwitchingRole, 'Account')}
+                            {renderRow('Current Role', getAccountRoleLabel(primaryRole), false, false, null, null, false, null, false, 'Account')}
+                            {renderRow('HireCircle Plans', subscriptionPlan === 'free' ? 'Free' : String(subscriptionPlan || 'free').toUpperCase(), true, false, null, null, false, () => navigation.navigate('Subscription'), false, 'Account')}
+                            {renderRow('Change Password', null, true, false, null, null, !isAdmin, () => navigation.navigate('ForgotPassword'), false, 'Account')}
+                            {renderRow(t('settings.language', 'Language'), languagePref === 'hi' ? t('settings.hindi', 'Hindi') : t('settings.english', 'English'), true, false, null, null, !isAdmin, toggleLanguagePreference, false, 'Account')}
+                            {isAdmin && renderRow('Admin Dashboard', null, true, false, null, null, true, () => navigation.navigate('AdminDashboard'), false, 'Account')}
+                        </View>
                     </View>
 
-                    <View style={styles.sectionCard}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Privacy')}
-                        {renderRow('Profile Visibility', 'Public')}
-                        {renderRow('Blocked Contacts', '0')}
-                        {renderRow('Delete Account', null, true, false, null, null, true, confirmDeleteAccount)}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {renderRow('Profile Visibility', 'Public', false, false, null, null, false, null, false, 'Privacy')}
+                            {renderRow('Blocked Contacts', '0', false, false, null, null, false, null, false, 'Privacy')}
+                            {renderRow('Delete Account', null, true, false, null, null, true, confirmDeleteAccount, false, 'Privacy')}
+                        </View>
                     </View>
 
-                    <View style={styles.sectionCard}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Saved Posts')}
-                        {renderRow('Saved Posts Count', String(savedPostsCount))}
-                        {renderRow(
-                            'Clear Saved Posts',
-                            clearingSavedPosts ? 'Clearing…' : null,
-                            false,
-                            false,
-                            null,
-                            null,
-                            true,
-                            handleClearSavedPosts
-                        )}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {renderRow('Saved Posts Count', String(savedPostsCount), false, false, null, null, false, null, false, 'Saved Posts')}
+                            {renderRow('Clear Saved Posts', clearingSavedPosts ? 'Clearing…' : null, false, false, null, null, true, handleClearSavedPosts, false, 'Saved Posts')}
+                        </View>
                     </View>
 
-                    <View style={styles.sectionCard}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Notifications')}
-                        {renderRow('New Job Matches', null, false, true, notifNewMatches, (v) => handleToggle('@notif_new_matches', setNotifNewMatches, v))}
-                        {renderRow('Messages & Replies', null, false, true, notifMessages, (v) => handleToggle('@notif_messages', setNotifMessages, v))}
-                        {renderRow('Job Alerts & Deadlines', null, false, true, notifJobAlerts, (v) => handleToggle('@notif_job_alerts', setNotifJobAlerts, v))}
-                        {renderRow('App Updates', null, false, true, notifAppUpdates, (v) => handleToggle('@notif_app_updates', setNotifAppUpdates, v))}
-                        {renderRow('Push Permission', readablePushPermission, true, false, null, null, false, handleRequestPushPermission)}
-                        {renderRow('Send Test Notification', testingNotification ? 'Sending...' : null, true, false, null, null, true, handleTestNotification)}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {renderRow('New Job Matches', null, false, true, notifNewMatches, (v) => handleToggle('@notif_new_matches', setNotifNewMatches, v), false, null, false, 'Notifications')}
+                            {renderRow('Messages & Replies', null, false, true, notifMessages, (v) => handleToggle('@notif_messages', setNotifMessages, v), false, null, false, 'Notifications')}
+                            {renderRow('Job Alerts & Deadlines', null, false, true, notifJobAlerts, (v) => handleToggle('@notif_job_alerts', setNotifJobAlerts, v), false, null, false, 'Notifications')}
+                            {renderRow('App Updates', null, false, true, notifAppUpdates, (v) => handleToggle('@notif_app_updates', setNotifAppUpdates, v), false, null, false, 'Notifications')}
+                            {renderRow('Push Permission', readablePushPermission, true, false, null, null, false, handleRequestPushPermission, false, 'Notifications')}
+                            {renderRow('Send Test Notification', testingNotification ? 'Sending...' : null, true, false, null, null, true, handleTestNotification, false, 'Notifications')}
+                        </View>
                     </View>
 
-                    <View style={styles.sectionCard}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Role & Preferences')}
-                        {renderRow('Phone Number', accountPhoneNumber)}
-                        {renderRow('Dark Mode (Beta)', null, false, true, mode === 'dark', () => toggleTheme())}
-                        {upgradePrompt && renderRow(upgradePrompt.title || 'Suggested Upgrade', 'Contextual', false, false, null, null, true)}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {renderRow('Phone Number', accountPhoneNumber, false, false, null, null, false, null, false, 'Role & Preferences')}
+                            {renderRow('Dark Mode (Beta)', null, false, true, mode === 'dark', () => toggleTheme(), upgradePrompt ? false : true, null, false, 'Role & Preferences')}
+                            {upgradePrompt && renderRow(upgradePrompt.title || 'Suggested Upgrade', 'Contextual', false, false, null, null, true, null, false, 'Role & Preferences')}
+                        </View>
                     </View>
 
-                    <View style={styles.sectionCard}>
+                    <View style={styles.sectionCardPremium}>
                         {renderSectionTextHeader('Support')}
-                        {renderRow('Referral Code', referralDashboard?.referralCode || 'Not available')}
-                        {renderRow('Completed Referrals', String(referralDashboard?.completedReferrals || 0))}
-                        {renderRow('Rewards Granted', String(referralDashboard?.rewardsGranted || 0))}
-                        {renderRow('Send Product Feedback', null, true, false, null, null, true, () => setFeedbackModalVisible(true))}
+                        <View style={styles.sectionCardInnerPremium}>
+                            {renderRow('Referral Code', referralDashboard?.referralCode || 'Not available', false, false, null, null, false, null, false, 'Support')}
+                            {renderRow('Completed Referrals', String(referralDashboard?.completedReferrals || 0), false, false, null, null, false, null, false, 'Support')}
+                            {renderRow('Rewards Granted', String(referralDashboard?.rewardsGranted || 0), false, false, null, null, false, null, false, 'Support')}
+                            {renderRow('Send Product Feedback', null, true, false, null, null, true, () => setFeedbackModalVisible(true), false, 'Support')}
+                        </View>
                     </View>
 
-                    <TouchableOpacity style={styles.signOutButton} activeOpacity={0.8} onPress={handleSignOut}>
-                        <Text style={styles.signOutText}>Sign Out</Text>
+                    <TouchableOpacity style={styles.signOutButtonPremium} activeOpacity={0.88} onPress={handleSignOut}>
+                        <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+                        <Text style={styles.signOutTextPremium}>Sign Out</Text>
                     </TouchableOpacity>
                 </View>
             </ScrollView>
@@ -777,9 +815,9 @@ export default function SettingsScreen({ navigation }) {
                                 <Text style={styles.modalCancelText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.modalDeleteBtn, (deleteInput !== 'DELETE' || !String(deletePassword || '').trim()) && styles.modalDeleteBtnDisabled]}
+                                style={[styles.modalDeleteBtn, (String(deleteInput || '').trim().toUpperCase() !== 'DELETE' || !String(deletePassword || '').trim()) && styles.modalDeleteBtnDisabled]}
                                 onPress={executeDeleteAccount}
-                                disabled={deleteInput !== 'DELETE' || !String(deletePassword || '').trim() || isDeleting}
+                                disabled={String(deleteInput || '').trim().toUpperCase() !== 'DELETE' || !String(deletePassword || '').trim() || isDeleting}
                             >
                                 {isDeleting ? <SkeletonLoader width={18} height={18} borderRadius={9} tone="tint" /> : <Text style={styles.modalDeleteText}>Delete Forever</Text>}
                             </TouchableOpacity>
@@ -803,209 +841,279 @@ export default function SettingsScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: PALETTE.surface,
     },
     scrollContent: {
         paddingBottom: 40,
     },
     roleSwitchToast: {
-        marginHorizontal: SPACING.md,
-        marginTop: SPACING.sm,
-        marginBottom: SPACING.xs,
+        marginHorizontal: 16,
+        marginTop: 8,
+        marginBottom: 4,
         borderRadius: 12,
         borderWidth: 1,
         borderColor: '#bfdbfe',
         backgroundColor: '#eff6ff',
-        paddingHorizontal: SPACING.smd,
-        paddingVertical: SPACING.sm,
-        ...SHADOWS.sm,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
     },
     roleSwitchToastText: {
         color: '#1e40af',
         fontSize: 13,
-        fontWeight: '700',
+        fontWeight: '600',
         textAlign: 'center',
     },
-    profileHeader: {
-        backgroundColor: '#ffffff',
-        paddingHorizontal: SPACING.lg,
-        paddingBottom: SPACING.md + 2,
+    containerPremium: {
+        flex: 1,
+        backgroundColor: '#f1f5f9',
+    },
+    screenGlowTop: {
+        position: 'absolute',
+        top: -100,
+        right: -80,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: 'rgba(124, 58, 237, 0.08)',
+    },
+    scrollContentPremium: {
+        paddingBottom: 40,
+    },
+    headerWrapPremium: {
+        backgroundColor: 'transparent',
+    },
+    topBarPremium: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
-        marginBottom: SPACING.md,
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingBottom: 16,
     },
-    avatar: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        marginRight: 16,
-    },
-    userName: {
-        fontSize: 22,
+    topBarTitlePremium: {
+        fontSize: 32,
         fontWeight: '800',
-        color: '#0f172a',
-        marginBottom: 2,
+        letterSpacing: -0.7,
+        color: PALETTE.accent,
     },
-    userRole: {
+    topBarActionPremium: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#ffffff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...SHADOWS.sm,
+    },
+    profileHeaderCardPremium: {
+        marginHorizontal: 16,
+        marginTop: 4,
+        paddingVertical: 24,
+        paddingHorizontal: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 24,
+        alignItems: 'center',
+        ...SHADOWS.md,
+    },
+    profileHeaderCopyPremium: {
+        alignItems: 'center',
+        marginTop: 16,
+    },
+    avatarPremium: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#f8fafc',
+    },
+    userNamePremium: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#0f172a',
+        letterSpacing: -0.4,
+        marginBottom: 4,
+    },
+    userRolePremium: {
         color: '#64748b',
-        fontSize: 14,
+        fontSize: 15,
         fontWeight: '500',
     },
-    premiumBadge: {
-        marginTop: 6,
-        alignSelf: 'flex-start',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#c7d2fe',
-        backgroundColor: '#eef2ff',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-    },
-    premiumBadgeText: {
-        fontSize: 10,
-        fontWeight: '800',
-        color: '#4338ca',
-        letterSpacing: 0.4,
-    },
-    sectionsContainer: {
-        paddingHorizontal: SPACING.md,
-        gap: 12,
-    },
-    sectionCard: {
-        backgroundColor: '#ffffff',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        overflow: 'hidden',
-    },
-    sectionHeaderBg: {
+    heroStatsPillRowPremium: {
+        flexDirection: 'row',
+        marginTop: 24,
         backgroundColor: '#f8fafc',
-        paddingHorizontal: SPACING.md,
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
+        borderRadius: 16,
+        paddingVertical: 12,
+        width: '100%',
+        borderWidth: 1,
+        borderColor: '#f1f5f9',
     },
-    sectionTitle: {
+    heroStatBlockPremium: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    heroStatBorderRightPremium: {
+        borderRightWidth: 1,
+        borderRightColor: '#e2e8f0',
+    },
+    heroStatValuePremium: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    heroStatLabelPremium: {
+        marginTop: 2,
         fontSize: 12,
-        fontWeight: 'bold',
+        fontWeight: '600',
         color: '#64748b',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
     },
-    row: {
+    sectionsContainerPremium: {
+        paddingTop: 24,
+        paddingHorizontal: 16,
+    },
+    sectionCardPremium: {
+        marginBottom: 28,
+    },
+    sectionHeaderBgPremium: {
+        paddingHorizontal: 12,
+        paddingBottom: 10,
+    },
+    sectionTitlePremium: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#64748b',
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+    },
+    sectionCardInnerPremium: {
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        overflow: 'hidden',
+        ...SHADOWS.sm,
+    },
+    rowPremium: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingVertical: 14,
-        paddingHorizontal: SPACING.md,
+        paddingHorizontal: 16,
+        backgroundColor: '#ffffff',
     },
-    rowBorder: {
+    rowBorderPremium: {
         borderBottomWidth: 1,
         borderBottomColor: '#f1f5f9',
     },
-    rowLabel: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#334155',
+    rowLeftPremium: {
+        flexDirection: 'row',
+        alignItems: 'center',
         flex: 1,
-        paddingRight: 12,
     },
-    rowRight: {
+    rowIconSquirclePremium: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 14,
+    },
+    rowLabelPremium: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#1e293b',
+        flexShrink: 1,
+    },
+    rowRightPremium: {
         flexDirection: 'row',
         alignItems: 'center',
         flexShrink: 0,
+        paddingLeft: 12,
     },
-    rowValue: {
-        fontSize: 14,
-        color: '#94a3b8',
+    rowValuePremium: {
+        fontSize: 15,
+        color: '#64748b',
         fontWeight: '500',
-        marginRight: 6,
+        maxWidth: 120,
     },
-    arrowIcon: {
-        fontSize: 20,
-        color: '#94a3b8',
-        marginLeft: 4,
-        lineHeight: 20,
-    },
-    signOutButton: {
+    signOutButtonPremium: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
         backgroundColor: '#fef2f2',
-        borderRadius: 12,
+        paddingVertical: 16,
+        borderRadius: 16,
+        gap: 8,
+        marginTop: 12,
+        marginBottom: 32,
         borderWidth: 1,
         borderColor: '#fee2e2',
-        paddingVertical: 13,
-        alignItems: 'center',
-        marginTop: 6,
-        marginBottom: 24,
     },
-    signOutText: {
-        color: '#dc2626',
-        fontWeight: '800',
-        fontSize: 15,
+    signOutTextPremium: {
+        color: '#ef4444',
+        fontWeight: '700',
+        fontSize: 16,
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: PALETTE.overlay,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 24,
     },
     modalContent: {
-        backgroundColor: '#ffffff',
-        borderRadius: RADIUS.lg,
-        padding: SPACING.lg,
+        backgroundColor: PALETTE.surface,
+        borderRadius: 14,
+        padding: 20,
         width: '100%',
         maxWidth: 400,
-        ...SHADOWS.lg,
     },
     modalTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#0f172a',
+        fontSize: 17,
+        fontWeight: '600',
+        color: PALETTE.textPrimary,
         marginBottom: 12,
         textAlign: 'center',
     },
     modalSubtitle: {
         fontSize: 14,
-        color: '#64748b',
+        color: PALETTE.textSecondary,
         textAlign: 'center',
         marginBottom: 24,
         lineHeight: 20,
     },
     deleteInput: {
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        borderRadius: RADIUS.sm,
+        backgroundColor: PALETTE.background,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: PALETTE.separator,
+        borderRadius: 10,
         paddingHorizontal: 16,
         paddingVertical: 12,
         fontSize: 16,
-        color: '#0f172a',
-        marginBottom: 24,
+        color: PALETTE.textPrimary,
+        marginBottom: 20,
         textAlign: 'center',
     },
     modalActions: {
         flexDirection: 'row',
-        gap: 12,
+        gap: 10,
     },
     modalCancelBtn: {
         flex: 1,
-        backgroundColor: '#f1f5f9',
+        backgroundColor: PALETTE.background,
         paddingVertical: 14,
-        borderRadius: RADIUS.sm,
+        borderRadius: 10,
         alignItems: 'center',
     },
     modalCancelText: {
-        color: '#475569',
-        fontWeight: 'bold',
+        color: PALETTE.textPrimary,
+        fontWeight: '600',
         fontSize: 15,
     },
     modalDeleteBtn: {
         flex: 1,
-        backgroundColor: '#ef4444',
+        backgroundColor: PALETTE.error,
         paddingVertical: 14,
-        borderRadius: RADIUS.sm,
+        borderRadius: 10,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1013,8 +1121,8 @@ const styles = StyleSheet.create({
         opacity: 0.4,
     },
     modalDeleteText: {
-        color: '#ffffff',
-        fontWeight: 'bold',
+        color: PALETTE.textInverted,
+        fontWeight: '600',
         fontSize: 15,
-    }
+    },
 });

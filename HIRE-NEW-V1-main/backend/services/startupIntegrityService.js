@@ -57,15 +57,15 @@ const resolveGeminiApiKey = () => {
     return key;
 };
 
-const validateRequiredSecrets = ({ isProduction }) => {
+const validateRequiredSecrets = ({ isProductionLike }) => {
     const missing = [];
     const weak = [];
 
-    const keys = isProduction
+    const keys = isProductionLike
         ? [...REQUIRED_SECRETS, ...PRODUCTION_ONLY_SECRETS]
         : REQUIRED_SECRETS;
 
-    if (!resolveGeminiApiKey()) {
+    if (isProductionLike && !resolveGeminiApiKey()) {
         missing.push('GEMINI_API_KEY_NOT_CONFIGURED');
     }
 
@@ -180,17 +180,18 @@ const validateRuntimeWritablePaths = () => {
 const startupIntegrityCheck = ({ strict = true } = {}) => {
     const runtime = String(process.env.NODE_ENV || 'development').toLowerCase();
     const isProduction = runtime === 'production';
+    const isProductionLike = isProduction || runtime === 'staging';
     const isTest = runtime === 'test';
 
     const findings = [];
 
-    const { missing, weak } = validateRequiredSecrets({ isProduction });
+    const { missing, weak } = validateRequiredSecrets({ isProductionLike });
     if (missing.length) {
         findings.push(`Missing required env: ${missing.join(', ')}`);
     }
     findings.push(...weak);
 
-    if (isProduction) {
+    if (isProductionLike) {
         findings.push(...validateProductionFlags());
         const corsOrigins = String(process.env.CORS_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean);
         if (!corsOrigins.length || corsOrigins.includes('*')) {
@@ -198,8 +199,8 @@ const startupIntegrityCheck = ({ strict = true } = {}) => {
         }
     }
 
-    if (isProduction && !isTest) {
-        findings.push(...validateOtpTransportPolicy({ isProduction }));
+    if (isProductionLike && !isTest) {
+        findings.push(...validateOtpTransportPolicy({ isProduction: true }));
     }
 
     findings.push(...validateRuntimeWritablePaths());

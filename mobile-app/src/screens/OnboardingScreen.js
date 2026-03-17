@@ -1,236 +1,261 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+    Image,
+    LayoutAnimation,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    UIManager,
+    View,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Localization from 'expo-localization';
+import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
-import SkeletonLoader from '../components/SkeletonLoader';
+import { PALETTE, RADIUS, SHADOWS } from '../theme/theme';
 
-const SLIDES = [
+const GUIDE_SECTIONS = {
+    employer: 'Employer path - screens 1-6',
+    jobSeeker: 'Job seeker path - screens 7-10',
+};
+
+const HERO_FLOW = [
     {
-        key: 'intro',
-        title: 'Talk once. Profile done.',
-        description: 'Answer a few prompts and start seeing verified jobs in under a minute.',
+        icon: 'person-outline',
+        title: 'Choose',
+        copy: 'Employer or job seeker',
     },
     {
-        key: 'precision',
-        title: 'Smart matches. Zero spam.',
-        description: 'Get ranked opportunities by fit, trust, and response speed.',
+        icon: 'search-outline',
+        title: 'See',
+        copy: 'Jobs or people that fit',
     },
     {
-        key: 'outcomes',
-        title: 'Real hiring. Real people.',
-        description: 'Chat with active employers and move to offer faster.',
+        icon: 'chatbubble-ellipses-outline',
+        title: 'Act',
+        copy: 'Chat, apply, or follow up',
     },
 ];
 
-const PREVIEW_JOBS = [
-    { id: 'preview-job-1', title: 'Delivery Associate', salary: '₹18k-₹24k', urgency: 'Urgent Hiring' },
-    { id: 'preview-job-2', title: 'Warehouse Loader', salary: '₹16k-₹22k', urgency: 'Actively Hiring' },
-    { id: 'preview-job-3', title: 'Store Assistant', salary: '₹15k-₹20k', urgency: 'Fast Response Team' },
+const GUIDE_STEPS = [
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'explore',
+        title: 'Explore the community',
+        body: 'Start in Connect to browse real posts, hiring updates, and activity from people already using the app.',
+        image: require('../../assets/onboarding/guide-1.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'setup',
+        title: 'Organize role-specific profiles',
+        body: 'Keep multiple profiles ready with the right skills, experience, and edits so the version you share stays consistent.',
+        image: require('../../assets/onboarding/guide-2.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'profile',
+        title: 'Review candidate details with confidence',
+        body: 'Open a full profile to check rating, location, summary, skills, and response signals before you move forward.',
+        image: require('../../assets/onboarding/guide-5.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'match',
+        title: 'Understand every match',
+        body: 'Use Smart Match Analysis to see why a profile fits, from salary alignment and distance to skills and experience.',
+        image: require('../../assets/onboarding/guide-3.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'review',
+        title: 'Keep applications organized',
+        body: 'See active conversations and status updates in Apps so follow-up stays simple.',
+        image: require('../../assets/onboarding/guide-6.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.employer,
+        key: 'follow-up',
+        title: 'Move the conversation to chat',
+        body: 'Open the thread when someone is ready and keep the next step attached to the application.',
+        image: require('../../assets/onboarding/guide-4.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.jobSeeker,
+        key: 'browse',
+        title: 'Choose the job seeker path',
+        body: 'Pick Job Seeker on the first screen so the app can show local work, matched jobs, and your application history.',
+        image: require('../../assets/onboarding/guide-7.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.jobSeeker,
+        key: 'confirm',
+        title: 'Search local jobs',
+        body: 'Use Live Radar to scan nearby opportunities and see what is active around you right now.',
+        image: require('../../assets/onboarding/guide-8.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.jobSeeker,
+        key: 'availability',
+        title: 'See jobs for you',
+        body: 'Browse matched roles with pay, location, and fit at a glance before you apply.',
+        image: require('../../assets/onboarding/guide-9.png'),
+    },
+    {
+        section: GUIDE_SECTIONS.jobSeeker,
+        key: 'payout',
+        title: 'Track applications',
+        body: 'Keep every application and reply in one place so you can follow up fast.',
+        image: require('../../assets/onboarding/guide-10.png'),
+    },
 ];
 
-function SlideCard({ item, width, index }) {
-    return (
-        <View style={[styles.slide, { width }]}>
-            <LinearGradient
-                colors={['#111827', '#0d1b33']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.visualCard}
-            >
-                <View style={styles.orb} />
-                <View style={styles.visualLine} />
-                <View style={styles.visualLineShort} />
-                <View style={styles.slideIndexChip}>
-                    <Text style={styles.slideIndexChipText}>STEP {index + 1}</Text>
-                </View>
-            </LinearGradient>
-            <Text style={styles.slideTitle}>{item.title}</Text>
-            <Text style={styles.slideDescription}>{item.description}</Text>
-        </View>
-    );
-}
+const FAQS = [
+    {
+        question: 'Does the guide show both sides of the app?',
+        answer: 'Yes. Screens 1-6 cover the employer flow, and screens 7-10 cover the job seeker flow.',
+    },
+    {
+        question: 'Can I manage multiple profiles?',
+        answer: 'Yes. My Profiles lets you keep role-specific versions ready so you can switch between them as needed.',
+    },
+    {
+        question: 'What helps people trust a profile here?',
+        answer: 'Clear role titles, ratings, skills, location, experience, and response details make each profile feel real and actionable.',
+    },
+    {
+        question: 'How are matches ranked?',
+        answer: 'Matches use the details you add, such as skills, experience, availability, language, and location, to surface the most relevant people or opportunities.',
+    },
+    {
+        question: 'Can I see why someone matched?',
+        answer: 'Yes. Smart Match Analysis explains the score with a breakdown like skill match, salary alignment, distance, and experience fit.',
+    },
+    {
+        question: 'Where do job seekers start in the guide?',
+        answer: 'Pick Job Seeker, then use Live Radar, Jobs for You, and Applications to follow each lead.',
+    },
+    {
+        question: 'Where do I manage applications and follow-ups?',
+        answer: 'Use Apps or Applications to review status changes, check who is chat ready, and jump into the next conversation.',
+    },
+    {
+        question: 'Can I update my details later?',
+        answer: 'Yes. You can edit profile details, role setup, and matching signals later as your needs change.',
+    },
+];
 
 export default function OnboardingScreen() {
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
-    const { width } = useWindowDimensions();
     const { completeOnboarding } = useContext(AuthContext);
-
-    const [activeIndex, setActiveIndex] = useState(0);
-    const [detectedRegion, setDetectedRegion] = useState('');
-    const fadeAnim = useRef(new Animated.Value(0)).current;
-    const slidesRef = useRef(null);
-    const progressAnim = useRef(new Animated.Value(1 / SLIDES.length)).current;
-
-    const data = useMemo(() => SLIDES, []);
-    const progressWidth = useMemo(() => progressAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: ['0%', '100%'],
-    }), [progressAnim]);
+    const [openIndex, setOpenIndex] = useState(null);
 
     useEffect(() => {
-        Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 220,
-            useNativeDriver: true,
-        }).start();
-
-        const locale = Localization.getLocales?.()?.[0];
-        const region = String(locale?.regionCode || '').trim();
-        if (region) {
-            setDetectedRegion(region);
+        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
         }
-    }, [fadeAnim]);
-
-    useEffect(() => {
-        Animated.timing(progressAnim, {
-            toValue: (activeIndex + 1) / data.length,
-            duration: 220,
-            useNativeDriver: false,
-        }).start();
-    }, [activeIndex, data.length, progressAnim]);
-
-    const handleMomentumEnd = useCallback((event) => {
-        const offsetX = event.nativeEvent.contentOffset.x;
-        const index = Math.round(offsetX / width);
-        setActiveIndex(index);
-    }, [width]);
-
-    const markOnboardingComplete = useCallback(async () => {
-        await AsyncStorage.setItem('@onboarding_completed', 'true');
-        await completeOnboarding();
-    }, [completeOnboarding]);
+    }, []);
 
     const handleContinue = useCallback(async () => {
-        if (activeIndex < data.length - 1) {
-            slidesRef.current?.scrollToIndex({
-                index: activeIndex + 1,
-                animated: true,
-            });
-            return;
-        }
+        await completeOnboarding();
+        navigation.replace('RoleSelection');
+    }, [completeOnboarding, navigation]);
 
-        await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [activeIndex, data.length, markOnboardingComplete, navigation]);
+    const toggleFaq = useCallback((index) => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setOpenIndex((prev) => (prev === index ? null : index));
+    }, []);
 
-    const handleAlreadyHaveAccount = useCallback(async () => {
-        await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [markOnboardingComplete, navigation]);
-
-    const handleSkip = useCallback(async () => {
-        await markOnboardingComplete();
-        navigation.replace('Login');
-    }, [markOnboardingComplete, navigation]);
+    const contentPaddingBottom = useMemo(
+        () => insets.bottom + 140,
+        [insets.bottom]
+    );
 
     return (
         <View style={styles.container}>
-            <LinearGradient
-                colors={['#f5f7fa', '#edf2fb']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-            />
-
-            <Animated.View
-                style={[
-                    styles.content,
-                    {
-                        opacity: fadeAnim,
-                        paddingTop: insets.top + 20,
-                        paddingBottom: insets.bottom + 20,
-                    },
-                ]}
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: contentPaddingBottom }]}
             >
-                <View style={styles.headerRow}>
-                    <View style={styles.progressShell}>
-                        <View style={styles.progressTrack}>
-                            <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
-                        </View>
-                        <Text style={styles.progressMeta}>Step {activeIndex + 1} of {data.length}</Text>
-                    </View>
-                    <View style={styles.speedChip}>
-                        <Text style={styles.speedChipText}>Takes ~30 sec</Text>
-                    </View>
-                </View>
-
-                <FlatList
-                    ref={slidesRef}
-                    data={data}
-                    keyExtractor={(item) => item.key}
-                    horizontal
-                    pagingEnabled
-                    showsHorizontalScrollIndicator={false}
-                    onMomentumScrollEnd={handleMomentumEnd}
-                    renderItem={({ item, index }) => <SlideCard item={item} index={index} width={width - 48} />}
-                    contentContainerStyle={styles.sliderTrack}
-                    initialNumToRender={3}
-                    windowSize={3}
-                />
-
-                <View style={styles.previewSection}>
-                    <View style={styles.previewHeader}>
-                        <Text style={styles.previewTitle}>Preview jobs near you</Text>
-                        <Text style={styles.previewMeta}>{detectedRegion ? `Detected: ${detectedRegion}` : 'Detecting region...'}</Text>
-                    </View>
-
-                    {!detectedRegion ? (
-                        <View style={styles.previewSkeletonRow}>
-                            <SkeletonLoader width={168} height={88} borderRadius={16} />
-                            <SkeletonLoader width={168} height={88} borderRadius={16} />
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={PREVIEW_JOBS}
-                            keyExtractor={(item) => item.id}
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.previewTrack}
-                            renderItem={({ item }) => (
-                                <View style={styles.previewCard}>
-                                    <Text style={styles.previewCardTitle} numberOfLines={1}>{item.title}</Text>
-                                    <Text style={styles.previewCardSalary}>{item.salary}</Text>
-                                    <View style={styles.previewBadge}>
-                                        <Text style={styles.previewBadgeText}>{item.urgency}</Text>
-                                    </View>
+                <View style={styles.heroCard}>
+                    <LinearGradient
+                        colors={[PALETTE.accent, PALETTE.accentDeep]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.heroAccent}
+                    />
+                    <Text style={styles.heroKicker}>10-second overview</Text>
+                    <Text style={styles.heroTitle}>One app. Two paths.</Text>
+                    <Text style={styles.heroSubtitle}>See how HireCircle works for employers and job seekers in 10 quick screens.</Text>
+                    <View style={styles.heroFlowRow}>
+                        {HERO_FLOW.map((item) => (
+                            <View key={item.title} style={styles.heroFlowItem}>
+                                <View style={styles.heroFlowIconWrap}>
+                                    <Ionicons name={item.icon} size={16} color={PALETTE.accentDeep} />
                                 </View>
-                            )}
-                        />
-                    )}
-                </View>
-
-                <View style={styles.footer}>
-                    <View style={styles.skipRow}>
-                        <TouchableOpacity style={styles.skipBtn} onPress={handleSkip} activeOpacity={0.8}>
-                            <Text style={styles.skipBtnText}>Skip</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.dotsRow}>
-                        {data.map((slide, index) => (
-                            <View
-                                key={slide.key}
-                                style={[styles.dot, index === activeIndex && styles.dotActive]}
-                            />
+                                <Text style={styles.heroFlowTitle}>{item.title}</Text>
+                                <Text style={styles.heroFlowCopy}>{item.copy}</Text>
+                            </View>
                         ))}
                     </View>
-
-                    <TouchableOpacity style={styles.primaryButton} onPress={handleContinue} activeOpacity={0.9}>
-                        <Text style={styles.primaryButtonText}>{activeIndex === data.length - 1 ? 'Get Started' : 'Continue'}</Text>
-                    </TouchableOpacity>
-
-                    {activeIndex === 0 ? (
-                        <TouchableOpacity style={styles.secondaryButton} onPress={handleAlreadyHaveAccount} activeOpacity={0.8}>
-                            <Text style={styles.secondaryButtonText}>I already have an account</Text>
-                        </TouchableOpacity>
-                    ) : null}
                 </View>
-            </Animated.View>
+
+                <View style={styles.stepStack}>
+                    {GUIDE_STEPS.map((step, index) => (
+                        <View key={step.key} style={styles.stepGroup}>
+                            {index === 0 || step.section !== GUIDE_STEPS[index - 1].section ? (
+                                <Text style={styles.sectionLabel}>{step.section}</Text>
+                            ) : null}
+                            <View style={styles.stepCard}>
+                                <Text style={styles.stepTitle}>
+                                    <Text style={styles.stepIndex}>{index + 1}. </Text>
+                                    {step.title}
+                                </Text>
+                                <Text style={styles.stepBody}>{step.body}</Text>
+                                <View style={styles.stepImageWrap}>
+                                    <Image source={step.image} style={styles.stepImage} resizeMode="contain" />
+                                </View>
+                            </View>
+                        </View>
+                    ))}
+                </View>
+
+                <View style={styles.faqSection}>
+                    <Text style={styles.faqTitle}>Frequently Asked Questions</Text>
+                    <View style={styles.faqCard}>
+                        {FAQS.map((item, index) => {
+                            const isOpen = index === openIndex;
+                            return (
+                                <View key={item.question} style={styles.faqRow}>
+                                    <TouchableOpacity
+                                        style={styles.faqHeader}
+                                        onPress={() => toggleFaq(index)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={styles.faqQuestion}>{item.question}</Text>
+                                        <Ionicons
+                                            name={isOpen ? 'chevron-up' : 'chevron-down'}
+                                            size={18}
+                                            color={PALETTE.textSecondary}
+                                        />
+                                    </TouchableOpacity>
+                                    {isOpen ? <Text style={styles.faqAnswer}>{item.answer}</Text> : null}
+                                </View>
+                            );
+                        })}
+                    </View>
+                </View>
+            </ScrollView>
+
+            <View style={[styles.stickyFooter, { paddingBottom: insets.bottom + 18 }]}>
+                <TouchableOpacity style={styles.ctaButton} onPress={handleContinue} activeOpacity={0.88}>
+                    <Text style={styles.ctaText}>Continue</Text>
+                </TouchableOpacity>
+            </View>
         </View>
     );
 }
@@ -238,234 +263,215 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f7fa',
+        backgroundColor: PALETTE.background,
     },
-    content: {
-        flex: 1,
+    scrollContent: {
+        paddingHorizontal: 22,
     },
-    headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        paddingHorizontal: 24,
-        marginBottom: 14,
-    },
-    progressShell: {
-        flex: 1,
-        gap: 4,
-    },
-    progressTrack: {
-        height: 6,
-        borderRadius: 999,
-        backgroundColor: '#dbe3f0',
+    heroCard: {
+        backgroundColor: PALETTE.background,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+        borderRadius: RADIUS.xl,
+        paddingHorizontal: 18,
+        paddingVertical: 18,
         overflow: 'hidden',
+        ...SHADOWS.md,
     },
-    progressFill: {
-        height: '100%',
-        borderRadius: 999,
-        backgroundColor: '#1d4ed8',
+    heroAccent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 6,
     },
-    progressMeta: {
-        color: '#64748b',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    speedChip: {
-        backgroundColor: '#e8eefc',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#d1dcf8',
-        paddingHorizontal: 10,
-        paddingVertical: 7,
-    },
-    speedChipText: {
-        color: '#1e3a8a',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    sliderTrack: {
-        paddingHorizontal: 24,
-    },
-    slide: {
-        marginRight: 24,
-    },
-    visualCard: {
-        height: 220,
-        borderRadius: 20,
-        padding: 24,
-        justifyContent: 'center',
-        marginBottom: 28,
-    },
-    orb: {
-        width: 92,
-        height: 92,
-        borderRadius: 46,
-        backgroundColor: 'rgba(168, 192, 255, 0.2)',
-        marginBottom: 20,
-    },
-    visualLine: {
-        height: 10,
-        borderRadius: 999,
-        backgroundColor: 'rgba(219, 230, 255, 0.35)',
-        marginBottom: 8,
-        width: '82%',
-    },
-    visualLineShort: {
-        height: 10,
-        borderRadius: 999,
-        backgroundColor: 'rgba(219, 230, 255, 0.22)',
-        width: '56%',
-    },
-    slideIndexChip: {
-        marginTop: 14,
+    heroKicker: {
         alignSelf: 'flex-start',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
         borderRadius: 999,
-        borderWidth: 1,
-        borderColor: 'rgba(219, 230, 255, 0.35)',
-        backgroundColor: 'rgba(15, 23, 42, 0.2)',
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-    },
-    slideIndexChipText: {
-        color: '#e2e8f0',
-        fontSize: 10,
+        backgroundColor: '#f1e9ff',
+        color: PALETTE.accentDeep,
+        fontSize: 12,
+        lineHeight: 14,
         fontWeight: '800',
-        letterSpacing: 0.4,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        marginBottom: 10,
     },
-    slideTitle: {
-        fontSize: 26,
-        fontWeight: '700',
-        color: '#0f172a',
-        marginBottom: 12,
-        letterSpacing: -0.2,
+    heroTitle: {
+        fontSize: 22,
+        lineHeight: 30,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
     },
-    slideDescription: {
+    heroSubtitle: {
+        marginTop: 6,
+        color: PALETTE.textSecondary,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+    heroFlowRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 14,
+    },
+    heroFlowItem: {
+        flex: 1,
+        minHeight: 96,
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#EEE4FF',
+        backgroundColor: '#FCF9FF',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+    },
+    heroFlowIconWrap: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F2E9FF',
+        marginBottom: 8,
+    },
+    heroFlowTitle: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+        textAlign: 'center',
+    },
+    heroFlowCopy: {
+        marginTop: 4,
+        fontSize: 11,
+        lineHeight: 15,
+        color: PALETTE.textSecondary,
+        textAlign: 'center',
+        fontWeight: '500',
+    },
+    stepStack: {
+        marginTop: 22,
+        gap: 28,
+    },
+    stepGroup: {
+        gap: 10,
+    },
+    sectionLabel: {
+        alignSelf: 'flex-start',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: '#f1e9ff',
+        color: PALETTE.accentDeep,
+        fontSize: 12,
+        lineHeight: 14,
+        fontWeight: '800',
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    stepCard: {
+        gap: 12,
+    },
+    stepImageWrap: {
+        marginTop: 4,
+        borderRadius: 28,
+        backgroundColor: '#eff1f5',
+        overflow: 'hidden',
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+        minHeight: 400,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    stepImage: {
+        width: '100%',
+        height: 400,
+        alignSelf: 'center',
+    },
+    stepTitle: {
+        fontSize: 21,
+        lineHeight: 30,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+    },
+    stepIndex: {
+        color: PALETTE.textPrimary,
+    },
+    stepBody: {
         fontSize: 16,
+        lineHeight: 30,
+        color: PALETTE.textPrimary,
         fontWeight: '400',
-        color: '#475569',
-        lineHeight: 24,
-        maxWidth: 300,
     },
-    previewSection: {
-        marginTop: 18,
-        paddingHorizontal: 24,
+    faqSection: {
+        marginTop: 26,
+        marginBottom: 16,
     },
-    previewHeader: {
+    faqTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: PALETTE.textPrimary,
+        marginBottom: 12,
+    },
+    faqCard: {
+        backgroundColor: PALETTE.background,
+        borderWidth: 1,
+        borderColor: PALETTE.borderLight,
+        borderRadius: RADIUS.lg,
+        ...SHADOWS.sm,
+    },
+    faqRow: {
+        borderBottomWidth: 1,
+        borderBottomColor: PALETTE.borderLight,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+    },
+    faqHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 10,
-    },
-    previewTitle: {
-        color: '#0f172a',
-        fontSize: 15,
-        fontWeight: '700',
-    },
-    previewMeta: {
-        color: '#64748b',
-        fontSize: 11,
-        fontWeight: '700',
-    },
-    previewSkeletonRow: {
-        flexDirection: 'row',
-        gap: 10,
-    },
-    previewTrack: {
-        gap: 10,
-        paddingRight: 4,
-    },
-    previewCard: {
-        width: 170,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#dfe7f5',
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-    },
-    previewCardTitle: {
-        color: '#0f172a',
-        fontSize: 14,
-        fontWeight: '700',
-    },
-    previewCardSalary: {
-        color: '#1d4ed8',
-        fontSize: 16,
-        fontWeight: '800',
-        marginTop: 5,
-        marginBottom: 8,
-    },
-    previewBadge: {
-        alignSelf: 'flex-start',
-        borderRadius: 999,
-        backgroundColor: '#fef3c7',
-        borderWidth: 1,
-        borderColor: '#fde68a',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-    },
-    previewBadgeText: {
-        color: '#92400e',
-        fontSize: 10,
-        fontWeight: '800',
-    },
-    footer: {
-        marginTop: 'auto',
-        paddingHorizontal: 24,
-    },
-    skipRow: {
-        alignItems: 'flex-end',
-        marginBottom: 12,
-    },
-    skipBtn: {
-        minHeight: 36,
-        paddingHorizontal: 12,
-        justifyContent: 'center',
-    },
-    skipBtnText: {
-        color: '#1d4ed8',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    dotsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginBottom: 24,
-    },
-    dot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#cbd5e1',
-    },
-    dotActive: {
-        width: 24,
-        borderRadius: 999,
-        backgroundColor: '#1d4ed8',
-    },
-    primaryButton: {
-        minHeight: 52,
-        borderRadius: 14,
-        backgroundColor: '#1d4ed8',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    primaryButtonText: {
-        color: '#ffffff',
-        fontSize: 15,
-        fontWeight: '600',
-    },
-    secondaryButton: {
         minHeight: 44,
+    },
+    faqQuestion: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: '600',
+        color: PALETTE.textPrimary,
+        paddingRight: 12,
+    },
+    faqAnswer: {
+        marginTop: 8,
+        fontSize: 13,
+        lineHeight: 19,
+        color: PALETTE.textSecondary,
+        fontWeight: '500',
+    },
+    stickyFooter: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        paddingHorizontal: 22,
+        paddingTop: 12,
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        borderTopWidth: 1,
+        borderTopColor: PALETTE.borderLight,
+    },
+    ctaButton: {
+        minHeight: 54,
+        borderRadius: RADIUS.full,
+        backgroundColor: PALETTE.textPrimary,
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: 8,
+        ...SHADOWS.md,
     },
-    secondaryButtonText: {
-        color: '#475569',
-        fontSize: 14,
-        fontWeight: '400',
+    ctaText: {
+        color: PALETTE.textInverted,
+        fontSize: 16,
+        fontWeight: '700',
     },
 });
