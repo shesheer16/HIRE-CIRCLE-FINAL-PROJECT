@@ -37,11 +37,16 @@ const issuedBeforePasswordChange = (decoded = {}, user = {}) => {
 
 const protect = async (req, res, next) => {
     const authorizationHeader = String(req.headers.authorization || '');
-    if (!authorizationHeader.toLowerCase().startsWith('bearer ')) {
-        return res.status(401).json({ message: 'Not authorized, no token' });
+
+    // Resolve token from: 1) Bearer header (mobile + web) 2) HttpOnly cookie (web fallback)
+    let token = '';
+    if (authorizationHeader.toLowerCase().startsWith('bearer ')) {
+        token = authorizationHeader.slice(7).trim();
+    } else if (req.cookies?.hireapp_access_token) {
+        // SECURITY: HttpOnly cookie path — browser only, inaccessible to JS.
+        token = String(req.cookies.hireapp_access_token).trim();
     }
 
-    const token = authorizationHeader.slice(7).trim();
     if (!token) {
         return res.status(401).json({ message: 'Not authorized, no token' });
     }

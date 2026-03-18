@@ -543,7 +543,9 @@ const authUser = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email: normalizedEmail });
+    // SECURITY: +password required here because the schema has select:false to prevent
+    // accidental hash leakage in all other queries. This is the ONLY place that should ever select it.
+    const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });

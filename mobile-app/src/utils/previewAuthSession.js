@@ -5,11 +5,12 @@ const FALSE_VALUES = new Set(['0', 'false', 'no', 'off']);
 
 export const isInstantPreviewAuthEnabled = () => {
     const rawValue = String(
-        process.env.EXPO_PUBLIC_PREFER_LOCAL_PREVIEW_AUTH ?? (__DEV__ ? 'true' : 'false')
+        process.env.EXPO_PUBLIC_PREFER_LOCAL_PREVIEW_AUTH ?? 'false'
     ).trim().toLowerCase();
 
     return !FALSE_VALUES.has(rawValue);
 };
+
 
 const buildPreviewName = ({ selectedRole = 'worker', email = '', phoneNumber = '', name = '' } = {}) => {
     const explicitName = String(name || '').trim();

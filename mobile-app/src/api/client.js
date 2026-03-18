@@ -4,6 +4,29 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { API_BASE_CANDIDATES, API_BASE_URL } from '../config';
 import { logger } from '../utils/logger';
+import { initializeSslPinning } from 'react-native-ssl-public-key-pinning';
+
+// Initialize SSL Pinning to prevent MITM attacks using malicious root certificates
+try {
+    const rawApiHost = (API_BASE_URL.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || 'hirecircle.in';
+    // Fallback split for potential full IP or port presence, grabbing just the domain name if possible
+    const domainHost = rawApiHost.split(':')[0];
+
+    // Only apply SSL pinning in production configurations when HTTPS is targeted
+    if (!__DEV__ && /^https/i.test(API_BASE_URL)) {
+        const primaryHash = process.env.EXPO_PUBLIC_SSL_PIN_PRIMARY || 'sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+        const backupHash = process.env.EXPO_PUBLIC_SSL_PIN_BACKUP || 'sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+        
+        initializeSslPinning({
+            [domainHost]: {
+                includeSubdomains: true,
+                publicKeyHashes: [primaryHash, backupHash],
+            },
+        });
+    }
+} catch (pinError) {
+    logger.error('Failed to initialize SSL Pinning', pinError);
+}
 
 const MAX_RETRIES = Number.parseInt(process.env.EXPO_PUBLIC_API_MAX_RETRIES || '3', 10);
 const CIRCUIT_FAILURE_THRESHOLD = Number.parseInt(process.env.EXPO_PUBLIC_API_CIRCUIT_FAILURE_THRESHOLD || '6', 10);

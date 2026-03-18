@@ -61,6 +61,14 @@ import client, { setApiErrorHandler, setUnauthorizedHandler } from './src/api/cl
 import { ThemeProvider } from './src/theme/ThemeProvider';
 import { getNormalizedProfileReadiness, isProfileRoleGateError } from './src/utils/profileReadiness';
 import { isQaRoleBootstrapEnabled } from './src/utils/authRoleSelection';
+import * as Sentry from '@sentry/react-native';
+
+Sentry.init({
+    dsn: 'https://6577889ade994073aab05a0d3bbba324@o4505051754954752.ingest.sentry.io/4505051756593152', // Placeholder DSN for HireCircle
+    debug: __DEV__,
+    tracesSampleRate: 1.0,
+});
+
 
 let SplashScreenApi = {
   preventAutoHideAsync: async () => { },
@@ -728,7 +736,7 @@ const AppNav = () => {
   );
 };
 
-export default function App() {
+function App() {
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
@@ -744,3 +752,6 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+export default Sentry.wrap(App);
+

@@ -348,6 +348,7 @@ export function useConnectData() {
         onCommentInputChange: feed.handleCommentInputChange,
         onSubmitComment: feed.handleSubmitComment,
         onReportPost: feed.handleReportPost,
+        onBlockUser: feed.handleBlockUser,
         onDeletePost: feed.handleDeletePost,
         onOpenAuthorProfile: feed.handleOpenFeedProfile,
         onCloseJobPreview: feed.closeJobPreview,
@@ -367,7 +368,7 @@ export function useConnectData() {
         feed.handleToggleComposerVisibility, feed.handleSetComposerVisibility,
         feed.handleToggleLike, feed.handleToggleSavePost, feed.handleToggleComment,
         feed.fetchPostComments, feed.handleVouch, feed.handleCommentInputChange,
-        feed.handleSubmitComment, feed.handleReportPost, feed.handleDeletePost,
+        feed.handleSubmitComment, feed.handleReportPost, feed.handleBlockUser, feed.handleDeletePost,
         feed.handleOpenFeedProfile, feed.closeJobPreview, applyFromJobPreview,
     ]);
 

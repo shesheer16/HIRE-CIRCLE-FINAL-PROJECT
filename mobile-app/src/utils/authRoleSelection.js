@@ -56,11 +56,12 @@ const normalizeRoleList = (roles = []) => Array.from(new Set(
 
 export const isQaRoleBootstrapEnabled = () => {
     const rawValue = String(
-        process.env.EXPO_PUBLIC_AUTH_BYPASS_FOR_QA ?? (__DEV__ ? 'true' : 'false')
+        process.env.EXPO_PUBLIC_AUTH_BYPASS_FOR_QA ?? 'false'
     ).trim().toLowerCase();
 
     return TRUE_VALUES.has(rawValue);
 };
+
 
 export const buildRoleAwareSessionPayload = (payload = {}, selectedRole = 'worker', options = {}) => {
     const { enforceRequestedRole = false, ...extras } = options;

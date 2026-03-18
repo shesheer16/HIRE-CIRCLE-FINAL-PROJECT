@@ -795,6 +795,7 @@ export default function SettingsScreen({ navigation }) {
                             {renderRow('Completed Referrals', String(referralDashboard?.completedReferrals || 0), false, false, null, null, false, null, false, 'Support')}
                             {renderRow('Rewards Granted', String(referralDashboard?.rewardsGranted || 0), false, false, null, null, false, null, false, 'Support')}
                             {renderRow('Send Product Feedback', null, true, false, null, null, true, () => setFeedbackModalVisible(true), false, 'Support')}
+                            {__DEV__ && renderRow('Crash for Sentry', 'Test unhandled error', true, false, null, null, true, () => { throw new Error('Sentry Production Readiness Test'); }, false, 'Support')}
                         </View>
                     </View>
 

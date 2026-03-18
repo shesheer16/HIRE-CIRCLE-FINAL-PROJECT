@@ -202,6 +202,7 @@ const removeReportedTarget = async (report) => {
                 isFlagged: true,
                 trustStatus: 'restricted',
             },
+            $inc: { tokenVersion: 1 },
         });
         return;
     }
@@ -312,6 +313,7 @@ const banUser = async (req, res) => {
                     isFlagged: ban ? true : Boolean(req.body?.isFlagged),
                     trustStatus: ban ? 'restricted' : 'healthy',
                 },
+                $inc: { tokenVersion: 1 },
             },
             { new: true }
         ).select('-password');

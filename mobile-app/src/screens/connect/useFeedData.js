@@ -954,6 +954,23 @@ export function useFeedData({
         }
     }, []);
 
+    const handleBlockUser = useCallback(async (userOrAuthorId) => {
+        const targetId = String(userOrAuthorId || '').trim();
+        if (!targetId || targetId === currentUserId) return { ok: false, message: 'Invalid target.' };
+        try {
+            await client.post(`/api/features/abuse/block/${targetId}`, {}, { __skipApiErrorHandler: true });
+            
+            setFeedPosts((prev) => prev.filter((post) => {
+                const authorId = String(post?.authorId?._id || post?.authorId || post?.user?._id || '').trim();
+                return authorId !== targetId;
+            }));
+            
+            return { ok: true };
+        } catch (_error) {
+            return { ok: false, message: 'Could not block this user right now.' };
+        }
+    }, [currentUserId]);
+
     const resetFeedState = useCallback(() => {
         setComposerOpen(false);
         setComposerMediaType(null);
@@ -1010,7 +1027,7 @@ export function useFeedData({
         handleToggleComment, handleCommentInputChange, handleLoadMoreFeed,
         handleRefreshFeed, handleRetryFeed, closeJobPreview, closeFeedProfile,
         openJobPreviewFromPost, handleOpenFeedProfile, handleVouch,
-        handleDeletePost, handleReportPost, resetFeedState,
+        handleDeletePost, handleReportPost, handleBlockUser, resetFeedState,
         // Filters
         feedVisibility, setFeedVisibility, showSavedOnly, setShowSavedOnly,
         toggleSavedFilter, setVisibility,

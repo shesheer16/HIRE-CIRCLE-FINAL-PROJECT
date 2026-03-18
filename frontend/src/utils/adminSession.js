@@ -1,5 +1,7 @@
 const ADMIN_SESSION_KEY = 'adminSession';
 
+let adminMemoryToken = '';
+
 const getStorage = () => {
   if (typeof window === 'undefined') {
     return null;
@@ -21,7 +23,7 @@ export const getAdminSession = () => {
     }
 
     const parsed = JSON.parse(raw);
-    if (!parsed?.token) {
+    if (!adminMemoryToken) {
       storage.removeItem(ADMIN_SESSION_KEY);
       return null;
     }
@@ -39,14 +41,20 @@ export const setAdminSession = (session) => {
     return;
   }
 
-  storage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+  const { token, ...metadata } = session || {};
+  if (token) {
+    adminMemoryToken = token;
+  }
+
+  storage.setItem(ADMIN_SESSION_KEY, JSON.stringify(metadata));
 };
 
 export const clearAdminSession = () => {
+  adminMemoryToken = '';
   const storage = getStorage();
   storage?.removeItem(ADMIN_SESSION_KEY);
 };
 
-export const getAdminToken = () => getAdminSession()?.token || '';
+export const getAdminToken = () => adminMemoryToken || '';
 
 export const hasAdminSession = () => Boolean(getAdminToken());

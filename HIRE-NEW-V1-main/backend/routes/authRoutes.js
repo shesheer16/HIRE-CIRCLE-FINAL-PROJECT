@@ -76,11 +76,25 @@ const sendOtpLimiter = createRedisRateLimiter({
 const verifyOtpLimiter = createRedisRateLimiter({
     namespace: 'otp-verify',
     windowMs: OTP_REQUEST_WINDOW_MS,
-    max: Number.parseInt(process.env.OTP_VERIFY_RATE_LIMIT_PER_IDENTITY || '20', 10),
+    // CRITICAL: Matches the DB-level 5-attempt block — Redis is the first wall.
+    max: Number.parseInt(process.env.OTP_VERIFY_RATE_LIMIT_PER_IDENTITY || '5', 10),
     keyGenerator: limiterKey,
     strictRedis: String(process.env.NODE_ENV || '').toLowerCase() === 'production',
     message: 'Too many verification attempts. Please try again later.',
 });
+
+// CRITICAL: Reject non-string identity fields before they reach any DB query.
+// Prevents NoSQL injection via objects like { "$gt": "" } in auth payloads.
+const sanitizeIdentity = (req, res, next) => {
+    const body = req.body || {};
+    const fieldsToCheck = ['email', 'phone', 'phoneNumber', 'otp'];
+    for (const field of fieldsToCheck) {
+        if (field in body && typeof body[field] !== 'string' && typeof body[field] !== 'number') {
+            return res.status(400).json({ message: 'Invalid payload structure' });
+        }
+    }
+    return next();
+};
 
 const hashOtp = (otp) => {
     if (!OTP_HMAC_SECRET) {
@@ -247,10 +261,10 @@ const sendOtpHandler = async (req, res) => {
     }
 };
 
-router.post('/send-otp', sendOtpLimiter, validate({ body: otpSendSchema }), sendOtpHandler);
-router.post('/resend-otp', sendOtpLimiter, validate({ body: otpSendSchema }), sendOtpHandler);
+router.post('/send-otp', sendOtpLimiter, sanitizeIdentity, validate({ body: otpSendSchema }), sendOtpHandler);
+router.post('/resend-otp', sendOtpLimiter, sanitizeIdentity, validate({ body: otpSendSchema }), sendOtpHandler);
 
-router.post('/verify-otp', verifyOtpLimiter, validate({ body: otpVerifySchema }), async (req, res) => {
+router.post('/verify-otp', verifyOtpLimiter, sanitizeIdentity, validate({ body: otpVerifySchema }), async (req, res) => {
     const { otp } = req.body || {};
     const identity = resolveOtpIdentity(req.body || {});
     const intent = String(req.body?.intent || '').trim().toLowerCase();
@@ -363,7 +377,9 @@ router.post('/verify-otp', verifyOtpLimiter, validate({ body: otpVerifySchema })
 // Local QA helper: create/login an OTP-verified account for role-flow testing without manual sign-in screen.
 router.post('/dev-bootstrap', async (req, res) => {
     const nodeEnv = String(process.env.NODE_ENV || 'development').toLowerCase();
-    if (nodeEnv === 'production') {
+    const allowBootstrap = String(process.env.ALLOW_DEV_BOOTSTRAP || 'false').toLowerCase() === 'true';
+    
+    if (nodeEnv === 'production' || !allowBootstrap) {
         return res.status(404).json({ message: 'Not found' });
     }
 

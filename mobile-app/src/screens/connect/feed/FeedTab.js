@@ -163,6 +163,7 @@ function FeedTabComponent({
     onCommentInputChange,
     onSubmitComment,
     onReportPost,
+    onBlockUser,
     onDeletePost,
     onOpenAuthorProfile,
     onCloseJobPreview,
@@ -285,6 +286,21 @@ function FeedTabComponent({
         }
         Alert.alert('Report failed', result?.message || 'Could not submit report right now.');
     }, [onReportPost, postActionBusy, postActionPost]);
+
+    const submitBlockUser = useCallback(async () => {
+        if (!postActionPost || postActionBusy) return;
+        const authorId = String(postActionPost?.authorId?._id || postActionPost?.authorId || postActionPost?.user?._id || '').trim();
+        if (!authorId) return;
+        setPostActionBusy(true);
+        const result = await onBlockUser?.(authorId);
+        setPostActionBusy(false);
+        setPostActionPost(null);
+        if (result?.ok) {
+            Alert.alert('Blocked', `You will no longer see content from ${postActionPost?.author || 'this user'}.`);
+            return;
+        }
+        Alert.alert('Block failed', result?.message || 'Could not block this user right now.');
+    }, [onBlockUser, postActionBusy, postActionPost]);
 
     const submitDeletePost = useCallback(async () => {
         if (!postActionPost || postActionBusy || !canDeleteSelectedPost) return;
@@ -509,6 +525,23 @@ function FeedTabComponent({
                                 <Text style={styles.postActionItemHelper}>Flag claims that look false or manipulative.</Text>
                             </View>
                         </TouchableOpacity>
+
+                        {(selectedPostAuthorId && selectedPostAuthorId !== safeCurrentUserId) ? (
+                            <TouchableOpacity
+                                style={styles.postActionItem}
+                                activeOpacity={0.85}
+                                disabled={postActionBusy}
+                                onPress={submitBlockUser}
+                            >
+                                <View style={styles.postActionIconWrap}>
+                                    <Ionicons name="ban-outline" size={17} color="#5f6274" />
+                                </View>
+                                <View style={styles.postActionTextWrap}>
+                                    <Text style={styles.postActionItemText}>Block {postActionPost?.author || 'User'}</Text>
+                                    <Text style={styles.postActionItemHelper}>Hide all current and future posts from this user.</Text>
+                                </View>
+                            </TouchableOpacity>
+                        ) : null}
 
                         {canDeleteSelectedPost ? (
                             <TouchableOpacity

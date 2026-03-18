@@ -86,7 +86,21 @@
           "color": "#5b21b6"
         }
       ],
-      "expo-document-picker"
+      "expo-document-picker",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "HireCircle needs microphone access to record audio with your voice posts and interview videos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HireCircle needs photo library access so you can upload your profile picture and attachments.",
+          "cameraPermission": "HireCircle needs camera access to capture your profile picture."
+        }
+      ],
+      "@sentry/react-native"
     ],
     "extra": {
       "privacyPolicyUrl": "https://hirecircle.in/privacy",

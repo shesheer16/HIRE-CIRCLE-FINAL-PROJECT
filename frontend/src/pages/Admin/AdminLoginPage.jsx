@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import adminApi from '../../utils/adminApi';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { buildApiUrl } from '../../config/api';
 import { hasAdminSession, setAdminSession } from '../../utils/adminSession';
@@ -59,8 +59,8 @@ const AdminLoginPage = () => {
     setError('');
 
     try {
-      const { data } = await axios.post(
-        buildApiUrl('/api/admin/auth/login'),
+      const { data } = await adminApi.post(
+        '/api/admin/auth/login',
         formData,
         {
           headers: {

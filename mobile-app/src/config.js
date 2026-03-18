@@ -69,6 +69,11 @@ const resolveApiBaseUrl = (rawValue) => {
 
 const buildApiBaseCandidates = (rawValue) => {
     const primary = resolveApiBaseUrl(rawValue);
+
+    if (!__DEV__) {
+        return [primary];
+    }
+
     const apiPort = extractPortFromUrl(rawValue || primary);
     const lanHost = resolveExpoLanHost();
     const fallbackPorts = Array.from(new Set([apiPort, DEFAULT_API_PORT, LEGACY_API_PORT].filter(Boolean)));
