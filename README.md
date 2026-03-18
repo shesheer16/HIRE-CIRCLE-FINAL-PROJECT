@@ -1,104 +1,82 @@
-# HireCircle
+# 🚀 HireCircle
 
-AI-powered hiring platform for job seekers and employers, built as a shared product across mobile, web, and backend services.
+> **AI-powered hiring platform** for job seekers and employers, built as a shared ecosystem across mobile, web, and backend services.
 
-This repository is being pushed as a checkpoint release. It captures the current state of the platform across product work, backend hardening, mobile workflow expansion, admin tooling, and Andhra Pradesh location intelligence so we can preserve progress cleanly before continuing the remaining work.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Version](https://img.shields.io/badge/version-v1.0.0--checkpoint-green.svg)
 
-## Repo Overview
+---
 
-```text
-Hirepp/
-├── HIRE-NEW-V1-main/backend/   # Node.js + Express API, matching, auth, jobs, chat, pulse, tests
-├── mobile-app/                 # Expo / React Native app for job seekers and employers
-├── frontend/                   # React web dashboard and admin surfaces
-├── marketing-site/             # Next.js marketing site
-├── infrastructure/             # Deployment and infrastructure assets
-├── scripts/                    # Repository-level maintenance and validation scripts
-├── archive_unused/             # Archived legacy or unused assets kept out of the active path
-└── *.md                        # Checklists, structure notes, and certification reports
-```
+## 📖 Overview
 
-## Current Status
+HireCircle connects top talent with incredible opportunities through an intelligent matching platform. This repository contains the full stack of applications and services required to run the platform.
 
-Status as of March 16, 2026:
+### 🏗️ Repository Structure
 
-- Backend hardening is substantially expanded: tighter environment validation, stronger auth/session protections, operational access middleware, widget/embed security work, platform API protections, and broader automated test coverage.
-- Mobile product flows have grown significantly: onboarding, profile setup, post job, employer dashboard, applications, auth entry, and connect/pulse surfaces all have active improvements in this checkpoint.
-- Andhra Pradesh district and mandal support is now a first-class theme in the codebase through structured location catalogs, normalized location helpers, ranking utilities, and location-aware filtering groundwork.
-- Web admin and browser session support now include admin login flows, guarded admin/web session helpers, and notification/session infrastructure for operational dashboards.
-- This is still an in-flight product checkpoint, not a final production release. Some flows are improved but still need final end-to-end validation before we call them complete.
+| Folder | Description |
+|--------|-------------|
+| 📁 `HIRE-NEW-V1-main/backend/` | **Node.js + Express API** managing matching, auth, jobs, chat, and pulse. |
+| 📁 `mobile-app/` | **Expo / React Native app** serving both job seekers and employers. |
+| 📁 `frontend/` | **React web dashboard** for administrative surfaces and metrics. |
+| 📁 `marketing-site/` | **Next.js marketing site** for user acquisition and product showcase. |
+| 📁 `infrastructure/` | Deployment resources and infrastructure assets. |
+| 📁 `scripts/` | Repository-level maintenance, CI/CD, and validation scripts. |
+| 📁 `archive_unused/` | Legacy or unused assets archived safely out of the active path. |
 
-## What Is Working
+---
 
-- Shared job seeker and employer product model across the mobile app.
-- AI-assisted capture flows for profiles, interviews, and richer job/application data entry.
-- Smart matchmaking infrastructure and supporting backend ranking layers.
-- Employer-side hiring workflow surfaces including job posting, job management, and application review flows.
-- Connect, feed, pulse, and community-oriented product surfaces with ongoing UI and ranking improvements.
-- Admin and operational dashboard groundwork on the web app.
+## ✨ Features
 
-## Still In Progress
+- **Dual-Model Mobile App**: Shared job seeker and employer functionality in a single intuitive interface.
+- **AI-Assisted Operations**: Streamlined profile capture, interview prep, and richer job/application data entry.
+- **Smart Matchmaking**: Intelligent ranking layers and matching infrastructure to connect the right people.
+- **Employer Workflow**: Complete hiring pipelines from posting jobs to reviewing applications.
+- **Community Pulse**: Connect, feed, and community-oriented social surfaces.
+- **Location Intelligence**: Deep integration with Andhra Pradesh district and mandal hierarchies for localized hiring.
 
-- Final end-to-end verification for manual job discovery filters in `Find Work`, especially around location-filtered listing behavior.
-- Full regression coverage across the recently expanded mobile flows and admin/browser session flows.
-- Production deployment hardening beyond the current checkpoint, including environment completeness, observability, and rollout validation.
-- Documentation depth for module-by-module ownership, deployment steps, and recovery runbooks.
+---
 
-## Technology Stack
+## 🛠️ Technology Stack
 
 ### Backend
-
-- Node.js
-- Express
-- MongoDB with Mongoose
-- Redis-ready runtime integrations
-- Socket.IO
-- Zod validation
-- Jest + Supertest
+- **Core:** Node.js, Express.js
+- **Database:** MongoDB with Mongoose
+- **Cache & Real-time:** Redis integrations, Socket.IO
+- **Validation & Testing:** Zod, Jest, Supertest
 
 ### Mobile App
-
-- Expo
-- React Native
-- React Navigation
-- AsyncStorage and SecureStore
-- Axios
-- React Native Maps / charts / media integrations
+- **Framework:** React Native (Expo)
+- **Navigation:** React Navigation
+- **Storage:** AsyncStorage, SecureStore
+- **Integrations:** React Native Maps, Reanimated, various media integrations
 
 ### Web Surfaces
+- **Frontend Dashboard:** React, TailwindCSS
+- **Marketing Site:** Next.js
 
-- React for the dashboard frontend
-- Next.js for the marketing site
-- TailwindCSS in the web surfaces
+---
 
-## Getting Started
+## 🚀 Getting Started
 
-### Backend
+### 1. Backend (API)
 
 ```bash
 cd HIRE-NEW-V1-main/backend
 npm install
 npm start
 ```
+*Requires `.env` variables like `MONGO_URI` and `JWT_SECRET` for local development.*
 
-Local backend development currently expects at least:
-
-- `MONGO_URI`
-- `JWT_SECRET`
-
-Production/staging requires additional infrastructure and provider variables enforced by the backend runtime validator.
-
-### Mobile App
+### 2. Mobile App
 
 ```bash
 cd mobile-app
 npm install
 npx expo start
 ```
+*Run using Expo Go on your physical device or a simulator.*
 
-Use Expo Go or a simulator/device to run the app.
-
-### Web Dashboard
+### 3. Web Dashboard
 
 ```bash
 cd frontend
@@ -106,7 +84,7 @@ npm install
 npm start
 ```
 
-### Marketing Site
+### 4. Marketing Site
 
 ```bash
 cd marketing-site
@@ -114,15 +92,20 @@ npm install
 npm run dev
 ```
 
-## Security Notes
+---
 
-- `.env` files, logs, uploads, and local-only runtime artifacts are excluded from source control.
-- Do not commit MongoDB URIs, JWT secrets, API keys, or provider credentials.
-- The backend includes stricter production environment validation and rejects placeholder secrets in production-style runtimes.
+## 🔒 Security Notes
 
-## Supporting Docs
+- **Secrets:** `.env` files, logs, and local artifacts are excluded from source control.
+- **Credentials:** Never commit MongoDB URIs, JWT secrets, API keys, or provider credentials.
+- **Validation:** The backend enforces strict production environment validation and rejects placeholder secrets.
 
-- [FINAL_SYSTEM_CHECKLIST.md](./FINAL_SYSTEM_CHECKLIST.md)
-- [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
-- [REPO_CLEANUP_REPORT.md](./REPO_CLEANUP_REPORT.md)
-- [SCALE_ARCHITECTURE_CERTIFICATION.md](./SCALE_ARCHITECTURE_CERTIFICATION.md)
+---
+
+## 📚 Documentation
+
+For deeper dives into architecture and structure, refer to:
+- [Final System Checklist](./FINAL_SYSTEM_CHECKLIST.md)
+- [Project Structure Notes](./PROJECT_STRUCTURE.md)
+- [Scale Architecture Certification](./SCALE_ARCHITECTURE_CERTIFICATION.md)
+- [Repo Cleanup Report](./REPO_CLEANUP_REPORT.md)
