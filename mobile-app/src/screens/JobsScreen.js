@@ -1341,49 +1341,6 @@ export default function JobsScreen() {
         setIsMandalFocused(true);
     }, [clearInputBlurTimeout, districtFilter]);
 
-    const handleOpenFilters = useCallback(() => {
-        setDistrictFilter(appliedDistrict);
-        setMandalFilter(appliedMandal);
-        setMinSalaryFilter(appliedMinSalary > 0 ? String(appliedMinSalary) : '');
-        setMinMatchFilter(isMatchProfileMissing ? 0 : appliedMinMatch);
-        setDraftSearchRadiusKm(searchRadiusKm > 0 ? searchRadiusKm : 0);
-        clearInputBlurTimeout('district');
-        clearInputBlurTimeout('mandal');
-        setIsDistrictFocused(false);
-        setIsMandalFocused(false);
-        setFilterModalVisible(true);
-    }, [appliedDistrict, appliedMandal, appliedMinMatch, appliedMinSalary, clearInputBlurTimeout, isMatchProfileMissing, searchRadiusKm]);
-
-    const handleSelectDistrictSuggestion = useCallback((value) => {
-        const safeValue = String(value || '').trim();
-        clearInputBlurTimeout('district');
-        clearInputBlurTimeout('mandal');
-        Keyboard.dismiss();
-        setDistrictFilter(safeValue);
-        setMandalFilter('');
-        setIsDistrictFocused(false);
-        setIsMandalFocused(false);
-    }, [clearInputBlurTimeout]);
-
-    const handleSelectMandalSuggestion = useCallback((value) => {
-        const safeValue = String(value || '').trim();
-        clearInputBlurTimeout('mandal');
-        Keyboard.dismiss();
-        setMandalFilter(safeValue);
-        setIsMandalFocused(false);
-    }, [clearInputBlurTimeout]);
-
-    const handleDistrictFocus = useCallback(() => {
-        clearInputBlurTimeout('district');
-        setIsDistrictFocused(true);
-    }, [clearInputBlurTimeout]);
-
-    const handleMandalFocus = useCallback(() => {
-        if (!String(districtFilter || '').trim()) return;
-        clearInputBlurTimeout('mandal');
-        setIsMandalFocused(true);
-    }, [clearInputBlurTimeout, districtFilter]);
-
     const handleJobPress = useCallback((job) => {
         const scorePercent = getDisplayScorePercent(job);
 

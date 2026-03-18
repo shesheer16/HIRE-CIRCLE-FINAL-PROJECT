@@ -90,7 +90,7 @@ const {
 
 dotenv.config();
 getGeminiApiKey({ required: false });
-console.log('Gemini key loaded:', !!process.env.GOOGLE_API_KEY);
+logger.info('Gemini key loaded:', !!process.env.GOOGLE_API_KEY);
 installConsoleBridge();
 installDatabaseSafetyGuards();
 
@@ -198,6 +198,7 @@ app.use(helmet({
     } : false,
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
 }));
 
 const readBearerToken = (req = {}) => {

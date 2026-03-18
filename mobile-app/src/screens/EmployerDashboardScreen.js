@@ -81,6 +81,9 @@ const collapseDuplicateJobCards = (jobs = []) => {
 };
 
 const MY_JOBS_CACHE_KEY = '@cached_employer_jobs_dashboard';
+const PULSE_CACHE_KEY = '@pulse_cache_v1';
+const FEED_CACHE_PREFIX = '@connect_feed_cache_';
+const CONNECT_REFRESH_REVISION_KEY = '@connect_content_revision';
 const resolveUserCacheSuffix = (user) => {
     const raw = String(user?._id || user?.id || user?.userId || '').trim();
     if (raw) return raw;
@@ -173,6 +176,22 @@ export default function EmployerDashboardScreen({ navigation }) {
     const abortControllerRef = useRef(null);
     const mountedRef = useRef(false);
     const cacheKey = useMemo(() => `${MY_JOBS_CACHE_KEY}:${resolveUserCacheSuffix(user)}`, [user]);
+
+    const invalidateConnectCaches = useCallback(async () => {
+        try {
+            const allKeys = await AsyncStorage.getAllKeys();
+            const removalKeys = allKeys.filter((key) => (
+                key === PULSE_CACHE_KEY
+                || key.startsWith(FEED_CACHE_PREFIX)
+            ));
+            if (removalKeys.length > 0) {
+                await AsyncStorage.multiRemove(removalKeys);
+            }
+            await AsyncStorage.setItem(CONNECT_REFRESH_REVISION_KEY, String(Date.now()));
+        } catch (error) {
+            logger.warn('Could not invalidate Connect caches after job deletion', error?.message || error);
+        }
+    }, []);
 
     React.useEffect(() => {
         if (route.params?.source !== 'job_posted') return;
@@ -544,6 +563,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                             } else {
                                 AsyncStorage.removeItem(cacheKey).catch(() => { });
                             }
+                            await invalidateConnectCaches();
                             Alert.alert('Deleted', 'Job posting removed successfully.');
                             fetchMyJobs({ showLoader: false });
                         } catch (error) {
@@ -556,7 +576,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                 },
             ]
         );
-    }, [actionBusy, cacheKey, fetchMyJobs, jobs]);
+    }, [actionBusy, cacheKey, fetchMyJobs, invalidateConnectCaches, jobs]);
 
     const handleDeleteAllJobs = useCallback(() => {
         if (actionBusy) return;
@@ -577,6 +597,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                             setJobs([]);
                             setShowResponseReminder(false);
                             AsyncStorage.removeItem(cacheKey).catch(() => { });
+                            await invalidateConnectCaches();
                             Alert.alert('Done', 'All your job postings were deleted.');
                             fetchMyJobs({ showLoader: false });
                         } catch (error) {
@@ -589,7 +610,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                 },
             ]
         );
-    }, [actionBusy, cacheKey, fetchMyJobs]);
+    }, [actionBusy, cacheKey, fetchMyJobs, invalidateConnectCaches]);
 
     if (selectedJob) {
         const statusMeta = getJobStatusMeta(selectedJob.status);
@@ -599,8 +620,8 @@ export default function EmployerDashboardScreen({ navigation }) {
                 <View style={styles.screenGlowTop} />
                 <View style={styles.screenGlowBottom} />
                 <View style={[styles.headerShell, { paddingTop: insets.top + 10 }]}>
-                    <View style={styles.topBarShell}>
-                        <View style={styles.topBar}>
+                        <View style={styles.topBarShell}>
+                            <View style={styles.topBar}>
                             <TouchableOpacity
                                 style={styles.topActionButton}
                                 onPress={() => setSelectedJob(null)}
@@ -619,6 +640,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                             >
                                 <Ionicons name="people-outline" size={18} color="#6d28d9" />
                             </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
 

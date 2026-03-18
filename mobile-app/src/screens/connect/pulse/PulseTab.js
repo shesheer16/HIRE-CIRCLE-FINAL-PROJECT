@@ -23,10 +23,6 @@ const PulseGigCard = memo(function PulseGigCardComponent({
         onOpenGigDetails?.(gig);
     }, [gig, onOpenGigDetails]);
 
-    const handleOpenDetails = useCallback(() => {
-        onOpenGigDetails?.(gig);
-    }, [gig, onOpenGigDetails]);
-
     return (
         <View style={styles.gigCard}>
             <View style={styles.gigHeaderRow}>

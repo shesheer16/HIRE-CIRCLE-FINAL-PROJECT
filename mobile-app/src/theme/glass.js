@@ -99,3 +99,5 @@ export const GLASS_SURFACES = {
         borderColor: GLASS_PALETTE.border,
     },
 };
+
+// Circular reference overrides removed.

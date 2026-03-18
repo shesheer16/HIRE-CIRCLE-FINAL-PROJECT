@@ -25,7 +25,7 @@ import CharmTitle from '../components/CharmTitle';
 import client from '../api/client';
 import { validateApplicationsResponse } from '../utils/apiValidator';
 import { useAppStore } from '../store/AppStore';
-import { PALETTE, SCREEN_CHROME, SHADOWS } from '../theme/theme';
+import { PALETTE, SCREEN_CHROME } from '../theme/theme';
 import {
     APPLICATION_FILTER_OPTIONS,
     CHAT_READY_APPLICATION_STATUSES,
@@ -640,15 +640,19 @@ const renderItem = ({ item }) => (
                         </View>
                         <View style={styles.headerControls}>
                             <TouchableOpacity
-                                style={styles.searchToggleBtn}
+                                style={[styles.searchToggleBtn, isSearchOpen && styles.filterBtnActive]}
                                 onPress={isSearchOpen ? closeSearch : openSearch}
                                 activeOpacity={0.7}
                                 hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                             >
-                                <Ionicons name={isSearchOpen ? 'close' : 'search'} size={22} color={PALETTE.textPrimary} />
+                                <Ionicons
+                                    name={isSearchOpen ? 'close' : 'search'}
+                                    size={22}
+                                    color={isSearchOpen ? '#7c3aed' : PALETTE.textPrimary}
+                                />
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={styles.filterBtn}
+                                style={[styles.filterBtn, (showFilterModal || selectedFilter !== 'All') && styles.filterBtnActive]}
                                 onPress={() => {
                                     searchInputRef.current?.blur?.();
                                     setShowFilterModal(true);
@@ -659,7 +663,7 @@ const renderItem = ({ item }) => (
                                 <Ionicons
                                     name="options-outline"
                                     size={22}
-                                    color={PALETTE.textPrimary}
+                                    color={(showFilterModal || selectedFilter !== 'All') ? '#7c3aed' : PALETTE.textPrimary}
                                 />
                             </TouchableOpacity>
                         </View>
@@ -914,45 +918,22 @@ const styles = StyleSheet.create({
         backgroundColor: PALETTE.surface,
     },
     header: {
-        backgroundColor: PALETTE.surface,
+        backgroundColor: '#ffffff',
         paddingHorizontal: 0,
-        paddingBottom: 0,
-    },
-    headerBarShell: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: PALETTE.separator,
-    },
-    employerTopRail: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginTop: 12,
-        paddingHorizontal: 16,
-    },
-    employerSignalChip: {
-        ...SCREEN_CHROME.signalChip,
-    },
-    employerSignalText: {
-        fontSize: 11,
-        fontWeight: '800',
-        color: PALETTE.textSecondary,
-    },
-    headerBarShell: {
-        borderRadius: 0,
+        paddingBottom: 12,
         borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255,255,255,0.18)',
+        borderBottomColor: '#f1f5f9',
+    },
+    headerBarShell: {
         paddingHorizontal: 18,
         paddingVertical: 12,
-        ...SHADOWS.md,
     },
     employerTopRail: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
-        marginTop: 12,
-        paddingHorizontal: 16,
+        marginTop: 10,
+        paddingHorizontal: 18,
     },
     employerSignalChip: {
         ...SCREEN_CHROME.signalChip,
@@ -980,7 +961,7 @@ const styles = StyleSheet.create({
     headerControls: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10,
     },
     searchToggleBtn: {
         width: 40,
@@ -988,20 +969,23 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
     },
     searchDock: {
         marginTop: 12,
-        paddingHorizontal: 16,
+        paddingHorizontal: 18,
     },
     searchWrap: {
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: PALETTE.separator,
-        backgroundColor: PALETTE.surface,
-        borderRadius: 20,
-        paddingHorizontal: 12,
-        minHeight: 44,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+        borderRadius: 22,
+        paddingHorizontal: 14,
+        minHeight: 46,
     },
     searchIcon: {
         color: PALETTE.textSecondary,
@@ -1029,9 +1013,13 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
     },
     filterBtnActive: {
-        backgroundColor: PALETTE.background,
+        backgroundColor: '#ede9fe',
+        borderColor: '#d8b4fe',
     },
     heroCard: {
         ...SCREEN_CHROME.heroSurface,

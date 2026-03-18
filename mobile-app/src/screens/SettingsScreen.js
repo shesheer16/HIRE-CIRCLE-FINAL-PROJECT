@@ -199,6 +199,9 @@ export default function SettingsScreen({ navigation }) {
                 setSubscriptionPlan(planEntry[1]);
             }
             const languageEntry = pairs.find(([key]) => key === '@language_pref');
+            if (languageEntry?.[1]) {
+                setLanguagePref(languageEntry[1]);
+            }
         }).catch((error) => {
             logger.warn('Failed to load notification/language preferences', error?.message || error);
         });
@@ -494,7 +497,6 @@ export default function SettingsScreen({ navigation }) {
         : (pushPermissionStatus === 'expo_go'
             ? 'Use development build'
             : (pushPermissionStatus === 'denied' ? 'Denied' : 'Not set'));
-    const safeFirstName = String(profileHeader.name || 'You').trim().split(/\s+/)[0] || 'You';
     const enabledNotificationCount = [
         notifNewMatches,
         notifMessages,
@@ -597,21 +599,44 @@ export default function SettingsScreen({ navigation }) {
                 </TouchableOpacity>
             </View>
 
-            <View style={styles.profileHeaderCardPremium}>
-                <Image
-                    source={{
-                        uri: profileHeader.avatar ||
-                            `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=f1f5f9&color=0f172a`
-                    }}
-                    style={styles.avatarPremium}
-                />
-                <View style={styles.profileHeaderCopyPremium}>
-                    <Text style={styles.userNamePremium}>{profileHeader.name}</Text>
-                    <Text style={styles.userRolePremium} numberOfLines={1}>
-                        {profileHeader.email || 'Your account details'}
-                    </Text>
+            <LinearGradient
+                colors={['rgba(255,255,255,0.98)', '#f7f4ff']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.profileHeaderCardPremium}
+            >
+                <View style={styles.profileHeaderTopPremium}>
+                    <Image
+                        source={{
+                            uri: profileHeader.avatar ||
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=f1f5f9&color=0f172a`
+                        }}
+                        style={styles.avatarPremium}
+                    />
+                    <View style={styles.profileHeaderCopyPremium}>
+                        <View style={styles.heroBadgeRowPremium}>
+                            <View style={styles.profileRolePillPremium}>
+                                <Ionicons name="shield-checkmark-outline" size={11} color="#6d28d9" />
+                                <Text style={styles.profileRolePillTextPremium}>{profileHeader.role}</Text>
+                            </View>
+                            {subscriptionPlan !== 'free' ? (
+                                <View style={styles.statusBadgePremium}>
+                                    <Text style={styles.statusBadgeTextPremium}>Premium</Text>
+                                </View>
+                            ) : null}
+                            {canSwitchRole ? (
+                                <View style={styles.statusBadgeMutedPremium}>
+                                    <Text style={styles.statusBadgeMutedTextPremium}>Dual mode</Text>
+                                </View>
+                            ) : null}
+                        </View>
+                        <Text style={styles.userNamePremium}>{profileHeader.name}</Text>
+                        <Text style={styles.userRolePremium} numberOfLines={1}>
+                            {profileHeader.email || 'Your account details'}
+                        </Text>
+                    </View>
                 </View>
-                
+
                 <View style={styles.heroStatsPillRowPremium}>
                     {heroStats.map((stat, i) => (
                         <View key={stat.label} style={[styles.heroStatBlockPremium, i !== heroStats.length - 1 && styles.heroStatBorderRightPremium]}>
@@ -619,54 +644,6 @@ export default function SettingsScreen({ navigation }) {
                             <Text style={styles.heroStatLabelPremium}>{stat.label}</Text>
                         </View>
                     ))}
-                </View>
-            </View>
-
-            <LinearGradient colors={['rgba(255,255,255,0.98)', '#f7f4ff']} style={styles.profileHeader}>
-                <View style={styles.profileHeaderTopRow}>
-                    <Image
-                        source={{
-                            uri: profileHeader.avatar ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=7c3aed&color=fff`
-                        }}
-                        style={styles.avatar}
-                    />
-                    <View style={styles.profileHeaderCopy}>
-                        <View style={styles.profileRolePill}>
-                            <Ionicons name="shield-checkmark-outline" size={11} color="#6d28d9" />
-                            <Text style={styles.profileRolePillText}>{profileHeader.role}</Text>
-                        </View>
-                        <Text style={styles.userName}>{profileHeader.name}</Text>
-                        <Text style={styles.userRole} numberOfLines={1}>
-                            {profileHeader.email || 'Account details stay here'}
-                        </Text>
-                    </View>
-                </View>
-
-                <View style={styles.heroStatsRow}>
-                    {heroStats.map((stat) => (
-                        <View key={stat.label} style={styles.heroStatCard}>
-                            <Text style={styles.heroStatValue}>{stat.value}</Text>
-                            <Text style={styles.heroStatLabel}>{stat.label}</Text>
-                        </View>
-                    ))}
-                </View>
-
-                <View style={styles.heroActionRow}>
-                    {subscriptionPlan !== 'free' ? (
-                        <View style={styles.premiumBadge}>
-                            <Text style={styles.premiumBadgeText}>PREMIUM</Text>
-                        </View>
-                    ) : (
-                        <View style={styles.neutralBadge}>
-                            <Text style={styles.neutralBadgeText}>Core plan</Text>
-                        </View>
-                    )}
-                    {canSwitchRole ? (
-                        <View style={styles.neutralBadge}>
-                            <Text style={styles.neutralBadgeText}>Hybrid ready</Text>
-                        </View>
-                    ) : null}
                 </View>
             </LinearGradient>
         </View>
@@ -735,7 +712,10 @@ export default function SettingsScreen({ navigation }) {
             <LinearGradient colors={['rgba(241,245,249,1)', 'rgba(248,250,252,1)']} style={StyleSheet.absoluteFillObject} />
             <View style={styles.screenGlowTop} />
             
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContentPremium}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[styles.scrollContentPremium, { paddingBottom: insets.bottom + 132 }]}
+            >
                 {renderHeader()}
 
                 {roleSwitchMessage ? (
@@ -882,7 +862,7 @@ export default function SettingsScreen({ navigation }) {
                 onClose={() => setFeedbackModalVisible(false)}
                 onSubmit={handleSubmitFeedback}
             />
-        </LinearGradient>
+        </View>
     );
 }
 
@@ -973,29 +953,81 @@ const styles = StyleSheet.create({
     profileHeaderCardPremium: {
         marginHorizontal: 16,
         marginTop: 4,
-        paddingVertical: 24,
+        paddingVertical: 22,
         paddingHorizontal: 20,
-        backgroundColor: '#ffffff',
         borderRadius: 24,
-        alignItems: 'center',
         ...SHADOWS.md,
     },
-    profileHeaderCopyPremium: {
+    profileHeaderTopPremium: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 16,
+    },
+    profileHeaderCopyPremium: {
+        flex: 1,
+        marginLeft: 16,
     },
     avatarPremium: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
+        width: 82,
+        height: 82,
+        borderRadius: 41,
         backgroundColor: '#f8fafc',
+    },
+    heroBadgeRowPremium: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        marginBottom: 10,
+        gap: 8,
+    },
+    profileRolePillPremium: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        backgroundColor: '#ede9fe',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        gap: 5,
+    },
+    profileRolePillTextPremium: {
+        color: '#6d28d9',
+        fontSize: 11,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 0.55,
+    },
+    statusBadgePremium: {
+        backgroundColor: '#dcfce7',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    statusBadgeTextPremium: {
+        color: '#15803d',
+        fontSize: 11,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 0.55,
+    },
+    statusBadgeMutedPremium: {
+        backgroundColor: '#eef2ff',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    statusBadgeMutedTextPremium: {
+        color: '#4f46e5',
+        fontSize: 11,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 0.55,
     },
     userNamePremium: {
         fontSize: 22,
         fontWeight: '700',
         color: '#0f172a',
         letterSpacing: -0.4,
-        marginBottom: 4,
+        marginBottom: 2,
     },
     userRolePremium: {
         color: '#64748b',
@@ -1004,7 +1036,7 @@ const styles = StyleSheet.create({
     },
     heroStatsPillRowPremium: {
         flexDirection: 'row',
-        marginTop: 24,
+        marginTop: 20,
         backgroundColor: '#f8fafc',
         borderRadius: 16,
         paddingVertical: 12,
@@ -1039,7 +1071,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
     },
     sectionCardPremium: {
-        marginBottom: 28,
+        marginBottom: 20,
     },
     sectionHeaderBgPremium: {
         paddingHorizontal: 12,
@@ -1092,14 +1124,17 @@ const styles = StyleSheet.create({
     rowRightPremium: {
         flexDirection: 'row',
         alignItems: 'center',
-        flexShrink: 0,
+        flexShrink: 1,
+        maxWidth: '46%',
         paddingLeft: 12,
+        justifyContent: 'flex-end',
     },
     rowValuePremium: {
         fontSize: 15,
         color: '#64748b',
         fontWeight: '500',
-        maxWidth: 120,
+        maxWidth: 160,
+        textAlign: 'right',
     },
     signOutButtonPremium: {
         flexDirection: 'row',

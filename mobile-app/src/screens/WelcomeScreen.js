@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useRef } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -94,6 +94,8 @@ export default function WelcomeScreen({ navigation }) {
     const contentOpacity = useRef(new Animated.Value(0)).current;
     const contentTranslateY = useRef(new Animated.Value(14)).current;
     const heroOpacity = useRef(new Animated.Value(0)).current;
+    const [shouldRenderVideo, setShouldRenderVideo] = useState(false);
+    const [videoUnavailable, setVideoUnavailable] = useState(false);
 
     const handleGetStarted = useCallback(async () => {
         await completeOnboarding();
@@ -147,17 +149,34 @@ export default function WelcomeScreen({ navigation }) {
         return () => loop.stop();
     }, [heroOpacity]);
 
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setShouldRenderVideo(true);
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, []);
+
     return (
         <View style={styles.container}>
             <StatusBar hidden style="light" />
-            <Video
-                source={require('../../assets/onboarding/starfield.mp4')}
+            <LinearGradient
+                colors={['#04070d', '#0b1220', '#120f1f']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFill}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay
-                isLooping
-                isMuted
             />
+            {shouldRenderVideo && !videoUnavailable ? (
+                <Video
+                    source={require('../../assets/onboarding/starfield.mp4')}
+                    style={StyleSheet.absoluteFill}
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay
+                    isLooping
+                    isMuted
+                    onError={() => setVideoUnavailable(true)}
+                />
+            ) : null}
             <LinearGradient
                 colors={['rgba(168,85,247,0.16)', 'rgba(0,0,0,0)']}
                 start={{ x: 0.15, y: 0 }}

@@ -814,7 +814,7 @@ export default function TalentScreen({ navigation, route }) {
                         </View>
                     </View>
                 </Modal>
-            </LinearGradient>
+            </View>
         );
     }
 
@@ -971,7 +971,7 @@ export default function TalentScreen({ navigation, route }) {
                         />
                     )}
                 </View>
-            </LinearGradient>
+            </View>
         );
     }
 

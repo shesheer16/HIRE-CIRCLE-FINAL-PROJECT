@@ -549,6 +549,18 @@ const authUser = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    const isMatch = await user.matchPassword(password);
+    
+    if (!isMatch) {
+      user.loginAttempts = (user.loginAttempts || 0) + 1;
+      if (user.loginAttempts >= 5) {
+        user.lockUntil = Date.now() + 15 * 60 * 1000; // 15 mins lock
+      }
+      await user.save({ validateBeforeSave: false });
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // Password is correct. Now we can safely check account state.
     if (user.isDeleted) {
       return res.status(403).json({ message: 'Account is deleted. Contact support if this is unexpected.' });
     }
@@ -569,44 +581,33 @@ const authUser = async (req, res) => {
       });
     }
 
-    if (await user.matchPassword(password)) {
-      applyRoleContractToUser(user);
-      // Success: Reset attempts
-      user.loginAttempts = 0;
-      user.lockUntil = undefined;
-      upsertDeviceSession({
-        user,
-        deviceId,
-        platform: devicePlatform,
-      });
-      await user.save();
+    // Success: Reset attempts
+    applyRoleContractToUser(user);
+    user.loginAttempts = 0;
+    user.lockUntil = undefined;
+    upsertDeviceSession({
+      user,
+      deviceId,
+      platform: devicePlatform,
+    });
+    await user.save({ validateBeforeSave: false });
 
-      const accessToken = generateToken(user._id, {
-        tokenVersion: resolveTokenVersion(user.tokenVersion),
-      });
-      const refreshToken = generateRefreshToken(user._id, {
-        tokenVersion: resolveTokenVersion(user.tokenVersion),
-      });
+    const accessToken = generateToken(user._id, {
+      tokenVersion: resolveTokenVersion(user.tokenVersion),
+    });
+    const refreshToken = generateRefreshToken(user._id, {
+      tokenVersion: resolveTokenVersion(user.tokenVersion),
+    });
 
-      if (isBrowserSessionRequest(req)) {
-        setRefreshTokenCookie(req, res, refreshToken);
-      }
-
-      res.json(buildAuthPayload(user, {
-        accessToken,
-        refreshToken,
-        includeRefreshToken: !isBrowserSessionRequest(req),
-      }));
-    } else {
-      // Failure: Increment attempts
-      user.loginAttempts += 1;
-      if (user.loginAttempts >= 5) {
-        user.lockUntil = Date.now() + 15 * 60 * 1000; // 15 mins lock
-      }
-      await user.save();
-
-      res.status(401).json({ message: 'Invalid email or password' });
+    if (isBrowserSessionRequest(req)) {
+      setRefreshTokenCookie(req, res, refreshToken);
     }
+
+    res.json(buildAuthPayload(user, {
+      accessToken,
+      refreshToken,
+      includeRefreshToken: !isBrowserSessionRequest(req),
+    }));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

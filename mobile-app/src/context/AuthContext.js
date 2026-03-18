@@ -83,19 +83,22 @@ const isSecureStoreAvailable = async () => {
     return secureStoreAvailable;
 };
 
+const memoryStore = new Map();
+
 const setSecureItem = async (key, value) => {
     if (await isSecureStoreAvailable()) {
         await SecureStore.setItemAsync(key, value);
         return;
     }
-    await AsyncStorage.setItem(key, value);
+    // Security Fix: Do NOT fallback to storing JWTs in unencrypted AsyncStorage
+    memoryStore.set(key, value);
 };
 
 const getSecureItem = async (key) => {
     if (await isSecureStoreAvailable()) {
         return await SecureStore.getItemAsync(key);
     }
-    return await AsyncStorage.getItem(key);
+    return memoryStore.get(key) || null;
 };
 
 const deleteSecureItem = async (key) => {
@@ -103,7 +106,7 @@ const deleteSecureItem = async (key) => {
         await SecureStore.deleteItemAsync(key);
         return;
     }
-    await AsyncStorage.removeItem(key);
+    memoryStore.delete(key);
 };
 
 export const AuthProvider = ({ children }) => {

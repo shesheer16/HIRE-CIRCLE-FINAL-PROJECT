@@ -199,7 +199,14 @@ const consumeRefreshToken = async (token, reason = 'rotated_refresh_token') => {
     const claimed = await claimRefreshTokenUse({ jti, exp, reason });
 
     if (!claimed) {
-        const error = new Error('Refresh token already used');
+        try {
+            const User = require('../models/userModel');
+            await User.findByIdAndUpdate(decoded.id, { $inc: { tokenVersion: 1 } });
+            logger.warn({ event: 'refresh_token_reuse_detected', message: `Revoked token family for user ${decoded.id}` });
+        } catch (revokeErr) {
+            logger.error({ event: 'refresh_token_revoke_failed', message: revokeErr.message });
+        }
+        const error = new Error('Refresh token compromise detected. Session revoked.');
         error.statusCode = 401;
         throw error;
     }

@@ -1,27 +1,34 @@
 import React, { useCallback, useContext, useMemo, useState } from 'react';
 import {
-    ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
-    ScrollView, StyleSheet, Text, TextInput,
-    TouchableOpacity, View,
+    ActivityIndicator,
+    Alert,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+
 import client from '../api/client';
+import AuthScreenShell from '../components/auth/AuthScreenShell';
 import { AuthContext } from '../context/AuthContext';
 import {
-    buildRoleAwareSessionPayload, getAuthAccountLabel,
-    isQaRoleBootstrapEnabled, resolveSelectedRoleSession,
+    buildRoleAwareSessionPayload,
+    getAuthAccountLabel,
+    isEmployerFacingSelectedRole,
+    isQaRoleBootstrapEnabled,
+    resolveSelectedRoleSession,
 } from '../utils/authRoleSelection';
 import { buildPreviewAuthSession, isInstantPreviewAuthEnabled } from '../utils/previewAuthSession';
-import { PALETTE, RADIUS, SPACING, SHADOWS } from '../theme/theme';
+import { PALETTE, RADIUS, SHADOWS } from '../theme/theme';
 import { handleAuthBackNavigation } from '../utils/authNavigation';
 
 const QA_ROLE_BOOTSTRAP_ENABLED = isQaRoleBootstrapEnabled();
 const INSTANT_PREVIEW_AUTH_ENABLED = isInstantPreviewAuthEnabled();
 
 export default function LoginScreen({ navigation, route }) {
-    const insets = useSafeAreaInsets();
     const { login } = useContext(AuthContext);
     const selectedSession = useMemo(
         () => resolveSelectedRoleSession(route?.params?.selectedRole || 'worker'),
@@ -29,6 +36,7 @@ export default function LoginScreen({ navigation, route }) {
     );
     const selectedRole = selectedSession.selectedRole;
     const accountLabel = useMemo(() => getAuthAccountLabel(selectedRole), [selectedRole]);
+    const isEmployer = useMemo(() => isEmployerFacingSelectedRole(selectedRole), [selectedRole]);
 
     const [authMode, setAuthMode] = useState('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -37,13 +45,30 @@ export default function LoginScreen({ navigation, route }) {
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
-    const subtitleText = useMemo(
-        () => `Sign in to your ${accountLabel} account`,
-        [accountLabel]
+    const isPhonePreviewOnly = authMode === 'phone' && !QA_ROLE_BOOTSTRAP_ENABLED;
+    const screenTitle = useMemo(
+        () => (isEmployer
+            ? 'Sign in to your hiring workspace'
+            : 'Sign in to keep your work search moving'),
+        [isEmployer]
     );
+    const screenSubtitle = useMemo(
+        () => (isEmployer
+            ? 'Open your jobs, review talent, and move applicants forward from one place.'
+            : 'Check live matches, follow every application, and get back to opportunities faster.'),
+        [isEmployer]
+    );
+    const panelSubtitle = useMemo(() => {
+        if (authMode === 'phone') {
+            return QA_ROLE_BOOTSTRAP_ENABLED
+                ? 'Use the mobile number linked to your account.'
+                : 'Phone access is preview-only in this build. Switch to email for server sign in.';
+        }
+        return 'Use the email and password already linked to your account.';
+    }, [authMode]);
 
     const canSubmit = authMode === 'phone'
-        ? Boolean(String(phoneNumber || '').trim() && String(password || '').trim())
+        ? Boolean(QA_ROLE_BOOTSTRAP_ENABLED && String(phoneNumber || '').trim() && String(password || '').trim())
         : Boolean(String(email || '').trim() && String(password || '').trim());
 
     const handleBack = useCallback(() => {
@@ -137,8 +162,15 @@ export default function LoginScreen({ navigation, route }) {
             setLoading(false);
         }
     }, [
-        authMode, canSubmit, email, loading, login,
-        password, phoneNumber, selectedRole, selectedSession.requestedActiveRole,
+        authMode,
+        canSubmit,
+        email,
+        loading,
+        login,
+        password,
+        phoneNumber,
+        selectedRole,
+        selectedSession.requestedActiveRole,
     ]);
 
     const openForgotPassword = useCallback(() => {
@@ -150,489 +182,348 @@ export default function LoginScreen({ navigation, route }) {
     }, [navigation, selectedRole]);
 
     return (
-        <View style={styles.container}>
-            <View pointerEvents="none" style={styles.bgOrbTop} />
-            <View pointerEvents="none" style={styles.bgOrbBottom} />
-            <KeyboardAvoidingView
-                style={styles.flex}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            >
-                <ScrollView
-                    showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="always"
-                    contentContainerStyle={[
-                        styles.scrollContent,
-                        { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 },
-                    ]}
-                >
-                    {/* Back button */}
-                    <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.7}>
-                        <Ionicons name="chevron-back" size={22} color={PALETTE.textPrimary} />
+        <AuthScreenShell
+            selectedRole={selectedRole}
+            modeLabel="Sign in"
+            title={screenTitle}
+            subtitle={screenSubtitle}
+            onBack={handleBack}
+            footer={(
+                <View style={styles.footerWrap}>
+                    <Text style={styles.footerText}>New to HireCircle?</Text>
+                    <TouchableOpacity activeOpacity={0.75} onPress={openSignUp}>
+                        <Text style={styles.footerLink}>Create {accountLabel} account</Text>
                     </TouchableOpacity>
+                </View>
+            )}
+        >
+            <Text style={styles.sectionEyebrow}>Access details</Text>
+            <Text style={styles.sectionTitle}>{authMode === 'phone' ? 'Continue with phone' : 'Continue with email'}</Text>
+            <Text style={styles.sectionSubtitle}>{panelSubtitle}</Text>
 
-                    <View style={styles.heroCard}>
-                        <LinearGradient
-                            colors={[PALETTE.accent, PALETTE.accentDeep]}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={styles.heroAccent}
+            <View style={styles.segmentWrap}>
+                <TouchableOpacity
+                    style={[styles.segmentBtn, authMode === 'phone' && styles.segmentBtnActive]}
+                    activeOpacity={0.85}
+                    onPress={() => setAuthMode('phone')}
+                >
+                    <Ionicons name="call-outline" size={15} color={authMode === 'phone' ? PALETTE.accentDeep : '#64748b'} />
+                    <Text style={[styles.segmentText, authMode === 'phone' && styles.segmentTextActive]}>Phone</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.segmentBtn, authMode === 'email' && styles.segmentBtnActive]}
+                    activeOpacity={0.85}
+                    onPress={() => setAuthMode('email')}
+                >
+                    <Ionicons name="mail-outline" size={15} color={authMode === 'email' ? PALETTE.accentDeep : '#64748b'} />
+                    <Text style={[styles.segmentText, authMode === 'email' && styles.segmentTextActive]}>Email</Text>
+                </TouchableOpacity>
+            </View>
+
+            {isPhonePreviewOnly ? (
+                <View style={styles.noticeCard}>
+                    <Ionicons name="information-circle-outline" size={16} color="#7c3aed" />
+                    <Text style={styles.noticeText}>Phone sign in is preview-only here. Use email for live authentication.</Text>
+                </View>
+            ) : null}
+
+            <View style={styles.formBlock}>
+                {authMode === 'phone' ? (
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Phone number</Text>
+                        <View style={styles.phoneShell}>
+                            <View style={styles.countryCode}>
+                                <Ionicons name="phone-portrait-outline" size={15} color="#64748b" />
+                                <Text style={styles.countryCodeText}>+91</Text>
+                            </View>
+                            <TextInput
+                                style={styles.phoneInput}
+                                value={phoneNumber}
+                                onChangeText={setPhoneNumber}
+                                keyboardType="phone-pad"
+                                placeholder="98765 43210"
+                                placeholderTextColor={PALETTE.textTertiary}
+                                maxLength={15}
+                            />
+                        </View>
+                    </View>
+                ) : (
+                    <View style={styles.fieldGroup}>
+                        <Text style={styles.fieldLabel}>Email address</Text>
+                        <View style={styles.fieldShell}>
+                            <Ionicons name="mail-outline" size={17} color="#64748b" style={styles.fieldIcon} />
+                            <TextInput
+                                style={styles.fieldInput}
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                                placeholder="you@example.com"
+                                placeholderTextColor={PALETTE.textTertiary}
+                            />
+                        </View>
+                    </View>
+                )}
+
+                <View style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>Password</Text>
+                    <View style={styles.fieldShell}>
+                        <Ionicons name="lock-closed-outline" size={17} color="#64748b" style={styles.fieldIcon} />
+                        <TextInput
+                            style={styles.fieldInput}
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry={!showPassword}
+                            placeholder="Enter password"
+                            placeholderTextColor={PALETTE.textTertiary}
                         />
-                        <View style={styles.logoSection}>
-                            <View style={styles.logoMark}>
-                                <View style={styles.logoRingOuter} />
-                                <View style={styles.logoRingMid} />
-                                <View style={styles.logoRingInner} />
-                                <View style={styles.logoDot} />
-                            </View>
-                        </View>
-                        <View style={styles.heroBadge}>
-                            <Ionicons name="sparkles-outline" size={14} color={PALETTE.accentDeep} />
-                            <Text style={styles.heroBadgeText}>{accountLabel} sign in</Text>
-                        </View>
-                        <Text style={styles.title}>Welcome back</Text>
-                        <Text style={styles.subtitle}>{subtitleText}</Text>
-                    </View>
-
-                    <View style={styles.formCard}>
-                        {/* Segment control */}
-                        <View style={styles.segmentWrap}>
-                            <TouchableOpacity
-                                style={[styles.segmentBtn, authMode === 'phone' && styles.segmentBtnActive]}
-                                activeOpacity={0.85}
-                                onPress={() => setAuthMode('phone')}
-                            >
-                                <Text style={[styles.segmentText, authMode === 'phone' && styles.segmentTextActive]}>Phone</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.segmentBtn, authMode === 'email' && styles.segmentBtnActive]}
-                                activeOpacity={0.85}
-                                onPress={() => setAuthMode('email')}
-                            >
-                                <Text style={[styles.segmentText, authMode === 'email' && styles.segmentTextActive]}>Email</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Form fields */}
-                        <View style={styles.formBlock}>
-                        {authMode === 'phone' ? (
-                            <View>
-                                <Text style={styles.fieldLabel}>Phone number</Text>
-                                <View style={styles.phoneRow}>
-                                    <View style={styles.countryCode}>
-                                        <Text style={styles.countryCodeText}>+91</Text>
-                                    </View>
-                                    <TextInput
-                                        style={styles.phoneInput}
-                                        value={phoneNumber}
-                                        onChangeText={setPhoneNumber}
-                                        keyboardType="phone-pad"
-                                        placeholder="98765 43210"
-                                        placeholderTextColor={PALETTE.textTertiary}
-                                        maxLength={15}
-                                    />
-                                </View>
-                            </View>
-                        ) : (
-                            <View>
-                                <Text style={styles.fieldLabel}>Email address</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    value={email}
-                                    onChangeText={setEmail}
-                                    autoCapitalize="none"
-                                    keyboardType="email-address"
-                                    placeholder="you@example.com"
-                                    placeholderTextColor={PALETTE.textTertiary}
-                                />
-                            </View>
-                        )}
-
-                        <View>
-                            <Text style={styles.fieldLabel}>Password</Text>
-                            <View style={styles.passwordRow}>
-                                <TextInput
-                                    style={styles.passwordInput}
-                                    value={password}
-                                    onChangeText={setPassword}
-                                    secureTextEntry={!showPassword}
-                                    placeholder="Enter password"
-                                    placeholderTextColor={PALETTE.textTertiary}
-                                />
-                                <TouchableOpacity
-                                    style={styles.eyeBtn}
-                                    onPress={() => setShowPassword((p) => !p)}
-                                    activeOpacity={0.7}
-                                >
-                                    <Ionicons
-                                        name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                                        size={20}
-                                        color={PALETTE.textTertiary}
-                                    />
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-
-                        {/* Forgot password */}
                         <TouchableOpacity
-                            style={styles.forgotTap}
+                            style={styles.trailingBtn}
+                            onPress={() => setShowPassword((prev) => !prev)}
                             activeOpacity={0.7}
-                            onPress={openForgotPassword}
                         >
-                            <Text style={styles.forgotText}>Forgot password?</Text>
-                        </TouchableOpacity>
-
-                        {/* Submit */}
-                        <TouchableOpacity
-                            style={[styles.submitBtn, (!canSubmit || loading) && styles.submitBtnDisabled]}
-                            activeOpacity={0.88}
-                            onPress={handleSubmit}
-                            disabled={!canSubmit || loading}
-                        >
-                            <LinearGradient
-                                colors={['#C084FC', PALETTE.accent, PALETTE.accentDeep]}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.submitGradient}
-                            >
-                                {loading ? (
-                                    <ActivityIndicator size="small" color="#FFFFFF" />
-                                ) : (
-                                    <Text style={styles.submitText}>Sign In</Text>
-                                )}
-                            </LinearGradient>
-                        </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/* Divider */}
-                    <View style={styles.dividerRow}>
-                        <View style={styles.dividerLine} />
-                        <Text style={styles.dividerText}>or</Text>
-                        <View style={styles.dividerLine} />
-                    </View>
-
-                    {/* Footer */}
-                    <View style={styles.footerRow}>
-                        <Text style={styles.footerText}>Don't have an account?{' '}</Text>
-                        <TouchableOpacity activeOpacity={0.7} onPress={openSignUp}>
-                            <Text style={styles.footerLink}>Sign Up</Text>
+                            <Ionicons
+                                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                                size={19}
+                                color={PALETTE.textSecondary}
+                            />
                         </TouchableOpacity>
                     </View>
-                </ScrollView>
-            </KeyboardAvoidingView>
-        </View>
+                </View>
+            </View>
+
+            <View style={styles.utilityRow}>
+                <TouchableOpacity activeOpacity={0.75} onPress={openForgotPassword}>
+                    <Text style={styles.utilityLink}>Forgot password?</Text>
+                </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+                style={[styles.submitBtn, (!canSubmit || loading) && styles.submitBtnDisabled]}
+                activeOpacity={0.9}
+                onPress={handleSubmit}
+                disabled={!canSubmit || loading}
+            >
+                <LinearGradient
+                    colors={['#c084fc', PALETTE.accent, PALETTE.accentDeep]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.submitGradient}
+                >
+                    {loading ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                        <Text style={styles.submitText}>Sign In</Text>
+                    )}
+                </LinearGradient>
+            </TouchableOpacity>
+
+            <View style={styles.inlineMetaRow}>
+                <Ionicons name="shield-checkmark-outline" size={14} color="#7c3aed" />
+                <Text style={styles.inlineMetaText}>Secure access for your {accountLabel.toLowerCase()} workspace.</Text>
+            </View>
+        </AuthScreenShell>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: PALETTE.background,
+    sectionEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+        color: '#7c3aed',
+        marginBottom: 8,
     },
-    bgOrbTop: {
-        position: 'absolute',
-        top: -120,
-        right: -80,
-        width: 240,
-        height: 240,
-        borderRadius: 120,
-        backgroundColor: PALETTE.accentTint,
-        opacity: 0.6,
-    },
-    bgOrbBottom: {
-        position: 'absolute',
-        bottom: -140,
-        left: -90,
-        width: 260,
-        height: 260,
-        borderRadius: 130,
-        backgroundColor: PALETTE.accentSoft,
-        opacity: 0.6,
-    },
-    flex: { flex: 1 },
-    scrollContent: {
-        flexGrow: 1,
-        paddingHorizontal: 24,
-    },
-    // Back
-    backBtn: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-        alignSelf: 'flex-start',
-        marginBottom: 16,
-    },
-    heroCard: {
-        backgroundColor: PALETTE.background,
-        borderRadius: RADIUS.xl,
-        paddingVertical: 22,
-        paddingHorizontal: 18,
-        borderWidth: 1,
-        borderColor: PALETTE.border,
-        marginBottom: 16,
-        overflow: 'hidden',
-        ...SHADOWS.md,
-    },
-    heroAccent: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
-    heroBadge: {
-        alignSelf: 'center',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: RADIUS.full,
-        backgroundColor: PALETTE.accentTint,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: PALETTE.accentBorder,
-        marginBottom: 12,
-    },
-    heroBadgeText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: PALETTE.accentDeep,
-    },
-    // Logo
-    logoSection: {
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    logoMark: {
-        width: 64,
-        height: 64,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    logoRingOuter: {
-        position: 'absolute',
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        borderWidth: 2.5,
-        borderColor: PALETTE.accent,
-    },
-    logoRingMid: {
-        position: 'absolute',
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        borderWidth: 2.5,
-        borderColor: PALETTE.accentMid,
-    },
-    logoRingInner: {
-        position: 'absolute',
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 2.5,
-        borderColor: PALETTE.accentDeep,
-    },
-    logoDot: {
-        width: 6, height: 6, borderRadius: 3,
-        backgroundColor: PALETTE.accentDeep,
-    },
-    // Title
-    title: {
-        fontSize: 26,
+    sectionTitle: {
+        fontSize: 21,
         fontWeight: '800',
         color: PALETTE.textPrimary,
-        textAlign: 'center',
         letterSpacing: -0.4,
     },
-    subtitle: {
+    sectionSubtitle: {
         marginTop: 6,
-        fontSize: 13.5,
-        fontWeight: '500',
-        color: PALETTE.textSecondary,
-        textAlign: 'center',
-        lineHeight: 19,
+        marginBottom: 18,
+        fontSize: 14,
+        lineHeight: 21,
+        color: '#64748b',
     },
-    formCard: {
-        backgroundColor: PALETTE.background,
-        borderRadius: RADIUS.xl,
-        paddingHorizontal: 18,
-        paddingVertical: 16,
-        borderWidth: 1,
-        borderColor: PALETTE.border,
-        ...SHADOWS.md,
-    },
-    // Segment
     segmentWrap: {
         flexDirection: 'row',
-        backgroundColor: PALETTE.backgroundSoft,
-        borderRadius: RADIUS.md,
-        padding: 4,
-        marginBottom: 18,
-        borderWidth: 1,
-        borderColor: PALETTE.borderLight,
+        gap: 10,
+        marginBottom: 16,
     },
     segmentBtn: {
         flex: 1,
+        minHeight: 48,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: 44,
-        borderRadius: RADIUS.sm,
+        gap: 8,
     },
     segmentBtnActive: {
-        backgroundColor: PALETTE.background,
-        borderWidth: 1,
-        borderColor: PALETTE.borderLight,
+        backgroundColor: '#f3e8ff',
+        borderColor: '#d8b4fe',
         ...SHADOWS.sm,
     },
     segmentText: {
         fontSize: 14,
-        fontWeight: '600',
-        color: PALETTE.textSecondary,
+        fontWeight: '700',
+        color: '#64748b',
     },
     segmentTextActive: {
-        color: PALETTE.textPrimary,
-        fontWeight: '700',
+        color: PALETTE.accentDeep,
     },
-    // Form
+    noticeCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#ddd6fe',
+        backgroundColor: '#faf5ff',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        marginBottom: 16,
+    },
+    noticeText: {
+        flex: 1,
+        fontSize: 12.5,
+        lineHeight: 18,
+        color: '#6d28d9',
+        fontWeight: '600',
+    },
     formBlock: {
         gap: 16,
     },
+    fieldGroup: {
+        gap: 8,
+    },
     fieldLabel: {
-        marginBottom: 8,
         fontSize: 13,
         fontWeight: '700',
-        color: PALETTE.textSecondary,
+        color: '#475569',
     },
-    phoneRow: {
-        ...GLASS_SURFACES.input,
+    phoneShell: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderRadius: RADIUS.md,
+        minHeight: 54,
+        borderRadius: 18,
         borderWidth: 1,
-        borderColor: PALETTE.border,
-        backgroundColor: PALETTE.surface2,
-        minHeight: 50,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
         overflow: 'hidden',
     },
     countryCode: {
+        minHeight: 54,
         paddingHorizontal: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
         borderRightWidth: 1,
-        borderRightColor: PALETTE.border,
-        backgroundColor: PALETTE.surface3,
-        justifyContent: 'center',
-        minHeight: 50,
+        borderRightColor: '#e2e8f0',
+        backgroundColor: '#f1f5f9',
     },
     countryCodeText: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: PALETTE.textSecondary,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#475569',
     },
     phoneInput: {
         flex: 1,
         paddingHorizontal: 14,
         fontSize: 15,
-        fontWeight: '400',
         color: PALETTE.textPrimary,
     },
-    input: {
-        borderRadius: RADIUS.md,
-        borderWidth: 1,
-        borderColor: PALETTE.border,
-        backgroundColor: PALETTE.surface2,
-        minHeight: 50,
-        paddingHorizontal: 14,
-        fontSize: 15,
-        fontWeight: '400',
-        color: PALETTE.textPrimary,
-    },
-    passwordRow: {
+    fieldShell: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderRadius: RADIUS.md,
+        minHeight: 54,
+        borderRadius: 18,
         borderWidth: 1,
-        borderColor: PALETTE.border,
-        backgroundColor: PALETTE.surface2,
-        minHeight: 50,
-        overflow: 'hidden',
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
     },
-    passwordInput: {
+    fieldIcon: {
+        marginLeft: 14,
+    },
+    fieldInput: {
         flex: 1,
-        paddingHorizontal: 14,
+        paddingLeft: 10,
+        paddingRight: 12,
         fontSize: 15,
-        fontWeight: '400',
         color: PALETTE.textPrimary,
     },
-    eyeBtn: {
-        width: 44,
-        height: 44,
+    trailingBtn: {
+        width: 42,
+        height: 42,
         alignItems: 'center',
         justifyContent: 'center',
+        marginRight: 4,
     },
-    forgotTap: {
-        alignSelf: 'flex-end',
-        minHeight: 44,
-        justifyContent: 'center',
+    utilityRow: {
+        marginTop: 14,
+        marginBottom: 18,
+        alignItems: 'flex-end',
     },
-    forgotText: {
+    utilityLink: {
         fontSize: 14,
-        fontWeight: '600',
+        fontWeight: '700',
         color: PALETTE.accentDeep,
     },
-    // Submit
     submitBtn: {
         borderRadius: RADIUS.full,
         overflow: 'hidden',
-        marginTop: 6,
         ...SHADOWS.accent,
     },
     submitBtnDisabled: {
-        opacity: 0.50,
+        opacity: 0.5,
     },
     submitGradient: {
-        minHeight: 52,
+        minHeight: 54,
+        borderRadius: RADIUS.full,
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: RADIUS.full,
     },
     submitText: {
         fontSize: 16,
-        fontWeight: '700',
-        color: '#FFFFFF',
+        fontWeight: '800',
+        color: '#ffffff',
+        letterSpacing: 0.2,
     },
-    // Divider
-    dividerRow: {
+    inlineMetaRow: {
+        marginTop: 14,
         flexDirection: 'row',
         alignItems: 'center',
-        marginVertical: 20,
-        gap: 16,
+        gap: 8,
     },
-    dividerLine: {
+    inlineMetaText: {
         flex: 1,
-        height: 0.5,
-        backgroundColor: PALETTE.separator,
+        fontSize: 12.5,
+        lineHeight: 18,
+        color: '#64748b',
+        fontWeight: '600',
     },
-    dividerText: {
-        fontSize: 13,
-        fontWeight: '500',
-        color: PALETTE.textTertiary,
-    },
-    // Footer
-    footerRow: {
+    footerWrap: {
+        marginTop: 18,
         flexDirection: 'row',
-        justifyContent: 'center',
         alignItems: 'center',
-        paddingBottom: 8,
+        justifyContent: 'center',
+        gap: 6,
+        paddingBottom: 4,
     },
     footerText: {
         fontSize: 14,
-        color: PALETTE.textSecondary,
-        fontWeight: '400',
+        color: '#64748b',
+        fontWeight: '500',
     },
     footerLink: {
         fontSize: 14,
         color: PALETTE.accentDeep,
-        fontWeight: '700',
+        fontWeight: '800',
     },
 });

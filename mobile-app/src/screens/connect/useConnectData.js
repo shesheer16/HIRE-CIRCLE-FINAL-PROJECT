@@ -13,6 +13,7 @@
  *   ./useCirclesData.js   – Circles tab (communities, chat, members, rates)
  */
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { Alert, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import client from '../../api/client';
@@ -30,6 +31,8 @@ import { useCirclesData } from './useCirclesData';
 
 export { CONNECT_TABS } from './connectUtils';
 
+const CONNECT_REFRESH_REVISION_KEY = '@connect_content_revision';
+
 export function useConnectData() {
     const { userInfo } = useContext(AuthContext);
     const currentUserId = String(userInfo?._id || '');
@@ -46,6 +49,7 @@ export function useConnectData() {
     const pulseToastTimeoutRef = useRef(null);
     const bountyToastTimeoutRef = useRef(null);
     const bootstrapLoadKeyRef = useRef('');
+    const connectRefreshRevisionRef = useRef('');
 
     // ─── Shared Toasts ────────────────────────────────────────────────────────
     const showPulseToast = useCallback((message) => {
@@ -172,6 +176,32 @@ export function useConnectData() {
         }, 180);
         return () => clearTimeout(backgroundBootstrapTimer);
     }, [currentUserId, isEmployerRole, feed.fetchFeedPosts, pulse.fetchPulseItems, academy.fetchAcademyData, circles.fetchCircles, bounties.fetchBounties]);
+
+    useFocusEffect(
+        useCallback(() => {
+            if (!currentUserId) return undefined;
+
+            const syncDeletedJobRefresh = async () => {
+                try {
+                    const nextRevision = String(await AsyncStorage.getItem(CONNECT_REFRESH_REVISION_KEY) || '').trim();
+                    if (!nextRevision || nextRevision === connectRefreshRevisionRef.current) {
+                        return;
+                    }
+                    connectRefreshRevisionRef.current = nextRevision;
+                    await Promise.allSettled([
+                        feed.fetchFeedPosts(1, true),
+                        pulse.fetchPulseItems(),
+                        isEmployerRole ? pulse.fetchNearbyPros() : Promise.resolve(),
+                    ]);
+                } catch (_error) {
+                    // Ignore refresh token failures and keep the current tab state intact.
+                }
+            };
+
+            syncDeletedJobRefresh();
+            return undefined;
+        }, [currentUserId, feed.fetchFeedPosts, isEmployerRole, pulse.fetchNearbyPros, pulse.fetchPulseItems])
+    );
 
     // ─── Lazy-load nearby pros on Pulse tab ──────────────────────────────────
     useEffect(() => {

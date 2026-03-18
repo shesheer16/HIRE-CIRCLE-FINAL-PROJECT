@@ -94,10 +94,11 @@ const protect = async (req, res, next) => {
         const profileGatedRoute = PROFILE_GATED_ROUTE_PREFIXES.some((prefix) => matchesPrefix(reqPath, prefix));
         const hasCompletedProfile = isUserProfileMarkedComplete(user);
 
+        if (user.otpVerified === false) {
+            return res.status(403).json({ message: 'OTP verification required', code: 'OTP_NOT_VERIFIED' });
+        }
+
         if (!isExempt) {
-            if (user.otpVerified === false) {
-                return res.status(403).json({ message: 'OTP verification required', code: 'OTP_NOT_VERIFIED' });
-            }
 
             // Jobs/matches/applications are blocked until profile completion.
             if (profileGatedRoute) {

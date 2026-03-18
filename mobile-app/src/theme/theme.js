@@ -175,6 +175,31 @@ export const SHADOWS = {
     },
 };
 
+const GLASS_SURFACES = {
+    panel: {
+        backgroundColor: PALETTE.surface,
+        borderWidth: 0.5,
+        borderColor: PALETTE.border,
+    },
+    softPanel: {
+        backgroundColor: PALETTE.surface2,
+        borderWidth: 0.5,
+        borderColor: PALETTE.border,
+    },
+    input: {
+        backgroundColor: PALETTE.surface2,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+    },
+    pill: {
+        backgroundColor: PALETTE.surface,
+        borderWidth: 1,
+        borderColor: PALETTE.border,
+    },
+};
+
+// Compatibility aliases removed to prevent circular reference crashes during state serialization.
+
 export const SCREEN_CHROME = {
     headerSurface: {
         backgroundColor: PALETTE.background,
@@ -238,70 +263,6 @@ export const SCREEN_CHROME = {
     },
 };
 
-export const SCREEN_CHROME = {
-    headerSurface: {
-        backgroundColor: '#f6f8fc',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e8edf5',
-    },
-    actionButton: {
-        width: 42,
-        height: 42,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#e5eaf2',
-        backgroundColor: 'rgba(255,255,255,0.97)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        ...SHADOWS.sm,
-    },
-    actionButtonPrimary: {
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f5f3ff',
-    },
-    heroSurface: {
-        backgroundColor: 'rgba(255,255,255,0.97)',
-        borderRadius: 26,
-        borderWidth: 1,
-        borderColor: '#e6ebf3',
-        ...SHADOWS.md,
-    },
-    contentCard: {
-        backgroundColor: 'rgba(255,255,255,0.98)',
-        borderRadius: 24,
-        borderWidth: 1,
-        borderColor: '#e7ecf4',
-        ...SHADOWS.md,
-    },
-    signalChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: '#e5eaf2',
-        backgroundColor: '#f8fafc',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-    },
-    signalChipAccent: {
-        borderColor: '#ddd6fe',
-        backgroundColor: '#f5f3ff',
-    },
-    signalChipSuccess: {
-        borderColor: '#bbf7d0',
-        backgroundColor: '#f0fdf4',
-    },
-    metricTile: {
-        flex: 1,
-        backgroundColor: '#f8fafc',
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: '#edf1f7',
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-    },
-};
-
 export const TYPOGRAPHY = {
     display:   { fontSize: 34, fontWeight: '700', letterSpacing: -0.8, lineHeight: 40, color: PALETTE.textPrimary },
     h1:        { fontSize: 30, fontWeight: '700', color: PALETTE.textPrimary, letterSpacing: -0.5 },
@@ -354,6 +315,8 @@ export const createTheme = (mode = 'light') => {
         textInverted:  PALETTE.textInverted,
         overlayLight:  PALETTE.overlayLight,
         backgroundSoft: PALETTE.backgroundSoft,
+        glassSurfaces: GLASS_SURFACES,
+        glass_surfaces: GLASS_SURFACES,
     };
 };
 
@@ -367,4 +330,6 @@ export const designTokens = {
     typography: TYPOGRAPHY,
     animation:  ANIMATION,
     palette:    PALETTE,
+    glassSurfaces: GLASS_SURFACES,
+    glass_surfaces: GLASS_SURFACES,
 };

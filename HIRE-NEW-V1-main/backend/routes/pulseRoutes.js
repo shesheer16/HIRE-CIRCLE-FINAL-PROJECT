@@ -148,11 +148,9 @@ router.get('/', protect, async (req, res) => {
         });
 
         if (ranked.posts.length > 0) {
-            // Filter out job-type posts that have no valid jobId — those are
-            // orphaned entries from deleted jobs that slipped past filterOrphanedJobPosts.
             const filteredPosts = ranked.posts.filter((post) => {
                 const isJobPost = String(post?.postType || post?.type || '').toLowerCase() === 'job';
-                if (!isJobPost) return true;
+                if (!isJobPost) return false;
                 const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
                 return Boolean(jobId);
             });
@@ -165,21 +163,27 @@ router.get('/', protect, async (req, res) => {
                     .lean())
                     .map((job) => [String(job?._id || ''), job])
             );
-            const rankedItems = rankPulseItemsByViewerLocation({
-                items: filteredPosts.map((post) => {
-                    const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
-                    return toPulseItemFromPost(post, jobsById.get(jobId) || null);
-                }),
-                viewerLocation,
+            const liveJobPosts = filteredPosts.filter((post) => {
+                const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
+                return Boolean(jobId) && jobsById.has(jobId);
             });
-            return res.json({
-                items: paginateItems(rankedItems, page, limit),
-                page,
-                limit,
-                hasMore: (page * limit) < ranked.total,
-                total: ranked.total,
-                source: 'posts',
-            });
+            if (liveJobPosts.length > 0) {
+                const rankedItems = rankPulseItemsByViewerLocation({
+                    items: liveJobPosts.map((post) => {
+                        const jobId = String(post?.meta?.jobId || post?.jobId || '').trim();
+                        return toPulseItemFromPost(post, jobsById.get(jobId) || null);
+                    }),
+                    viewerLocation,
+                });
+                return res.json({
+                    items: paginateItems(rankedItems, page, limit),
+                    page,
+                    limit,
+                    hasMore: (page * limit) < liveJobPosts.length,
+                    total: liveJobPosts.length,
+                    source: 'posts',
+                });
+            }
         }
 
         const fallbackJobs = await Job.find({

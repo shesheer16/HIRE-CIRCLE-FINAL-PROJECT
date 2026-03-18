@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { PALETTE, SHADOWS } from '../theme/theme';
+import { GLASS_SURFACES } from '../theme/glass';
 import { handleAuthBackNavigation } from '../utils/authNavigation';
 import { getProfileSetupLabel, normalizeSelectedRole } from '../utils/authRoleSelection';
 

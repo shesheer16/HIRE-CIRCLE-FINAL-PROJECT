@@ -46,6 +46,8 @@ export function ThemeProvider({ children }) {
     const value = useMemo(() => ({
         mode,
         palette: mode === 'dark' ? darkPalette : lightPalette,
+        glassSurfaces: designTokens.glassSurfaces,
+        glass_surfaces: designTokens.glassSurfaces,
         setThemeMode,
         toggleTheme,
         tokens: designTokens,
