@@ -631,6 +631,7 @@ const {
     verifyEmail,
     resendVerificationEmail,
     exportUserData,
+    restoreUserAccount,
     getWorkerLockInSummaryController,
 } = require('../controllers/userController');
 const { deleteAccount: secureDeleteAccount } = require('../controllers/settingsController');
@@ -675,6 +676,7 @@ router.post('/forgotpassword', passwordRecoveryLimiter, validate({ body: forgotP
 router.put('/resetpassword/:resettoken', validate({ body: resetPasswordSchema }), resetPassword);
 router.put('/verifyemail/:verificationtoken', verifyEmail);
 router.post('/resendverification', verificationResendLimiter, validate({ body: resendVerificationSchema }), resendVerificationEmail);
+router.post('/restore', restoreUserAccount);
 
 router.get('/export', protect, exportUserData);
 router.delete('/delete', protect, secureDeleteAccount);

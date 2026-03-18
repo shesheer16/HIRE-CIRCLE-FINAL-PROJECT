@@ -40,7 +40,7 @@ const protect = async (req, res, next) => {
 
     // Resolve token from: 1) Bearer header (mobile + web) 2) HttpOnly cookie (web fallback)
     let token = '';
-    if (authorizationHeader.toLowerCase().startsWith('bearer ')) {
+    if (authorizationHeader.startsWith('Bearer ')) {
         token = authorizationHeader.slice(7).trim();
     } else if (req.cookies?.hireapp_access_token) {
         // SECURITY: HttpOnly cookie path — browser only, inaccessible to JS.

@@ -203,7 +203,7 @@ app.use(helmet({
 
 const readBearerToken = (req = {}) => {
     const header = String(req?.headers?.authorization || '');
-    if (!header.toLowerCase().startsWith('bearer ')) return '';
+    if (!header.startsWith('Bearer ')) return '';
     return header.slice(7).trim();
 };
 

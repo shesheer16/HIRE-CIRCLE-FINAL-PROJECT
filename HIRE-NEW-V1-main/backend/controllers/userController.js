@@ -564,6 +564,13 @@ const authUser = async (req, res) => {
 
     // Password is correct. Now we can safely check account state.
     if (user.isDeleted) {
+      if (user.deletionLifecycle?.status === 'scheduled') {
+        const purgeAfter = user.deletionLifecycle.purgeAfter ? new Date(user.deletionLifecycle.purgeAfter).toLocaleDateString() : 'soon';
+        return res.status(403).json({ 
+          message: `This account is scheduled for deletion on ${purgeAfter}. You can restore it using the 'Restore Account' feature.`,
+          code: 'ACCOUNT_DELETION_SCHEDULED'
+        });
+      }
       return res.status(403).json({ message: 'Account is deleted. Contact support if this is unexpected.' });
     }
 
@@ -799,35 +806,99 @@ const exportUserData = async (req, res) => {
   }
 };
 
-// @desc    Delete User Account and all associated data
-// @route   DELETE /api/users/delete
-// @access  Private
 const deleteUserAccount = async (req, res) => {
+  const { reason = 'User requested' } = req.body || {};
   try {
     const userId = req.user._id;
+    const user = await User.findById(userId);
 
-    // Remove Profiles
-    if (isRecruiter(req.user)) {
-      const EmployerProfile = require('../models/EmployerProfile');
-      await EmployerProfile.findOneAndDelete({ user: userId });
-      // Remove Jobs
-      const Job = require('../models/Job');
-      await Job.deleteMany({ employerId: userId });
-    } else {
-      const WorkerProfile = require('../models/WorkerProfile');
-      await WorkerProfile.findOneAndDelete({ user: userId });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    // Remove Applications
-    const Application = require('../models/Application');
-    await Application.deleteMany({ $or: [{ worker: userId }, { employer: userId }] });
+    const DELETION_GRACE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    const purgeAfter = new Date(Date.now() + DELETION_GRACE_PERIOD_MS);
 
-    // Remove User
-    await User.findByIdAndDelete(userId);
+    // Update Deletion Lifecycle
+    user.deletionLifecycle = {
+      status: 'scheduled',
+      requestedAt: new Date(),
+      purgeAfter,
+      reason,
+    };
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+    
+    // Revoke all current tokens by incrementing version
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
 
-    res.json({ message: 'Account and all associated data deleted successfully' });
+    await user.save();
+
+    // Log the event for security auditing
+    logger.security({
+      event: 'account_deletion_scheduled',
+      userId: String(userId),
+      purgeAfter: purgeAfter.toISOString(),
+      reason,
+    });
+
+    res.json({ 
+      success: true,
+      message: 'Account scheduled for deletion. You have 30 days to restore your data before permanent purging.',
+      purgeAfter,
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Error deleting account' });
+    logger.error({ event: 'account_deletion_failed', message: error?.message || error });
+    res.status(500).json({ message: 'Error scheduling account deletion' });
+  }
+};
+
+// @desc    Restore a user account scheduled for deletion
+// @route   POST /api/users/restore
+// @access  Public (Requires email/password verification)
+const restoreUserAccount = async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required to restore account' });
+  }
+
+  try {
+    const user = await User.findOne({ email: normalizeEmail(email) }).select('+password');
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    if (user.deletionLifecycle?.status !== 'scheduled') {
+      return res.status(400).json({ message: 'Account is not scheduled for deletion' });
+    }
+
+    // Restore the account
+    user.isDeleted = false;
+    user.deletedAt = null;
+    user.deletionLifecycle = {
+      status: 'cancelled',
+      cancelledAt: new Date(),
+    };
+    
+    await user.save();
+
+    logger.security({
+      event: 'account_restored',
+      userId: String(user._id),
+    });
+
+    res.json({ 
+      success: true,
+      message: 'Account successfully restored. You can now sign in normally.',
+    });
+  } catch (error) {
+    logger.error({ event: 'account_restoration_failed', message: error?.message || error });
+    res.status(500).json({ message: 'Error restoring account' });
   }
 };
 
@@ -867,5 +938,6 @@ module.exports = {
   resendVerificationEmail,
   exportUserData,
   deleteUserAccount,
+  restoreUserAccount,
   getWorkerLockInSummaryController,
 };

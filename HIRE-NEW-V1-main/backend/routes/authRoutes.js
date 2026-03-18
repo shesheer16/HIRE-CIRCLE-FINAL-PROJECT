@@ -61,7 +61,8 @@ const resolveOtpIdentity = (payload = {}) => {
 const limiterKey = (req) => {
     const identity = resolveOtpIdentity(req.body || {});
     const identityKey = identity ? `${identity.kind}:${identity.normalized}` : 'unknown';
-    return `${readIp(req)}:${identityKey}`;
+    // Incorporate IP and identity to prevent both IP-based and identity-based enumeration
+    return `rl:otp:${readIp(req)}:${identityKey}`;
 };
 
 const sendOtpLimiter = createRedisRateLimiter({
