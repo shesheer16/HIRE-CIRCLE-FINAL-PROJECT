@@ -38,7 +38,7 @@ export default function LoginScreen({ navigation, route }) {
     const accountLabel = useMemo(() => getAuthAccountLabel(selectedRole), [selectedRole]);
     const isEmployer = useMemo(() => isEmployerFacingSelectedRole(selectedRole), [selectedRole]);
 
-    const [authMode, setAuthMode] = useState('phone');
+    const [authMode, setAuthMode] = useState('email');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -105,14 +105,31 @@ export default function LoginScreen({ navigation, route }) {
                     return;
                 }
 
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(safeEmail)) {
+                    Alert.alert('Invalid email', 'Please enter a valid email address (e.g., you@gmail.com).');
+                    return;
+                }
+
                 const { data } = await client.post('/api/users/login', {
                     email: safeEmail,
                     password: safePassword,
+                    selectedRole,
                 }, {
                     __skipUnauthorizedHandler: true,
                     __skipApiErrorHandler: true,
                     __allowWhenCircuitOpen: true,
                 });
+                if (data?.requiresOtpVerification) {
+                    await client.post('/api/auth/send-otp', { email: safeEmail });
+                    navigation.navigate('OTPVerification', {
+                        selectedRole,
+                        intent: 'signin',
+                        identity: { kind: 'email', value: safeEmail, label: safeEmail },
+                        initialOtpDispatched: true,
+                    });
+                    return;
+                }
                 authPayload = data;
             }
 
@@ -138,10 +155,20 @@ export default function LoginScreen({ navigation, route }) {
             await login(sessionPayload, { authEntryRole: selectedRole });
         } catch (error) {
             const backendMessage = String(error?.response?.data?.message || error?.message || '').trim();
-            Alert.alert(
-                'Sign in unavailable',
-                backendMessage || 'Unable to continue right now. Please try again.'
-            );
+            const lowerMsg = backendMessage.toLowerCase();
+            const status = error?.response?.status;
+
+            if (status === 404 || lowerMsg.includes('not exist') || lowerMsg.includes('not found') || lowerMsg.includes('no account') || lowerMsg.includes('unregistered')) {
+                Alert.alert(
+                    'Sign in unavailable',
+                    'This email is not registered. Please create a new account.'
+                );
+            } else {
+                Alert.alert(
+                    'Sign in unavailable',
+                    backendMessage || 'Unable to continue right now. Please try again.'
+                );
+            }
         } finally {
             setLoading(false);
         }
@@ -151,6 +178,7 @@ export default function LoginScreen({ navigation, route }) {
         email,
         loading,
         login,
+        navigation,
         password,
         phoneNumber,
         selectedRole,
@@ -202,8 +230,10 @@ export default function LoginScreen({ navigation, route }) {
                 </View>
             </View>
 
-            {isPhonePreviewOnly ? (
-                <Text style={styles.noticeText}>Phone preview only. Use email.</Text>
+            {authMode === 'phone' ? (
+                <Text style={[styles.noticeText, { color: '#ef4444', fontWeight: 'bold' }]}>
+                    Phone login is currently unavailable. Please use Email to login.
+                </Text>
             ) : null}
 
             <View style={styles.formBlock}>

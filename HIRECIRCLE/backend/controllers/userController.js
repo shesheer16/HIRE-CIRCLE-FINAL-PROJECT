@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const User = require('../models/userModel');
 const { generateToken, generateRefreshToken } = require('../utils/generateToken');
 const BetaCode = require('../models/BetaCode');
+const EmployerProfile = require('../models/EmployerProfile');
+const WorkerProfile = require('../models/WorkerProfile');
 const { triggerWelcomeSeries } = require('../services/marketingService');
 const {
   fireAndForget,
@@ -147,6 +149,7 @@ const registerUser = async (req, res) => {
     password,
     betaCode,
     referredByCode,
+    selectedRole = 'worker',
     acquisitionSource = 'unknown',
     acquisitionCity = null,
     acquisitionCampaign = null,
@@ -219,19 +222,23 @@ const registerUser = async (req, res) => {
     // Generate new unique referral code for this user
     const newReferralCode = crypto.randomBytes(3).toString('hex').toUpperCase() + Date.now().toString().slice(-4);
 
+    const isEmployerRegistration = ['employer', 'recruiter'].includes(String(selectedRole || '').trim().toLowerCase());
+    const resolvedActiveRole = isEmployerRegistration ? 'employer' : 'worker';
+    const resolvedLegacyRole = isEmployerRegistration ? 'recruiter' : 'candidate';
+
     const user = await User.create({
       name: normalizedName,
       email: normalizedEmail,
       phoneNumber: normalizedPhone || null,
-      role: 'candidate',
+      role: resolvedLegacyRole,
       roles: ['worker', 'employer'],
-      activeRole: 'worker',
+      activeRole: resolvedActiveRole,
       capabilities: {
-        canPostJob: false,
+        canPostJob: isEmployerRegistration,
         canCreateCommunity: true,
         canCreateBounty: false,
       },
-      primaryRole: 'worker',
+      primaryRole: resolvedActiveRole,
       hasSelectedRole: true,
       password,
       verificationToken: verificationTokenHash,
@@ -253,17 +260,6 @@ const registerUser = async (req, res) => {
     });
 
     if (user) {
-      // Send Verification Email
-      try {
-        await sendVerificationEmail({
-          email: user.email,
-          verificationToken,
-        });
-      } catch (err) {
-        logger.warn({ event: 'verification_email_failed', message: err?.message || err });
-        // We still allow registration, but user is not verified.
-      }
-
       const roleContract = resolveUserRoleContract(user);
       res.status(201).json({
         _id: user._id,
@@ -535,6 +531,7 @@ const resetPassword = async (req, res) => {
 const authUser = async (req, res) => {
   const normalizedEmail = normalizeEmail(req.body?.email);
   const password = req.body?.password;
+  const selectedRole = String(req.body?.selectedRole || '').trim().toLowerCase();
   const deviceId = resolveDeviceId(req);
   const devicePlatform = resolveDevicePlatform(req);
 
@@ -591,6 +588,18 @@ const authUser = async (req, res) => {
     }
 
     // Success: Reset attempts
+    // If the user is logging in with employer/hybrid intent but the DB still has the
+    // legacy 'worker' activeRole (accounts created before the registration fix), upgrade
+    // the record now so the JWT and all subsequent API calls reflect the correct role.
+    const isEmployerIntent = selectedRole === 'employer' || selectedRole === 'recruiter' || selectedRole === 'hybrid';
+    if (isEmployerIntent && user.activeRole !== 'employer') {
+      user.activeRole = 'employer';
+      user.primaryRole = 'employer';
+      user.role = 'recruiter';
+      user.hasSelectedRole = true;
+      if (!user.capabilities) user.capabilities = {};
+      user.capabilities.canPostJob = true;
+    }
     applyRoleContractToUser(user);
     user.loginAttempts = 0;
     user.lockUntil = undefined;
@@ -612,11 +621,24 @@ const authUser = async (req, res) => {
       setRefreshTokenCookie(req, res, refreshToken);
     }
 
-    res.json(buildAuthPayload(user, {
-      accessToken,
-      refreshToken,
-      includeRefreshToken: !isBrowserSessionRequest(req),
-    }));
+    let userImage = null;
+    if (user.activeRole === 'employer') {
+        const ep = await EmployerProfile.findOne({ user: user._id }).select('logoUrl avatar');
+        userImage = ep?.logoUrl || ep?.avatar || null;
+    } else {
+        const wp = await WorkerProfile.findOne({ user: user._id }).select('avatar');
+        userImage = wp?.avatar || null;
+    }
+
+    res.json({
+      ...buildAuthPayload(user, {
+        accessToken,
+        refreshToken,
+        includeRefreshToken: !isBrowserSessionRequest(req),
+      }),
+      avatar: userImage,
+      logoUrl: userImage
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -672,11 +694,30 @@ const refreshAuthToken = async (req, res) => {
       setRefreshTokenCookie(req, res, nextRefreshToken);
     }
 
-    return res.status(200).json(buildAuthPayload(user, {
-      accessToken,
-      refreshToken: nextRefreshToken,
-      includeRefreshToken: !isBrowserSessionRequest(req),
-    }));
+    // Fetch avatar so the frontend state is not silently wiped on token rotation.
+    // This mirrors what authUser (login) already does.
+    let userImage = null;
+    try {
+      if (user.activeRole === 'employer') {
+        const ep = await EmployerProfile.findOne({ user: user._id }).select('logoUrl avatar');
+        userImage = ep?.logoUrl || ep?.avatar || null;
+      } else {
+        const wp = await WorkerProfile.findOne({ user: user._id }).select('avatar');
+        userImage = wp?.avatar || null;
+      }
+    } catch (_avatarErr) {
+      // Non-fatal: avatar fetch failure must not block the token refresh.
+    }
+
+    return res.status(200).json({
+      ...buildAuthPayload(user, {
+        accessToken,
+        refreshToken: nextRefreshToken,
+        includeRefreshToken: !isBrowserSessionRequest(req),
+      }),
+      avatar: userImage,
+      logoUrl: userImage,
+    });
   } catch (error) {
     logger.security({ event: 'refresh_token_failed', message: error?.message || error });
     if (isBrowserSessionRequest(req)) {

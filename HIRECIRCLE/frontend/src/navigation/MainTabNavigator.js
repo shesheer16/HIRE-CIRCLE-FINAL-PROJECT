@@ -16,7 +16,8 @@ import {
 } from '../components/Icons';
 
 // Screens
-import ConnectContainer from '../containers/ConnectContainer';
+// import ConnectContainer from '../containers/ConnectContainer'; // ← REVERT: swap back when Connect feature is ready
+import ComingSoonScreen from '../screens/ComingSoonScreen';
 import ProfileContainer from '../containers/ProfileContainer';
 import ApplicationsScreen from '../screens/ApplicationsScreen';
 import JobsContainer from '../containers/JobsContainer';
@@ -136,7 +137,7 @@ export default function MainTabNavigator({ navigation }) {
         {
             name: 'Connect',
             roles: ['worker', 'employer'],
-            component: ConnectContainer,
+            component: ComingSoonScreen, // ← REVERT: replace with ConnectContainer when Connect feature is ready
             tabBarLabel: 'Connect',
         },
         {

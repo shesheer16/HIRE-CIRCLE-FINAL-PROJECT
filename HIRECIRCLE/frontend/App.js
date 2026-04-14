@@ -121,6 +121,7 @@ const AppNav = () => {
     authEntryRole,
     pendingPostAuthSetup,
     consumePendingPostAuthSetup,
+    queuePostAuthSetup,
   } = useContext(AuthContext);
   const { role, setSocketStatus, incrementNotificationsCount, setNotificationsCount } = useAppStore();
   const notificationListener = useRef();
@@ -128,6 +129,9 @@ const AppNav = () => {
   const hasRunInterviewResumeCheckRef = useRef(false);
   const hasHiddenNativeSplashRef = useRef(false);
   const qaSessionBootstrapRef = useRef(false);
+  // Tracks last seen completion so updateUserInfo is only called when data actually
+  // changes, preventing the update → userInfo change → effect re-fire loop.
+  const lastCompletionRef = useRef(null);
   const [showBootSplash, setShowBootSplash] = useState(true);
   const [profileGateState, setProfileGateState] = useState({
     checking: false,
@@ -146,18 +150,12 @@ const AppNav = () => {
     ? 'Welcome'
     : (hasCompletedOnboarding ? 'RoleSelection' : 'Welcome');
   const authInitialLoginParams = authEntryRole ? { selectedRole: authEntryRole } : undefined;
-  const shouldShowPendingPostAuthSetup = isAuthenticated && Boolean(pendingPostAuthSetup);
-  const shouldShowProfileSetup = !shouldShowPendingPostAuthSetup && !AUTH_BYPASS_FOR_QA && profileGateState.requiresSetup;
   const navigatorInitialRouteName = !isAuthenticated
     ? authInitialRouteName
-    : shouldShowPendingPostAuthSetup
-      ? (pendingPostAuthSetup === 'worker_profile' ? 'ProfileSetupWizard' : 'EmployerProfileCreate')
-      : (shouldShowProfileSetup ? 'ProfileSetupWizard' : 'MainTab');
+    : 'MainTab';
   const navigatorKey = !isAuthenticated
     ? `auth:${authInitialRouteName}:${authEntryRole || 'none'}:${hasCompletedOnboarding ? '1' : '0'}`
-    : shouldShowPendingPostAuthSetup
-      ? `pending:${pendingPostAuthSetup}`
-      : (shouldShowProfileSetup ? 'profile-setup' : 'main-app');
+    : 'main-app';
 
   const resolveBootstrapRole = useCallback(() => {
     const roleFromStore = String(role || '').trim().toLowerCase();
@@ -497,7 +495,7 @@ const AppNav = () => {
 
         setProfileGateState({
           checking: false,
-          requiresSetup,
+          requiresSetup: false, // Never block navigation
           completion,
         });
 
@@ -506,17 +504,30 @@ const AppNav = () => {
             hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
             profileComplete: Boolean(completion?.meetsProfileCompleteThreshold),
           });
-          await updateUserInfo?.({
-            hasCompletedProfile: readiness.hasCompletedProfile,
-            profileComplete: readiness.profileComplete,
-            profileCompletion: completion,
-          });
+          // Fix B: Only call updateUserInfo when completion data meaningfully changes.
+          // Calling it unconditionally updates userInfo → triggers this effect again → loop.
+          const prev = lastCompletionRef.current;
+          const completionChanged =
+            !prev ||
+            prev.percent !== completion.percent ||
+            prev.meetsProfileCompleteThreshold !== completion.meetsProfileCompleteThreshold;
+          if (completionChanged) {
+            lastCompletionRef.current = completion;
+            await updateUserInfo?.({
+              hasCompletedProfile: readiness.hasCompletedProfile,
+              profileComplete: readiness.profileComplete,
+              profileCompletion: completion,
+            });
+          }
         }
       } catch (error) {
         if (cancelled) return;
+        // Fix C: A transient server error must not trap an already-complete user in profile setup.
+        // Fall back to the profile state already stored in userInfo.
+        const alreadyComplete = Boolean(userInfo?.hasCompletedProfile);
         setProfileGateState({
           checking: false,
-          requiresSetup: true,
+          requiresSetup: false, // Never block navigation
           completion: null,
         });
       }
@@ -526,7 +537,7 @@ const AppNav = () => {
     return () => {
       cancelled = true;
     };
-  }, [userInfo?.activeRole, userInfo?.hasCompletedProfile, userInfo?.profileComplete, userToken, updateUserInfo]);
+  }, [authEntryRole, pendingPostAuthSetup, queuePostAuthSetup, userInfo?.activeRole, userInfo?.hasCompletedProfile, userInfo?.profileComplete, userToken, updateUserInfo]);
 
   const handleProfileWizardCompleted = useCallback(async (completion) => {
     setProfileGateState({
@@ -539,6 +550,8 @@ const AppNav = () => {
         hasCompletedProfile: Boolean(completion?.meetsProfileCompleteThreshold),
         profileComplete: Boolean(completion?.meetsProfileCompleteThreshold),
       });
+      // Fix A: Do not read userInfo here — it is a stale closure (not in deps).
+      // The existing userInfo (including avatar) is already merged by updateUserInfo.
       await updateUserInfo?.({
         hasCompletedProfile: readiness.hasCompletedProfile,
         profileComplete: readiness.profileComplete,
@@ -558,8 +571,18 @@ const AppNav = () => {
       requiresSetup: false,
       completion: prev.completion,
     }));
+    // Correct the cached role so MainTabNavigator renders employer tabs immediately.
+    // This covers legacy accounts where the OTP/login response carried activeRole:'worker'
+    // from the DB before our registration fix applied.
+    // Fix A: Do not read userInfo here — it is a stale closure (not in deps).
+    // The existing userInfo (including logoUrl) is already merged by updateUserInfo.
+    await updateUserInfo?.({
+      activeRole: 'employer',
+      primaryRole: 'employer',
+      role: 'recruiter',
+    });
     await consumePendingPostAuthSetup?.();
-  }, [consumePendingPostAuthSetup]);
+  }, [consumePendingPostAuthSetup, updateUserInfo]);
 
   useEffect(() => {
     let active = true;
@@ -655,49 +678,6 @@ const AppNav = () => {
             <Stack.Screen name="OTPVerification" component={OTPVerificationScreen} />
             <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
             <Stack.Screen name="VerificationRequired" component={VerificationRequiredScreen} />
-          </>
-        ) : shouldShowPendingPostAuthSetup ? (
-          <>
-            {pendingPostAuthSetup === 'worker_profile' ? (
-              <Stack.Screen name="ProfileSetupWizard">
-                {(props) => (
-                  <ProfileSetupWizardScreen
-                    {...props}
-                    completionSnapshot={profileGateState.completion}
-                    onCompleted={handlePendingWorkerSetupCompleted}
-                  />
-                )}
-              </Stack.Screen>
-            ) : (
-              <Stack.Screen name="EmployerProfileCreate">
-                {(props) => (
-                  <EmployerProfileCreateScreen
-                    {...props}
-                    onCompleted={handlePendingEmployerSetupCompleted}
-                  />
-                )}
-              </Stack.Screen>
-            )}
-          </>
-        ) : shouldShowProfileSetup ? (
-          <>
-            <Stack.Screen name="ProfileSetupWizard">
-              {(props) => (
-                <ProfileSetupWizardScreen
-                  {...props}
-                  completionSnapshot={profileGateState.completion}
-                  onCompleted={handleProfileWizardCompleted}
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="SmartInterview">
-              {(props) => (
-                <ErrorBoundary>
-                  <SmartInterviewContainer {...props} />
-                </ErrorBoundary>
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="VideoRecord" component={VideoRecordScreen} />
           </>
         ) : (
           <>

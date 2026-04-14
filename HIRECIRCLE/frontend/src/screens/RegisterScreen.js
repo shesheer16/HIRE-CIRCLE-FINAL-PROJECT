@@ -32,7 +32,7 @@ export default function RegisterScreen({ navigation, route }) {
     const accountLabel = useMemo(() => getAuthAccountLabel(selectedRole), [selectedRole]);
     const isEmployer = useMemo(() => isEmployerFacingSelectedRole(selectedRole), [selectedRole]);
 
-    const [authMode, setAuthMode] = useState('phone');
+    const [authMode, setAuthMode] = useState('email');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -75,9 +75,27 @@ export default function RegisterScreen({ navigation, route }) {
 
         const safePassword = String(password || '').trim();
         const safeConfirmPassword = String(confirmPassword || '').trim();
-        if (!QA_ROLE_BOOTSTRAP_ENABLED && safePassword.length < 6) {
-            Alert.alert('Invalid password', 'Password should be at least 6 characters.');
-            return;
+        const safeEmail = authMode === 'email' ? String(email || '').trim().toLowerCase() : '';
+        const safePhone = authMode === 'phone' ? String(phoneNumber || '').trim() : '';
+
+        if (!QA_ROLE_BOOTSTRAP_ENABLED) {
+            if (authMode === 'email') {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(safeEmail)) {
+                    Alert.alert('Invalid email', 'Please enter a valid email address.');
+                    return;
+                }
+            }
+
+            const isStrongPwd = safePassword.length >= 8
+                && /[A-Z]/.test(safePassword)
+                && /[a-z]/.test(safePassword)
+                && /[0-9]/.test(safePassword)
+                && /[^A-Za-z0-9]/.test(safePassword);
+            if (!isStrongPwd) {
+                Alert.alert('Weak password', 'Password must be at least 8 characters and include uppercase, lowercase, numbers, and special characters (Example: StrongPass@123).');
+                return;
+            }
         }
         if (safePassword !== safeConfirmPassword) {
             Alert.alert('Password mismatch', 'Password and confirm password should match.');
@@ -86,9 +104,6 @@ export default function RegisterScreen({ navigation, route }) {
 
         setLoading(true);
         try {
-            const safeEmail = authMode === 'email' ? String(email || '').trim().toLowerCase() : '';
-            const safePhone = authMode === 'phone' ? String(phoneNumber || '').trim() : '';
-
             if (QA_ROLE_BOOTSTRAP_ENABLED) {
                 const authPayload = buildPreviewAuthSession({
                     selectedRole,
@@ -174,6 +189,12 @@ export default function RegisterScreen({ navigation, route }) {
                 </View>
             </View>
 
+            {authMode === 'phone' ? (
+                <Text style={[styles.noticeText, { color: '#ef4444', fontWeight: 'bold', marginBottom: 14 }]}>
+                    Phone registration is currently unavailable. Please use Email to create an account.
+                </Text>
+            ) : null}
+
             <View style={styles.formBlock}>
                 {authMode === 'phone' ? (
                     <View style={styles.fieldGroup}>
@@ -230,7 +251,7 @@ export default function RegisterScreen({ navigation, route }) {
                             autoCorrect={false}
                             textContentType="newPassword"
                             returnKeyType="next"
-                            placeholder="At least 6 characters"
+                            placeholder="Min 10 chars, uppercase, number, symbol"
                             placeholderTextColor={PALETTE.textTertiary}
                         />
                         <TouchableOpacity
@@ -334,6 +355,12 @@ const styles = StyleSheet.create({
     },
     segmentTextActive: {
         color: PALETTE.textPrimary,
+    },
+    noticeText: {
+        fontSize: 12,
+        color: PALETTE.textSecondary,
+        fontWeight: '600',
+        textAlign: 'center',
     },
     formBlock: {
         gap: 14,

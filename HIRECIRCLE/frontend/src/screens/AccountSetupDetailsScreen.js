@@ -172,7 +172,7 @@ function TypeaheadField({
 
 export default function AccountSetupDetailsScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
-    const { login, updateUserInfo, completeOnboarding } = useContext(AuthContext);
+    const { login } = useContext(AuthContext);
     const selectedSession = useMemo(
         () => resolveSelectedRoleSession(route?.params?.selectedRole || 'worker'),
         [route?.params?.selectedRole]
@@ -260,8 +260,13 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         const safePassword = String(password || '').trim();
         const safeEmail = String(email || '').trim();
         const safePhone = String(phoneNumber || '').trim();
-        if (safePassword.length < 6) {
-            Alert.alert('Invalid password', 'Password should be at least 6 characters.');
+        const isStrongPwd = safePassword.length >= 10
+            && /[A-Z]/.test(safePassword)
+            && /[a-z]/.test(safePassword)
+            && /[0-9]/.test(safePassword)
+            && /[^A-Za-z0-9]/.test(safePassword);
+        if (!isStrongPwd) {
+            Alert.alert('Weak password', 'Password must be at least 10 characters with uppercase, lowercase, a number, and a symbol.');
             return;
         }
         if (authMode === 'email' && !safeEmail.includes('@')) {
@@ -280,9 +285,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
             const mappedRole = selectedSession.legacyRole;
             const mappedActiveRole = selectedSession.requestedActiveRole;
             const rolesArr = selectedSession.defaultRoles;
-            const pendingPostAuthSetup = mappedActiveRole === 'worker'
-                ? 'worker_profile'
-                : 'employer_profile';
+            // No longer routing to forced wizard — avatar upload + profile setup happen post-OTP
             const signupSetupDraft = isEmployerSetup
                 ? {
                     kind: 'employer',
@@ -382,25 +385,33 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
                     }),
                     {
                         authEntryRole: selectedRole,
-                        pendingPostAuthSetup,
+                        // pendingPostAuthSetup removed — user goes directly to MainTab after OTP
                     }
                 );
                 return;
             }
 
-            await updateUserInfo({
-                ...sharedProfilePayload,
-                role: mappedRole,
-                activeRole: mappedActiveRole,
-                primaryRole: mappedActiveRole,
-                roles: rolesArr,
-                hasSelectedRole: true,
-                hasCompletedProfile: false,
-                hasCompletedOnboarding: true,
+            const resolvedRole = ['employer', 'hybrid'].includes(selectedRole) ? 'employer' : 'worker';
+            const { data: _registerData } = await client.post('/api/users/register', {
+                name: seedName,
+                email: safeEmail,
+                password: safePassword,
+                selectedRole: resolvedRole,
             });
-            await completeOnboarding?.();
-        } catch (_error) {
-            Alert.alert('Setup unavailable', 'Unable to complete account setup right now. Please try again.');
+
+            await client.post('/api/auth/send-otp', { email: safeEmail });
+
+            navigation.navigate('OTPVerification', {
+                selectedRole,
+                intent: 'signup',
+                identity: { kind: 'email', value: safeEmail, label: safeEmail },
+                initialOtpDispatched: true,
+                // Pass avatar so OTPVerificationScreen can upload it right after getting the token
+                avatarUri: avatarUri || undefined,
+            });
+        } catch (error) {
+            const backendMessage = String(error?.response?.data?.message || error?.message || '').trim();
+            Alert.alert('Setup unavailable', backendMessage || 'Unable to complete account setup right now. Please try again.');
         } finally {
             setSubmitting(false);
         }
@@ -409,7 +420,6 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         avatarUri,
         bio,
         canSubmit,
-        completeOnboarding,
         dateOfBirth,
         email,
         expectedSalary,
@@ -418,6 +428,7 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         login,
         nameParts.firstName,
         nameParts.lastName,
+        navigation,
         password,
         phoneNumber,
         preferredCity,
@@ -428,7 +439,6 @@ export default function AccountSetupDetailsScreen({ navigation, route }) {
         selectedSession.legacyRole,
         selectedSession.requestedActiveRole,
         submitting,
-        updateUserInfo,
     ]);
 
     return (

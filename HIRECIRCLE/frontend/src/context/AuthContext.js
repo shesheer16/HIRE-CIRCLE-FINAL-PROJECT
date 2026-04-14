@@ -61,6 +61,8 @@ const PERSISTED_USER_FIELDS = [
     'signupSetupDraft',
     'token',
     'refreshToken',
+    'avatar',
+    'logoUrl',
 ];
 
 const toPersistedUserInfo = (value = {}) => {
@@ -306,8 +308,7 @@ export const AuthProvider = ({ children }) => {
                 let user = JSON.parse(userInfoStr);
                 const shouldDiscardStoredPreviewSession = Boolean(
                     user?.previewMode
-                    && QA_ROLE_BOOTSTRAP_ENABLED
-                    && !INSTANT_PREVIEW_AUTH_ENABLED
+                    && !QA_ROLE_BOOTSTRAP_ENABLED
                 );
 
                 if (shouldDiscardStoredPreviewSession) {

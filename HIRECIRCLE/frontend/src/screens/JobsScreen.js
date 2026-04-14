@@ -1472,6 +1472,21 @@ export default function JobsScreen() {
                 </View>
             ) : null}
 
+            {!userInfo?.hasCompletedProfile ? (
+                 <TouchableOpacity style={styles.profileCtaBanner} onPress={() => navigation.navigate('ProfileSetupWizard')} activeOpacity={0.9}>
+                     <View style={styles.profileCtaContent}>
+                         <View style={styles.profileCtaIconWrap}>
+                             <Ionicons name="sparkles" size={18} color="#fff" />
+                         </View>
+                         <View style={styles.profileCtaTextWrap}>
+                             <Text style={styles.profileCtaTitle}>Complete your profile</Text>
+                             <Text style={styles.profileCtaDesc}>Boost your impressions by 3x</Text>
+                         </View>
+                     </View>
+                     <Ionicons name="chevron-forward" size={20} color="#fff" />
+                 </TouchableOpacity>
+            ) : null}
+
             <View style={{ flex: 1 }}>
                 <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
                     <FlatList
@@ -2432,5 +2447,43 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: PALETTE.textInverted,
+    },
+    profileCtaBanner: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        backgroundColor: PALETTE.accentDeep,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        ...SHADOWS.md,
+    },
+    profileCtaContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        gap: 12,
+    },
+    profileCtaIconWrap: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    profileCtaTextWrap: {
+        flex: 1,
+    },
+    profileCtaTitle: {
+        color: PALETTE.surface,
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    profileCtaDesc: {
+        color: 'rgba(255,255,255,0.85)',
+        fontSize: 12,
+        marginTop: 2,
     },
 });

@@ -26,7 +26,9 @@ import NudgeToast from '../components/NudgeToast';
 import Toast from '../components/Toast';
 import SocketService from '../services/socket';
 import { useAppStore } from '../store/AppStore';
+import { AuthContext } from '../context/AuthContext';
 import { logger } from '../utils/logger';
+import { resolveImageUrl } from '../utils/imageResolver';
 import { SCREEN_CHROME, SHADOWS } from '../theme/theme';
 import { SCREENSHOT_EMPLOYER_JOBS, SCREENSHOT_MOCKS_ENABLED } from '../config/screenshotMocks';
 
@@ -150,6 +152,7 @@ export default function EmployerDashboardScreen({ navigation }) {
     const route = useRoute();
     const insets = useSafeAreaInsets();
     const user = useAppStore(state => state.user);
+    const { userInfo } = React.useContext(AuthContext);
     const [jobs, setJobs] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -652,7 +655,7 @@ export default function EmployerDashboardScreen({ navigation }) {
                         <View style={styles.detailHeroHeader}>
                             <View style={styles.detailAvatarWrap}>
                                 <Image
-                                    source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(String(selectedJob.company || 'Company'))}&background=f3e8ff&color=7c3aed&size=256` }}
+                                    source={{ uri: resolveImageUrl(user?.logoUrl || user?.avatar, selectedJob.company || 'Company') }}
                                     style={styles.detailAvatar}
                                 />
                             </View>
@@ -894,6 +897,21 @@ export default function EmployerDashboardScreen({ navigation }) {
                     </View>
                 </View>
             </View>
+
+            {!userInfo?.hasCompletedProfile ? (
+                 <TouchableOpacity style={styles.profileCtaBanner} onPress={() => navigation.navigate('ProfileSetupWizard')} activeOpacity={0.9}>
+                     <View style={styles.profileCtaContent}>
+                         <View style={styles.profileCtaIconWrap}>
+                             <Ionicons name="sparkles" size={18} color="#fff" />
+                         </View>
+                         <View style={styles.profileCtaTextWrap}>
+                             <Text style={styles.profileCtaTitle}>Complete your profile</Text>
+                             <Text style={styles.profileCtaDesc}>Build trust and attract talent</Text>
+                         </View>
+                     </View>
+                     <Ionicons name="chevron-forward" size={20} color="#fff" />
+                 </TouchableOpacity>
+            ) : null}
 
             {isLoading ? (
                 <View style={styles.loadingCenterWrap}>

@@ -771,6 +771,57 @@ const updateSettings = async (req, res) => {
     }
 };
 
+const syncCloudAvatarUrl = async (req, res) => {
+    try {
+        const { avatarUrl, role } = req.body || {};
+        if (!avatarUrl || typeof avatarUrl !== 'string' || !avatarUrl.startsWith('http')) {
+            return res.status(400).json({ message: 'Valid avatarUrl is required' });
+        }
+
+        const explicitRole = role ? String(role).trim().toLowerCase() : null;
+        const isEmployer = explicitRole === 'employer' || (explicitRole !== 'worker' && hasEmployerPrimaryRole(req.user));
+        
+        if (isEmployer) {
+            await EmployerProfile.findOneAndUpdate(
+                { user: req.user._id },
+                { $set: { logoUrl: avatarUrl } },
+                { upsert: true }
+            );
+        } else {
+            await WorkerProfile.findOneAndUpdate(
+                { user: req.user._id },
+                { $set: { avatar: avatarUrl } },
+                { upsert: true }
+            );
+        }
+
+        const latestUser = await User.findById(req.user._id).select('-password');
+        const latestProfile = isEmployer
+            ? await EmployerProfile.findOne({ user: req.user._id }).lean()
+            : await WorkerProfile.findOne({ user: req.user._id }).lean();
+            
+        const completion = evaluateProfileCompletion({
+            user: latestUser || {},
+            workerProfile: isEmployer ? null : latestProfile,
+            employerProfile: isEmployer ? latestProfile : null,
+            roleOverride: isEmployer ? 'employer' : 'worker',
+        });
+        
+        await syncUserProfileCompletionFlag({
+            userDoc: latestUser,
+            completion,
+        });
+
+        return res.json({
+            success: true,
+            avatarUrl,
+            profileCompletion: completion,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to sync avatar URL' });
+    }
+};
+
 const updateNotificationPreferences = async (req, res) => {
     try {
         const user = await User.findById(req.user._id);
@@ -1017,112 +1068,6 @@ const deleteAccount = async (req, res) => {
     }
 };
 
-const updateAvatar = async (req, res) => {
-    const localFilePath = req.file?.path;
-    try {
-        if (!req.file || !localFilePath) {
-            return res.status(400).json({ message: 'avatar file is required' });
-        }
-
-        const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
-        if (!allowedMimeTypes.has(String(req.file.mimetype || '').toLowerCase())) {
-            return res.status(400).json({ message: 'Unsupported avatar format' });
-        }
-        const signatureValid = await hasValidAvatarSignature({
-            filePath: localFilePath,
-            mimeType: req.file.mimetype,
-        });
-        if (!signatureValid) {
-            return res.status(400).json({ message: 'Avatar content does not match supported image types' });
-        }
-
-        const { uploadToLocalStorage, deleteStoredObjectByUrl } = require('../services/localStorageService');
-        const isEmployer = hasEmployerPrimaryRole(req.user);
-        const objectPrefix = isEmployer ? 'avatars/employers' : 'avatars/workers';
-        const resolveProfileDoc = async (Model, projection = '') => {
-            if (!Model || typeof Model.findOne !== 'function') return null;
-            const baseQuery = Model.findOne({ user: req.user._id });
-            if (!baseQuery) return null;
-
-            const projected = projection && typeof baseQuery.select === 'function'
-                ? baseQuery.select(projection)
-                : baseQuery;
-
-            if (projected && typeof projected.lean === 'function') {
-                return projected.lean();
-            }
-            if (projected && typeof projected.then === 'function') {
-                return projected;
-            }
-            return projected || null;
-        };
-
-        const existingProfile = isEmployer
-            ? await resolveProfileDoc(EmployerProfile, 'logoUrl')
-            : await resolveProfileDoc(WorkerProfile, 'avatar');
-        const previousAvatarUrl = isEmployer
-            ? String(existingProfile?.logoUrl || '').trim()
-            : String(existingProfile?.avatar || '').trim();
-        const avatarUrl = await uploadToLocalStorage(localFilePath, req.file.mimetype, { prefix: objectPrefix });
-
-        if (isEmployer) {
-            await EmployerProfile.findOneAndUpdate(
-                { user: req.user._id },
-                { $set: { logoUrl: avatarUrl } },
-                { upsert: true }
-            );
-        } else {
-            await WorkerProfile.findOneAndUpdate(
-                { user: req.user._id },
-                { $set: { avatar: avatarUrl } },
-                { upsert: true }
-            );
-        }
-
-        if (previousAvatarUrl && previousAvatarUrl !== avatarUrl) {
-            await deleteStoredObjectByUrl(previousAvatarUrl).catch(() => false);
-        }
-
-        let latestUser = req.user || null;
-        if (req.user?._id && typeof User.findById === 'function') {
-            const query = User.findById(req.user._id);
-            if (query && typeof query.select === 'function') {
-                latestUser = await query.select('-password');
-            } else if (query && typeof query.then === 'function') {
-                latestUser = await query;
-            }
-        }
-        const latestProfile = isEmployer
-            ? await resolveProfileDoc(EmployerProfile)
-            : await resolveProfileDoc(WorkerProfile);
-        const completion = evaluateProfileCompletion({
-            user: latestUser || {},
-            workerProfile: isEmployer ? null : latestProfile,
-            employerProfile: isEmployer ? latestProfile : null,
-            roleOverride: isEmployer ? 'employer' : 'worker',
-        });
-        await syncUserProfileCompletionFlag({
-            userDoc: latestUser,
-            completion,
-        });
-
-        return res.json({
-            success: true,
-            avatarUrl,
-            profileCompletion: completion,
-        });
-    } catch (error) {
-        if (error?.name === 'ValidationError' || error?.name === 'CastError') {
-            return res.status(400).json({ message: error?.message || 'Invalid avatar payload' });
-        }
-        return res.status(500).json({ message: 'Failed to upload avatar' });
-    } finally {
-        if (localFilePath) {
-            await fs.unlink(localFilePath).catch(() => { });
-        }
-    }
-};
-
 const getBillingOverview = async (req, res) => {
     try {
         const user = await User.findById(req.user._id).select('-password');
@@ -1151,7 +1096,7 @@ module.exports = {
     getSettings,
     getLegalConfig,
     updateSettings,
-    updateAvatar,
+    syncCloudAvatarUrl,
     updateNotificationPreferences,
     updatePrivacyPreferences,
     updateSecuritySettings,

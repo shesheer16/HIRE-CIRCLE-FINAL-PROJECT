@@ -372,7 +372,14 @@ client.interceptors.response.use(
             return Promise.reject(authError);
         }
 
-        if (isAuthError && !config.__isRefreshRequest && !config.__authRetried) {
+        // Auth submission routes (login/register) have no session to refresh.
+        // A 401 from these routes means bad credentials — not an expired token.
+        // We must pass the raw original Axios error through so that the calling
+        // screen's catch block receives error.response.data.message intact.
+        const isAuthSubmitRoute = routeForChecks.includes('/api/users/login')
+            || routeForChecks.includes('/api/users/register');
+
+        if (isAuthError && !config.__isRefreshRequest && !config.__authRetried && !isAuthSubmitRoute) {
             config.__authRetried = true;
             try {
                 const refreshed = await refreshAuthToken();
@@ -403,6 +410,13 @@ client.interceptors.response.use(
                 await sleep(backoffMs);
                 return client(config);
             }
+        }
+
+        if (isAuthError && isAuthSubmitRoute) {
+            // Pass the original Axios error straight through — .response.status and
+            // .response.data.message are intact so LoginScreen.js can display the
+            // correct "not registered" or "invalid credentials" message.
+            return Promise.reject(error);
         }
 
         if (isAuthError) {

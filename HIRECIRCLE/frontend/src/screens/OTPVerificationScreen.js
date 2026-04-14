@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import axios from 'axios';
 import {
     ActivityIndicator, Animated, Alert, KeyboardAvoidingView, Platform,
     StyleSheet, Text, TextInput, TouchableOpacity, View,
@@ -134,6 +135,55 @@ export default function OTPVerificationScreen({ route, navigation }) {
                 intent: intent === 'signup' ? 'signup' : undefined,
             });
             if ((intent === 'signup' || intent === 'signin' || intent === 'login') && data?.token) {
+                // If we also got an avatar URI from registration step 1, upload it now
+                // BEFORE committing the new login state
+                let resolvedAvatarUrl = null;
+                const avatarUri = String(route.params?.avatarUri || '').trim();
+                
+                if (avatarUri && data.token) {
+                    try {
+                        const formData = new FormData();
+                        const ext = avatarUri.split('.').pop()?.toLowerCase() || 'jpg';
+                        const mimeType = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
+                        
+                        const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME';
+                        const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'YOUR_UPLOAD_PRESET';
+                        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+
+                        formData.append('file', {
+                            uri: avatarUri,
+                            name: `avatar-${Date.now()}.${ext}`,
+                            type: mimeType
+                        });
+
+                        formData.append('upload_preset', uploadPreset);
+
+                        const uploadRes = await axios.post(cloudinaryUrl, formData, {
+                            headers: {
+                                'Content-Type': 'multipart/form-data',
+                            },
+                        });
+                        
+                        resolvedAvatarUrl = String(uploadRes?.data?.secure_url || '').trim() || null;
+                    } catch (_uploadErr) {
+                        // Silently swallow avatar upload failures so we don't break the whole registration
+                        console.warn('Post-OTP Avatar Upload Failed:', _uploadErr);
+                    }
+                }
+
+                // Inject the returned absolute storage URL into the local payload before giving it to login()
+                if (resolvedAvatarUrl) {
+                    data.avatar = resolvedAvatarUrl;
+                    data.logoUrl = resolvedAvatarUrl;
+                    try {
+                        await client.post('/api/settings/avatar-url', { avatarUrl: resolvedAvatarUrl, role: selectedRole }, {
+                            headers: { Authorization: `Bearer ${data.token}` }
+                        });
+                    } catch (syncErr) {
+                        console.warn('Backend sync for avatar failed:', syncErr);
+                    }
+                }
+
                 runSuccessTransition(() => {
                     login(data, selectedRole ? { authEntryRole: selectedRole } : undefined);
                 });
@@ -148,7 +198,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
         } catch (error) {
             setErrorText(error?.response?.data?.message || 'Invalid OTP. Please try again.');
         } finally { setLoading(false); }
-    }, [identity.value, intent, login, navigation, otpPayload, selectedRole, successScale]);
+    }, [identity.value, intent, login, navigation, otpPayload, selectedRole, successScale, route.params?.avatarUri]);
 
     const resendOtp = useCallback(async () => {
         if (loading || resendTimer > 0 || !identity.value) return;

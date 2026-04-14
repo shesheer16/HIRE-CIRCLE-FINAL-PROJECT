@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import {
     ActivityIndicator,
     Image,
@@ -598,7 +599,6 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
         if (isEmployer) {
             return [
                 { id: 'company_name', title: 'Company name' },
-                { id: 'company_logo', title: 'Company logo' },
                 { id: 'company_description', title: 'Description' },
                 { id: 'industry', title: 'Industry' },
                 { id: 'contact_person', title: 'Contact info' },
@@ -723,16 +723,22 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
     const uploadAvatar = useCallback(async (uri, mimeType = 'image/jpeg') => {
         const fileName = uri.split('/').pop() || `avatar-${Date.now()}.jpg`;
         const payload = new FormData();
-        payload.append('avatar', {
+        
+        const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME';
+        const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'YOUR_UPLOAD_PRESET';
+        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+
+        payload.append('file', {
             uri,
             name: fileName,
             type: mimeType,
         });
+        payload.append('upload_preset', uploadPreset);
 
         setUploadingAvatar(true);
         setUploadProgress(0);
         try {
-            const { data } = await client.post('/api/settings/avatar', payload, {
+            const { data } = await axios.post(cloudinaryUrl, payload, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (event) => {
                     if (!event?.total) return;
@@ -740,13 +746,16 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                     setUploadProgress(Math.max(0, Math.min(100, pct)));
                 },
             });
-            const avatarUrl = String(data?.avatarUrl || uri).trim();
-            const nextCompletion = data?.profileCompletion || completion;
+            const avatarUrl = String(data?.secure_url || uri).trim();
             setForm((prev) => ({ ...prev, avatarUrl }));
-            if (nextCompletion) {
-                setCompletion(nextCompletion);
-            }
             await updateUserInfo?.({ avatar: avatarUrl });
+            
+            try {
+                await client.post('/api/settings/avatar-url', { avatarUrl, role: isEmployer ? 'employer' : 'worker' });
+            } catch (syncErr) {
+                console.warn('Backend sync for avatar failed:', syncErr);
+            }
+            
             return avatarUrl;
         } finally {
             setUploadingAvatar(false);
@@ -1050,25 +1059,6 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                     <Text style={styles.sectionTitle}>Identity & area</Text>
                     <View style={styles.hintCard}>
                         <Text style={styles.hintText}>Three steps only. Start with your role area in Andhra Pradesh, then we use it across matching and profile quality.</Text>
-                    </View>
-                    <View style={styles.inlineHeroCard}>
-                        <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} activeOpacity={0.85}>
-                            {form.avatarUrl ? (
-                                <Image source={{ uri: form.avatarUrl }} style={styles.avatarImage} />
-                            ) : (
-                                <Text style={styles.avatarPlaceholder}>Photo</Text>
-                            )}
-                        </TouchableOpacity>
-                        <View style={styles.inlineHeroCopy}>
-                            <Text style={styles.inlineHeroTitle}>Profile photo</Text>
-                            <Text style={styles.inlineHeroHint}>Optional, but it improves trust. You can add it now or later.</Text>
-                            {uploadingAvatar ? (
-                                <View style={styles.uploadStateInline}>
-                                    <ActivityIndicator color="#4f46e5" />
-                                    <Text style={styles.uploadStateText}>Uploading {uploadProgress}%</Text>
-                                </View>
-                            ) : null}
-                        </View>
                     </View>
                     <TextInput
                         value={form.fullName}
@@ -1653,20 +1643,6 @@ export default function ProfileSetupWizardScreen({ onCompleted }) {
                             textContentType="addressCity"
                         />
                     ) : null}
-                </View>
-            );
-        }
-        if (currentStep.id === 'company_logo') {
-            return (
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Company logo</Text>
-                    <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} activeOpacity={0.85}>
-                        {form.avatarUrl ? (
-                            <Image source={{ uri: form.avatarUrl }} style={styles.avatarImage} />
-                        ) : (
-                            <Text style={styles.avatarPlaceholder}>Upload</Text>
-                        )}
-                    </TouchableOpacity>
                 </View>
             );
         }

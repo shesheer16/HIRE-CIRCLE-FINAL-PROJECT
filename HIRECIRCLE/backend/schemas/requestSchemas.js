@@ -18,7 +18,7 @@ const signupSchema = z.object({
     email: z.string().trim().email().transform((value) => value.toLowerCase()),
     phoneNumber: optionalTrimmedString(20),
     password: z.string()
-        .min(10)
+        .min(8)
         .max(128)
         .regex(/[A-Z]/, 'Password must include at least one uppercase letter')
         .regex(/[a-z]/, 'Password must include at least one lowercase letter')
@@ -33,11 +33,13 @@ const signupSchema = z.object({
     acquisitionSource: z.enum(['camp', 'referral', 'organic', 'circle', 'unknown']).optional(),
     acquisitionCity: optionalTrimmedString(64),
     acquisitionCampaign: optionalTrimmedString(128),
+    selectedRole: optionalTrimmedString(32),
 }).strict();
 
 const loginSchema = z.object({
     email: z.string().trim().email().transform((value) => value.toLowerCase()),
     password: z.string().min(1).max(128),
+    selectedRole: z.string().trim().toLowerCase().optional(),
 }).strict();
 
 const refreshTokenSchema = z.object({

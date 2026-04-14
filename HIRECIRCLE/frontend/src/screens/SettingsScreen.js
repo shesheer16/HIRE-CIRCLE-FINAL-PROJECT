@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, Animated } from 'react-native';
+import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, Animated, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,6 +19,9 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import Constants from 'expo-constants';
 import { getAccountRoleLabel } from '../utils/profileReadiness';
+import { resolveImageUrl } from '../utils/imageResolver';
+import * as ImagePicker from 'expo-image-picker';
+import axios from 'axios';
 
 const withTimeout = (promise, timeoutMs, timeoutMessage) => {
     let timeoutId;
@@ -124,6 +127,7 @@ export default function SettingsScreen({ navigation }) {
     const [accountPhoneNumber, setAccountPhoneNumber] = useState('Not set');
     const [savedPostsCount, setSavedPostsCount] = useState(0);
     const [clearingSavedPosts, setClearingSavedPosts] = useState(false);
+    const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const savedPostsStorageKey = React.useMemo(
         () => getSavedPostsStorageKey(String(userInfo?._id || 'guest')),
         [userInfo?._id]
@@ -163,7 +167,10 @@ export default function SettingsScreen({ navigation }) {
                     name: fullName || user.name || 'User',
                     role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
-                    avatar: profile.avatar || profile.logoUrl || null,
+                    avatar: resolveImageUrl(
+                        profile.avatar || profile.logoUrl || null,
+                        fullName || user.name || 'User'
+                    ),
                 });
 
                 const growthRes = await client.get('/api/growth/monetization-intelligence').catch(() => null);
@@ -174,7 +181,7 @@ export default function SettingsScreen({ navigation }) {
                     name: user.name || 'User',
                     role: getAccountRoleLabel(resolvedPrimaryRole),
                     email: user.email || '',
-                    avatar: null,
+                    avatar: resolveImageUrl(null, user.name || 'User'),
                 });
             }
         };
@@ -441,6 +448,66 @@ export default function SettingsScreen({ navigation }) {
         }
     };
 
+    const handleChangeAvatar = async () => {
+        try {
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission required', 'We need access to your camera roll to update your profile picture.');
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+            });
+
+            if (result.canceled || !result.assets || !result.assets[0]?.uri) return;
+
+            setUploadingAvatar(true);
+            const uri = result.assets[0].uri;
+            const mimeType = result.assets[0].mimeType || 'image/jpeg';
+            const fileName = uri.split('/').pop() || `avatar-${Date.now()}.jpg`;
+
+            const formData = new FormData();
+            const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME';
+            const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'YOUR_UPLOAD_PRESET';
+            const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+
+            formData.append('file', { uri, name: fileName, type: mimeType });
+            formData.append('upload_preset', uploadPreset);
+
+            const response = await axios.post(cloudinaryUrl, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 15000,
+            });
+
+            const secureUrl = String(response?.data?.secure_url || uri).trim();
+            const activeRoleContext = primaryRole === 'employer' ? 'employer' : 'worker';
+
+            try {
+                await client.post('/api/settings/avatar-url', { avatarUrl: secureUrl, role: activeRoleContext });
+            } catch (syncErr) {
+                console.warn('Backend sync for avatar failed:', syncErr);
+            }
+
+            setProfileHeader(prev => ({ ...prev, avatar: secureUrl }));
+
+            if (primaryRole === 'employer') {
+                await updateUserInfo?.({ logoUrl: secureUrl });
+            } else {
+                await updateUserInfo?.({ avatar: secureUrl });
+            }
+
+        } catch (error) {
+            console.warn('Upload Profile Image Error:', error);
+            Alert.alert('Upload Failed', 'Could not upload the new profile picture. Please try again.');
+        } finally {
+            setUploadingAvatar(false);
+        }
+    };
+
     const confirmDeleteAccount = () => {
         Alert.alert(
             'Delete Account',
@@ -606,13 +673,17 @@ export default function SettingsScreen({ navigation }) {
                 style={styles.profileHeaderCardPremium}
             >
                 <View style={styles.profileHeaderTopPremium}>
-                    <Image
-                        source={{
-                            uri: profileHeader.avatar ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(profileHeader.name || 'User')}&background=f1f5f9&color=0f172a`
-                        }}
-                        style={styles.avatarPremium}
-                    />
+                    <TouchableOpacity onPress={handleChangeAvatar} disabled={uploadingAvatar} style={styles.avatarPremiumContainer}>
+                        <Image
+                            source={{ uri: profileHeader.avatar }}
+                            style={styles.avatarPremium}
+                        />
+                        {uploadingAvatar && (
+                            <View style={styles.avatarOverlayPremium}>
+                                <ActivityIndicator size="small" color="#ffffff" />
+                            </View>
+                        )}
+                    </TouchableOpacity>
                     <View style={styles.profileHeaderCopyPremium}>
                         <View style={styles.heroBadgeRowPremium}>
                             <View style={styles.profileRolePillPremium}>

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import axios from 'axios';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     Modal, TextInput, KeyboardAvoidingView, Platform, Alert, Image, ActivityIndicator, Animated, Keyboard, Dimensions, RefreshControl
@@ -1978,19 +1979,36 @@ export default function ProfilesScreen({ navigation }) {
 
         const fileName = safeUri.split('/').pop() || `avatar-${Date.now()}.jpg`;
         const formData = new FormData();
-        formData.append('avatar', { uri: safeUri, name: fileName, type: mimeType });
+        
+        const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME';
+        const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'YOUR_UPLOAD_PRESET';
+        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
 
-        const response = await withRequestTimeout(
-            client.post('/api/settings/avatar', formData, {
-                __allowWhenCircuitOpen: true,
-                headers: { 'Content-Type': 'multipart/form-data' },
-                timeout: AVATAR_SYNC_TIMEOUT_MS,
-            }),
-            'Photo upload timed out',
-            AVATAR_SYNC_TIMEOUT_MS
-        );
+        formData.append('file', { uri: safeUri, name: fileName, type: mimeType });
+        formData.append('upload_preset', uploadPreset);
 
-        return String(response?.data?.avatarUrl || safeUri).trim();
+        try {
+            const response = await withRequestTimeout(
+                axios.post(cloudinaryUrl, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    timeout: AVATAR_SYNC_TIMEOUT_MS,
+                }),
+                'Photo upload timed out',
+                AVATAR_SYNC_TIMEOUT_MS
+            );
+            const secureUrl = String(response?.data?.secure_url || safeUri).trim();
+            
+            try {
+                await client.post('/api/settings/avatar-url', { avatarUrl: secureUrl, role: 'worker' });
+            } catch (syncErr) {
+                console.warn('Backend sync for avatar failed:', syncErr);
+            }
+            
+            return secureUrl;
+        } catch (error) {
+            console.warn('Cloudinary Avatar Sync Failed:', error);
+            return safeUri; 
+        }
     }, []);
 
     const handleAvatarPress = useCallback(async () => {
