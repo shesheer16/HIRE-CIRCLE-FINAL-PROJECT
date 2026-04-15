@@ -1,0 +1,58 @@
+# Dependency directories
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Environment variables
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env
+**/.env*
+**/*.env
+config/*.env
+config/.env*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# Build outputs
+build/
+dist/
+
+# Uploads and media
+backend/uploads/
+**/uploads/
+
+# Local MongoDB data
+.mongo-data/
+
+# Root log files
+*.log
+LOCALHOST_FLOW_RAW*.log
+ABSOLUTE_REPRO_LOG.log

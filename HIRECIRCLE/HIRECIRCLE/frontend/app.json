@@ -1,0 +1,113 @@
+{
+  "expo": {
+    "name": "HireCircle",
+    "slug": "hirecircle",
+    "version": "1.0.0",
+    "jsEngine": "hermes",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "HireCircle needs camera access to capture your interview and profile videos.",
+        "NSMicrophoneUsageDescription": "Allow HireCircle to use the microphone for Smart Interview live progress.",
+        "NSSpeechRecognitionUsageDescription": "Allow HireCircle to transcribe your answers for Smart Interview live progress.",
+        "NSUserNotificationUsageDescription": "HireCircle uses notifications for chat messages, application updates, and matches."
+      }
+    },
+    "android": {
+      "package": "com.lokesh.hirecircle",
+      "versionCode": 10,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": false
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#ffffff",
+      "barStyle": "dark-content",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#ffffff",
+      "barStyle": "dark-content"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
+          }
+        }
+      ],
+      "expo-secure-store",
+      "expo-localization",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "HireCircle needs camera access to capture your interview and profile videos.",
+          "microphonePermission": "HireCircle needs microphone access to record audio with your interview videos."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow HireCircle to use the microphone for Smart Interview live progress.",
+          "speechRecognitionPermission": "Allow HireCircle to transcribe your answers for Smart Interview live progress.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/adaptive-icon.png",
+          "color": "#5b21b6"
+        }
+      ],
+      "expo-document-picker",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "HireCircle needs microphone access to record audio with your voice posts and interview videos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HireCircle needs photo library access so you can upload your profile picture and attachments.",
+          "cameraPermission": "HireCircle needs camera access to capture your profile picture."
+        }
+      ],
+      "@sentry/react-native"
+    ],
+    "extra": {
+      "privacyPolicyUrl": "https://hirecircle.in/privacy",
+      "eas": {
+        "projectId": "2278891f-afa5-49c8-b773-bd13792dbe85"
+      }
+    }
+  }
+}
