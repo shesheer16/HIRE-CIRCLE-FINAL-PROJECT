@@ -1,0 +1,30 @@
+export const connectPalette = {
+    page: '#ffffff',
+    surface: '#ffffff',
+    surfaceSoft: '#fafafa',
+    line: '#e2e8f0',
+    lineStrong: '#cbd5e1',
+    text: '#0f172a',
+    muted: '#64748b',
+    subtle: '#94a3b8',
+    accent: '#7c3aed',
+    accentDark: '#6d28d9',
+    accentSoft: '#f3e8ff',
+    accentSoftAlt: '#ede9fe',
+    accentGlow: '#c4b5fd',
+    dark: '#0f172a',
+    darkSoft: '#1e293b',
+    info: '#0ea5e9',
+    aqua: '#0f766e',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+};
+
+export const connectShadow = {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 3,
+};
