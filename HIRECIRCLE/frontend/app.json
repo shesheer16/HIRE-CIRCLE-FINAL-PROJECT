@@ -17,8 +17,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "HireCircle needs camera access to capture your interview and profile videos.",
-        "NSMicrophoneUsageDescription": "HireCircle needs microphone access to record audio with your interview videos.",
-        "NSSpeechRecognitionUsageDescription": "HireCircle needs speech recognition to update interview progress in real time.",
+        "NSMicrophoneUsageDescription": "Allow HireCircle to use the microphone for Smart Interview live progress.",
+        "NSSpeechRecognitionUsageDescription": "Allow HireCircle to transcribe your answers for Smart Interview live progress.",
         "NSUserNotificationUsageDescription": "HireCircle uses notifications for chat messages, application updates, and matches."
       }
     },
@@ -29,7 +29,8 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -105,9 +106,8 @@
     "extra": {
       "privacyPolicyUrl": "https://hirecircle.in/privacy",
       "eas": {
-        "projectId": "0feb4698-0350-474c-ad6e-521ae3337adb"
+        "projectId": "2278891f-afa5-49c8-b773-bd13792dbe85"
       }
-    },
-    "owner": "lokesh888"
+    }
   }
 }
