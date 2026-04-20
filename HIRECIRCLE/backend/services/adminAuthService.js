@@ -17,7 +17,7 @@ const issueAdminToken = (adminUser) => {
         },
         secret,
         {
-            expiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
+            expiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '30d',
         }
     );
 };

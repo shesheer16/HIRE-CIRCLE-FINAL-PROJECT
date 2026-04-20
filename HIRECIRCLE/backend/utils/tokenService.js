@@ -39,7 +39,7 @@ const parseDurationToSeconds = (input, fallbackSeconds) => {
     return fallbackSeconds;
 };
 
-const accessTokenTtl = () => String(process.env.JWT_ACCESS_EXPIRES_IN || '15m').trim();
+const accessTokenTtl = () => String(process.env.JWT_ACCESS_EXPIRES_IN || '30d').trim();
 const refreshTokenTtl = () => String(process.env.JWT_REFRESH_EXPIRES_IN || '30d').trim();
 
 const blacklistKey = (jti) => `token:blacklist:${String(jti || '').trim()}`;
